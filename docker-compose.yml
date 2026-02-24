@@ -1,0 +1,50 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: atmos-db
+    environment:
+      POSTGRES_DB: atmos
+      POSTGRES_USER: atmos
+      POSTGRES_PASSWORD: atmos_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - atmos_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atmos -d atmos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./apps/backend
+    container_name: atmos-backend
+    environment:
+      APP_NAME: ATMOS API
+      ENVIRONMENT: development
+      API_V1_PREFIX: /api/v1
+      CORS_ORIGINS: http://localhost:5173
+      DATABASE_URL: postgresql+psycopg://atmos:atmos_dev_password@db:5432/atmos
+      JWT_SECRET_KEY: change-this-in-production
+      JWT_ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    container_name: atmos-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  atmos_postgres_data:

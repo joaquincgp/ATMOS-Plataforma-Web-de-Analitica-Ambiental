@@ -1,0 +1,18 @@
+{
+  "name": "atmos-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/frontend"
+  ],
+  "scripts": {
+    "dev": "docker compose up --build",
+    "dev:frontend": "npm run dev --workspace @atmos/frontend",
+    "build:frontend": "npm run build --workspace @atmos/frontend",
+    "lint:frontend": "npm run lint --workspace @atmos/frontend",
+    "typecheck:frontend": "npm run typecheck --workspace @atmos/frontend",
+    "backend:dev": "cd apps/backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000",
+    "backend:test": "cd apps/backend && pytest -q",
+    "backend:lint": "cd apps/backend && ruff check ."
+  }
+}

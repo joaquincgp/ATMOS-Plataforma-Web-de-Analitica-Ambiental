@@ -1,0 +1,100 @@
+openapi: 3.1.0
+info:
+  title: ATMOS API
+  version: 1.0.0
+  description: Initial contract for ATMOS platform modules.
+servers:
+  - url: https://api.atmos.example.com
+    description: Production
+  - url: http://localhost:8000
+    description: Local
+paths:
+  /api/v1/health:
+    get:
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, service, version]
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  service:
+                    type: string
+                    example: atmos-api
+                  version:
+                    type: string
+                    example: 0.1.0
+  /api/v1/analytics/run:
+    post:
+      summary: Execute a supported analytics job by contract
+      operationId: runAnalytics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyticsRequest"
+      responses:
+        "200":
+          description: Structured analytics result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsResponse"
+        "422":
+          description: Validation error
+components:
+  schemas:
+    AnalyticsRequest:
+      type: object
+      required: [workspace_id, metric, date_range, aggregation]
+      properties:
+        workspace_id:
+          type: string
+        metric:
+          type: string
+          enum: [pm25, pm10, o3, no2, so2, co, temperature, humidity]
+        station_ids:
+          type: array
+          items:
+            type: string
+        date_range:
+          type: object
+          required: [from, to]
+          properties:
+            from:
+              type: string
+              format: date-time
+            to:
+              type: string
+              format: date-time
+        aggregation:
+          type: string
+          enum: [hourly, daily, weekly, monthly]
+    AnalyticsResponse:
+      type: object
+      required: [job_id, result_type, series]
+      properties:
+        job_id:
+          type: string
+        result_type:
+          type: string
+          enum: [timeseries, distribution, correlation_matrix, trend]
+        series:
+          type: array
+          items:
+            type: object
+            required: [timestamp, value]
+            properties:
+              timestamp:
+                type: string
+                format: date-time
+              value:
+                type: number

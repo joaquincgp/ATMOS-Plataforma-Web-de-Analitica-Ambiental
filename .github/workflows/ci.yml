@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "develop", "codex/**"]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        run: npm install --workspace @atmos/frontend
+
+      - name: Lint frontend
+        run: npm run lint --workspace @atmos/frontend
+
+      - name: Typecheck frontend
+        run: npm run typecheck --workspace @atmos/frontend
+
+      - name: Build frontend
+        run: npm run build --workspace @atmos/frontend
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint backend
+        working-directory: apps/backend
+        run: ruff check .
+
+      - name: Test backend
+        working-directory: apps/backend
+        run: pytest -q

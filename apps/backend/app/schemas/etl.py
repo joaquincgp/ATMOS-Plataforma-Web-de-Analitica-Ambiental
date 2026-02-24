@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class DbInitResponse(BaseModel):
+    status: str
+    database: str
+    timestamp: str
+
+
+class EtlRunResponse(BaseModel):
+    id: str
+    trigger_type: str
+    source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    archives_discovered: int
+    archives_processed: int
+    records_inserted: int
+    records_updated: int
+    records_skipped: int
+
+
+class EtlMetricsResponse(BaseModel):
+    total_measurements: int
+    total_stations: int
+    total_variables: int
+    latest_run_status: str

@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+apps/frontend/dist/
+apps/frontend/.vite/
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Environment files
+.env
+.env.*
+!.env.example
+apps/frontend/.env
+apps/frontend/.env.*
+!apps/frontend/.env.example
+apps/backend/.env
+apps/backend/.env.*
+!apps/backend/.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Coverage
+coverage/
+htmlcov/
