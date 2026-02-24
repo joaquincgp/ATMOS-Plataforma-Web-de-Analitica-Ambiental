@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
 from app.models.etl_run import EtlRun
-from app.schemas.etl import DbInitResponse, EtlMetricsResponse, EtlRunResponse
+from app.schemas.etl import DbInitResponse, EtlMetricsResponse, EtlPreviewResponse, EtlRunResponse
 from app.services.etl import EtlService
 
 router = APIRouter()
@@ -92,3 +92,14 @@ def list_runs(
 def get_metrics(db: Session = Depends(get_db_session)) -> EtlMetricsResponse:
     service = EtlService(db)
     return EtlMetricsResponse(**service.get_metrics())
+
+
+@router.get("/preview", response_model=EtlPreviewResponse)
+def get_preview(
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db_session),
+) -> EtlPreviewResponse:
+    service = EtlService(db)
+    payload = service.get_preview(run_id=run_id, limit=limit)
+    return EtlPreviewResponse(**payload)

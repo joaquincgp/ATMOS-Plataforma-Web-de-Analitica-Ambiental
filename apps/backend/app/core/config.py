@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     etl_request_timeout_seconds: int = 60
     etl_discovery_max_pages: int = 20
     etl_user_agent: str = "ATMOS-ETL/1.0 (+https://udla.edu.ec)"
-    etl_row_chunk_size: int = 10_000
+    etl_row_chunk_size: int = 2_000
+    etl_lookup_chunk_size: int = 500
     etl_sync_default_max_archives: int = 4
     auto_init_db_on_startup: bool = False
 

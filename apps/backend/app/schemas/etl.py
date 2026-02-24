@@ -30,3 +30,17 @@ class EtlMetricsResponse(BaseModel):
     total_stations: int
     total_variables: int
     latest_run_status: str
+
+
+class EtlPreviewRowResponse(BaseModel):
+    observed_at: datetime
+    station_code: str
+    variable_code: str
+    value: float
+    unit: str | None
+    source_file_name: str
+
+
+class EtlPreviewResponse(BaseModel):
+    run_id: str | None
+    rows: list[EtlPreviewRowResponse]

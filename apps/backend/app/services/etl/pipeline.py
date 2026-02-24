@@ -10,7 +10,7 @@ import zipfile
 from bs4 import BeautifulSoup
 import httpx
 import pandas as pd
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -96,6 +96,9 @@ DATETIME_COLUMNS = (
     "date_time",
     "fecha_hora",
     "fechahora",
+    "unnamed_0",
+    "fecha_unidad",
+    "fechaunidad",
 )
 DATE_COLUMNS = ("date", "fecha")
 TIME_COLUMNS = ("time", "hora")
@@ -184,11 +187,16 @@ class EtlService:
             self.db.refresh(run)
             return run
         except Exception as exc:  # noqa: BLE001
-            run.status = "failed"
-            run.finished_at = datetime.utcnow()
-            run.details = {"error": str(exc)}
-            self.db.commit()
-            self.db.refresh(run)
+            self.db.rollback()
+            try:
+                run.status = "failed"
+                run.finished_at = datetime.utcnow()
+                run.details = {"error": str(exc)}
+                self.db.add(run)
+                self.db.commit()
+                self.db.refresh(run)
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
             raise
 
     def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
@@ -218,11 +226,16 @@ class EtlService:
             self.db.refresh(run)
             return run
         except Exception as exc:  # noqa: BLE001
-            run.status = "failed"
-            run.finished_at = datetime.utcnow()
-            run.details = {"error": str(exc)}
-            self.db.commit()
-            self.db.refresh(run)
+            self.db.rollback()
+            try:
+                run.status = "failed"
+                run.finished_at = datetime.utcnow()
+                run.details = {"error": str(exc)}
+                self.db.add(run)
+                self.db.commit()
+                self.db.refresh(run)
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
             raise
 
     def _create_run(self, *, trigger_type: str, source: str) -> EtlRun:
@@ -402,10 +415,11 @@ class EtlService:
             select(SourceFile).where(SourceFile.checksum_sha256 == checksum, SourceFile.status == "completed")
         )
         if existing_file and not force_reprocess:
-            etl_run.records_skipped += existing_file.row_count
-            etl_run.archives_processed += 1
-            self.db.commit()
-            return
+            if existing_file.row_count > 0:
+                etl_run.records_skipped += existing_file.row_count
+                etl_run.archives_processed += 1
+                self.db.commit()
+                return
 
         safe_name = original_name.replace("/", "_").replace("\\", "_")
         archive_name = f"{checksum[:12]}-{safe_name}"
@@ -549,11 +563,15 @@ class EtlService:
 
         station_column = self._first_existing(column_map, STATION_COLUMNS)
         datetime_column = self._first_existing(column_map, DATETIME_COLUMNS)
+        if datetime_column is None:
+            datetime_column = self._guess_datetime_column(dataframe)
         date_column = self._first_existing(column_map, DATE_COLUMNS)
         time_column = self._first_existing(column_map, TIME_COLUMNS)
         variable_column = self._first_existing(column_map, VARIABLE_COLUMNS)
         value_column = self._first_existing(column_map, VALUE_COLUMNS)
         unit_column = self._first_existing(column_map, UNIT_COLUMNS)
+        wide_variable_code = self._derive_wide_variable_code(sheet_name=sheet_name, workbook_name=workbook_name)
+        wide_units_by_column = self._extract_wide_units_row(dataframe, datetime_column)
 
         metadata_columns = {
             column
@@ -596,8 +614,9 @@ class EtlService:
                 if pd.isna(value):
                     continue
 
-                variable_code = normalize_variable_code(str(value_col))
-                unit = guess_unit(variable_code, self._extract_unit(row, unit_column))
+                station_code = normalize_variable_code(str(value_col))
+                variable_code = wide_variable_code
+                unit = guess_unit(variable_code, wide_units_by_column.get(value_col))
                 yield NormalizedMeasurementRow(
                     station_code=station_code,
                     observed_at=observed_at,
@@ -656,10 +675,61 @@ class EtlService:
                 continue
 
             series = pd.to_numeric(dataframe[column], errors="coerce")
-            if series.notna().mean() >= 0.6:
+            if int(series.notna().sum()) > 0:
                 value_columns.append(column)
 
         return value_columns
+
+    def _guess_datetime_column(self, dataframe: pd.DataFrame) -> str | None:
+        best_column: str | None = None
+        best_score = 0.0
+
+        for column in dataframe.columns:
+            sample = dataframe[column].dropna().head(25)
+            if sample.empty:
+                continue
+
+            parsed = pd.to_datetime(sample, errors="coerce")
+            score = float(parsed.notna().mean())
+            if score > best_score:
+                best_score = score
+                best_column = column
+
+        if best_score >= 0.5:
+            return best_column
+        return None
+
+    def _derive_wide_variable_code(self, *, sheet_name: str, workbook_name: str) -> str:
+        candidates = [sheet_name, Path(workbook_name).stem]
+        for candidate in candidates:
+            normalized = normalize_variable_code(candidate).replace("_", "")
+            if normalized and normalized not in {"HOJA1", "SHEET1", "DATA", "DATOS"}:
+                return normalized
+        return "UNKNOWN_VARIABLE"
+
+    def _extract_wide_units_row(self, dataframe: pd.DataFrame, datetime_column: str | None) -> dict[str, str]:
+        if dataframe.empty or datetime_column is None:
+            return {}
+
+        first_row = dataframe.iloc[0]
+        marker = normalize_text(str(first_row.get(datetime_column, "")))
+        if "fecha" not in marker or "unidad" not in marker:
+            return {}
+
+        units: dict[str, str] = {}
+        for column in dataframe.columns:
+            if column == datetime_column:
+                continue
+            raw_unit = first_row.get(column)
+            if raw_unit is None:
+                continue
+
+            value = str(raw_unit).strip()
+            if not value or value.lower() == "nan":
+                continue
+            units[column] = value
+
+        return units
 
     def _first_existing(self, column_map: dict[str, str], candidates: tuple[str, ...]) -> str | None:
         for candidate in candidates:
@@ -697,42 +767,84 @@ class EtlService:
         updated = 0
         skipped = 0
 
+        prepared_rows: list[tuple[NormalizedMeasurementRow, int, int, datetime]] = []
+        keys: list[tuple[int, int, datetime]] = []
+
         for row in rows:
             station = self._get_or_create_station(row.station_code)
             variable = self._get_or_create_variable(row.variable_code, row.unit)
+            observed_at = row.observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            prepared_rows.append((row, station.id, variable.id, observed_at))
+            keys.append((station.id, variable.id, observed_at))
 
+        self.db.flush()
+
+        if not prepared_rows:
+            self.db.commit()
+            return inserted, updated, skipped
+
+        try:
+            existing_map = self._load_existing_measurements(keys)
+
+            to_insert: list[Measurement] = []
+            for row, station_id, variable_id, observed_at in prepared_rows:
+                key = (station_id, variable_id, observed_at)
+                existing = existing_map.get(key)
+
+                if existing is None:
+                    to_insert.append(
+                        Measurement(
+                            station_id=station_id,
+                            variable_id=variable_id,
+                            observed_at=observed_at,
+                            value=row.value,
+                            unit=row.unit,
+                            source_file_id=source_file_id,
+                            record_hash=compute_record_hash(row.station_code, row.variable_code, observed_at),
+                        )
+                    )
+                    inserted += 1
+                    continue
+
+                if abs(existing.value - row.value) > 1e-9 or (existing.unit or "") != (row.unit or ""):
+                    existing.value = row.value
+                    existing.unit = row.unit
+                    existing.source_file_id = source_file_id
+                    existing.record_hash = compute_record_hash(row.station_code, row.variable_code, observed_at)
+                    updated += 1
+                else:
+                    skipped += 1
+
+            if to_insert:
+                self.db.add_all(to_insert)
+
+            self.db.commit()
+            return inserted, updated, skipped
+        except Exception:  # noqa: BLE001
+            self.db.rollback()
+            raise
+
+    def _load_existing_measurements(
+        self,
+        keys: list[tuple[int, int, datetime]],
+    ) -> dict[tuple[int, int, datetime], Measurement]:
+        unique_keys = list(dict.fromkeys(keys))
+        if not unique_keys:
+            return {}
+
+        existing_map: dict[tuple[int, int, datetime], Measurement] = {}
+        lookup_chunk_size = max(100, self.settings.etl_lookup_chunk_size)
+
+        for offset in range(0, len(unique_keys), lookup_chunk_size):
+            key_batch = unique_keys[offset : offset + lookup_chunk_size]
             statement = select(Measurement).where(
-                Measurement.station_id == station.id,
-                Measurement.variable_id == variable.id,
-                Measurement.observed_at == row.observed_at,
+                tuple_(Measurement.station_id, Measurement.variable_id, Measurement.observed_at).in_(key_batch)
             )
-            existing = self.db.scalar(statement)
+            batch_rows = self.db.scalars(statement).all()
+            for measurement in batch_rows:
+                existing_map[(measurement.station_id, measurement.variable_id, measurement.observed_at)] = measurement
 
-            if existing is None:
-                measurement = Measurement(
-                    station_id=station.id,
-                    variable_id=variable.id,
-                    observed_at=row.observed_at,
-                    value=row.value,
-                    unit=row.unit,
-                    source_file_id=source_file_id,
-                    record_hash=compute_record_hash(row.station_code, row.variable_code, row.observed_at),
-                )
-                self.db.add(measurement)
-                inserted += 1
-                continue
-
-            if abs(existing.value - row.value) > 1e-9 or (existing.unit or "") != (row.unit or ""):
-                existing.value = row.value
-                existing.unit = row.unit
-                existing.source_file_id = source_file_id
-                existing.record_hash = compute_record_hash(row.station_code, row.variable_code, row.observed_at)
-                updated += 1
-            else:
-                skipped += 1
-
-        self.db.commit()
-        return inserted, updated, skipped
+        return existing_map
 
     def _get_or_create_station(self, station_code: str) -> Station:
         cached = self._station_cache.get(station_code)
@@ -796,4 +908,45 @@ class EtlService:
             "total_stations": int(total_stations),
             "total_variables": int(total_variables),
             "latest_run_status": latest_run.status if latest_run else "never-run",
+        }
+
+    def get_preview(self, *, run_id: str | None = None, limit: int = 100) -> dict[str, object]:
+        target_run_id = run_id
+        if target_run_id is None:
+            latest_run = self.db.scalar(select(EtlRun).order_by(desc(EtlRun.started_at)).limit(1))
+            if latest_run is None:
+                return {"run_id": None, "rows": []}
+            target_run_id = latest_run.id
+
+        statement = (
+            select(
+                Measurement.observed_at,
+                Measurement.value,
+                Measurement.unit,
+                Station.code.label("station_code"),
+                Variable.code.label("variable_code"),
+                SourceFile.original_name.label("source_file_name"),
+            )
+            .join(Station, Station.id == Measurement.station_id)
+            .join(Variable, Variable.id == Measurement.variable_id)
+            .join(SourceFile, SourceFile.id == Measurement.source_file_id)
+            .where(SourceFile.etl_run_id == target_run_id)
+            .order_by(desc(Measurement.observed_at))
+            .limit(limit)
+        )
+        rows = self.db.execute(statement).all()
+
+        return {
+            "run_id": target_run_id,
+            "rows": [
+                {
+                    "observed_at": row.observed_at,
+                    "station_code": row.station_code,
+                    "variable_code": row.variable_code,
+                    "value": float(row.value),
+                    "unit": row.unit,
+                    "source_file_name": row.source_file_name,
+                }
+                for row in rows
+            ],
         }

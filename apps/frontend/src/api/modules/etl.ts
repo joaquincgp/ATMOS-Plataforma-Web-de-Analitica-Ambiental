@@ -29,6 +29,20 @@ export interface EtlMetricsResponse {
   latest_run_status: string;
 }
 
+export interface EtlPreviewRowResponse {
+  observed_at: string;
+  station_code: string;
+  variable_code: string;
+  value: number;
+  unit: string | null;
+  source_file_name: string;
+}
+
+export interface EtlPreviewResponse {
+  run_id: string | null;
+  rows: EtlPreviewRowResponse[];
+}
+
 export interface SyncRemmaqParams {
   forceReprocess?: boolean;
   variableCodes?: string[];
@@ -107,4 +121,13 @@ export function getEtlRuns(limit = 20): Promise<EtlRunResponse[]> {
 
 export function getEtlMetrics(): Promise<EtlMetricsResponse> {
   return apiRequest<EtlMetricsResponse>('/api/v1/etl/metrics');
+}
+
+export function getEtlPreview(runId?: string, limit = 100): Promise<EtlPreviewResponse> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('limit', String(limit));
+  if (runId) {
+    searchParams.set('run_id', runId);
+  }
+  return apiRequest<EtlPreviewResponse>(`/api/v1/etl/preview?${searchParams.toString()}`);
 }

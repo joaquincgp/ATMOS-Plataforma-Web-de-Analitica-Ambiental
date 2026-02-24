@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import {
   getEtlMetrics,
+  getEtlPreview,
   getEtlRuns,
   initializeDatabase,
   syncRemmaq,
@@ -9,12 +10,14 @@ import {
   uploadEtlFile,
   type DbInitResponse,
   type EtlMetricsResponse,
+  type EtlPreviewRowResponse,
   type EtlRunResponse,
 } from '@/api/modules/etl';
 
 interface UseEtlState {
   runs: EtlRunResponse[];
   metrics: EtlMetricsResponse | null;
+  previewRows: EtlPreviewRowResponse[];
   loading: boolean;
   error: string | null;
   refreshing: boolean;
@@ -30,6 +33,7 @@ interface UseEtlActions {
 export function useEtl(): UseEtlState & UseEtlActions {
   const [runs, setRuns] = useState<EtlRunResponse[]>([]);
   const [metrics, setMetrics] = useState<EtlMetricsResponse | null>(null);
+  const [previewRows, setPreviewRows] = useState<EtlPreviewRowResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +46,8 @@ export function useEtl(): UseEtlState & UseEtlActions {
       const [nextRuns, nextMetrics] = await Promise.all([getEtlRuns(20), getEtlMetrics()]);
       setRuns(nextRuns);
       setMetrics(nextMetrics);
+      const preview = await getEtlPreview(nextRuns[0]?.id, 80);
+      setPreviewRows(preview.rows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown ETL error');
     } finally {
@@ -81,6 +87,7 @@ export function useEtl(): UseEtlState & UseEtlActions {
   return {
     runs,
     metrics,
+    previewRows,
     loading,
     refreshing,
     error,

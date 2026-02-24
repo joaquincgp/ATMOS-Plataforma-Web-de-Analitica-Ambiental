@@ -95,8 +95,18 @@ export function DataSources() {
   const [actionMessage, setActionMessage] = useState<StepMessage | null>(null);
   const [processingAction, setProcessingAction] = useState<'db' | 'sync' | 'upload' | null>(null);
 
-  const { runs, metrics, loading, refreshing, error, initDatabase, triggerRemmaqSync, uploadManualFile, refresh } =
-    useEtl();
+  const {
+    runs,
+    metrics,
+    previewRows,
+    loading,
+    refreshing,
+    error,
+    initDatabase,
+    triggerRemmaqSync,
+    uploadManualFile,
+    refresh,
+  } = useEtl();
 
   const latestRun = useMemo(() => runs[0] ?? null, [runs]);
 
@@ -273,7 +283,9 @@ export function DataSources() {
             />
           )}
 
-          {currentStep === 2 && <ValidationStep runs={runs} latestRun={latestRun} loading={loading} />}
+          {currentStep === 2 && (
+            <ValidationStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />
+          )}
 
           {currentStep === 3 && <MappingStep />}
 
@@ -451,7 +463,7 @@ function SourceStep({
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="max-archives" className="text-sm font-medium block">
-                    Máximo de archivos por corrida
+                    Cantidad de enlaces REMMAQ por corrida
                   </Label>
                   <input
                     id="max-archives"
@@ -463,7 +475,7 @@ function SourceStep({
                     className="w-full rounded-md border px-3 py-2 text-sm bg-white"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Limita la carga para evitar bloqueos. Puedes ejecutar varias corridas seguidas.
+                    Cada enlace corresponde a un archivo histórico (por variable). Usa valores bajos para ejecutar por partes.
                   </p>
                 </div>
               </div>
@@ -572,6 +584,7 @@ function ValidationStep({
   runs,
   latestRun,
   loading,
+  previewRows,
 }: {
   runs: Array<{
     id: string;
@@ -588,6 +601,14 @@ function ValidationStep({
     records_skipped: number;
   } | null;
   loading: boolean;
+  previewRows: Array<{
+    observed_at: string;
+    station_code: string;
+    variable_code: string;
+    value: number;
+    unit: string | null;
+    source_file_name: string;
+  }>;
 }) {
   return (
     <div className="space-y-6">
@@ -655,6 +676,43 @@ function ValidationStep({
           {runs.length === 0 && !loading && (
             <p className="mt-4 text-sm text-muted-foreground">No hay corridas ETL aún.</p>
           )}
+
+          <div className="mt-6">
+            <h4 className="font-medium mb-2">Previsualización de datos cargados</h4>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#F9FBFC] border-b border-border sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Fecha/Hora</th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Estación</th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Variable</th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Valor</th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Unidad</th>
+                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Archivo fuente</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row, index) => (
+                      <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b border-border">
+                        <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
+                        <td className="px-3 py-2">{row.station_code}</td>
+                        <td className="px-3 py-2">{row.variable_code}</td>
+                        <td className="px-3 py-2">{row.value}</td>
+                        <td className="px-3 py-2">{row.unit ?? '-'}</td>
+                        <td className="px-3 py-2 text-xs">{row.source_file_name}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {previewRows.length === 0 && !loading && (
+              <p className="text-sm text-muted-foreground mt-2">
+                Sin filas para previsualizar. Si la corrida fue exitosa pero quedó en cero, revisa mapeo de fecha y estaciones.
+              </p>
+            )}
+          </div>
 
           <div className="mt-6 flex justify-end">
             <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
