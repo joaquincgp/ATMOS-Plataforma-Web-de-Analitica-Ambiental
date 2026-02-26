@@ -12,6 +12,9 @@ export interface AnalyticsSourceOption {
 export interface AnalyticsStationOption {
   code: string;
   name: string;
+  latitude: number | null;
+  longitude: number | null;
+  region: string | null;
 }
 
 export interface AnalyticsVariableOption {
@@ -67,6 +70,30 @@ export interface SqlPreviewResponse {
   truncated: boolean;
 }
 
+export interface StationLatestVariable {
+  variable_code: string;
+  variable_name: string;
+  value: number;
+  unit: string | null;
+  observed_at: string;
+}
+
+export interface StationLiveSnapshotResponseItem {
+  station_code: string;
+  station_name: string;
+  latitude: number | null;
+  longitude: number | null;
+  region: string | null;
+  variables: StationLatestVariable[];
+  latest_observed_at: string;
+}
+
+export interface StationLiveSnapshotResponse {
+  stations: StationLiveSnapshotResponseItem[];
+  total: number;
+  latest_observed_at: string | null;
+}
+
 export function getAnalyticsFilters(): Promise<AnalyticsFilterOptionsResponse> {
   return apiRequest<AnalyticsFilterOptionsResponse>('/api/v1/analytics/filters');
 }
@@ -83,4 +110,14 @@ export function runSqlPreview(payload: SqlPreviewRequest): Promise<SqlPreviewRes
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export function getStationLiveSnapshot(stationCodes: string[] = []): Promise<StationLiveSnapshotResponse> {
+  const params = new URLSearchParams();
+  for (const code of stationCodes) {
+    params.append('station_codes', code);
+  }
+  const query = params.toString();
+  const path = query ? `/api/v1/analytics/station-live?${query}` : '/api/v1/analytics/station-live';
+  return apiRequest<StationLiveSnapshotResponse>(path);
 }

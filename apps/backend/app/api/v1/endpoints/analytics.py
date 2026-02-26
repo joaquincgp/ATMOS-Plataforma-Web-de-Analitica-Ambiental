@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
@@ -10,8 +10,14 @@ from app.schemas.analytics import (
     AnalyticsQueryResponse,
     SqlPreviewRequest,
     SqlPreviewResponse,
+    StationLiveSnapshotResponse,
 )
-from app.services.analytics_service import get_filter_options, preview_sql, query_data
+from app.services.analytics_service import (
+    get_filter_options,
+    get_station_live_snapshot,
+    preview_sql,
+    query_data,
+)
 
 router = APIRouter()
 
@@ -29,6 +35,14 @@ def run_analytics_query(
     return query_data(db, payload)
 
 
+@router.get("/station-live", response_model=StationLiveSnapshotResponse)
+def get_station_live(
+    station_codes: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+) -> StationLiveSnapshotResponse:
+    return get_station_live_snapshot(db, station_codes=station_codes)
+
+
 @router.post("/sql/preview", response_model=SqlPreviewResponse)
 def run_sql_preview(
     payload: SqlPreviewRequest,
@@ -38,4 +52,3 @@ def run_sql_preview(
         return preview_sql(db, payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-

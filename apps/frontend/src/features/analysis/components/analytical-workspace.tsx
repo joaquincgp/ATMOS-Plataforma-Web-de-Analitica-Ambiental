@@ -3,6 +3,7 @@ import {
   BarChart3,
   Calendar,
   ChevronRight,
+  Clock3,
   Database,
   FileSpreadsheet,
   LineChart as LineChartIcon,
@@ -18,6 +19,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   Legend,
   Line,
   LineChart,
@@ -31,12 +33,14 @@ import {
 
 import {
   getAnalyticsFilters,
+  getStationLiveSnapshot,
   runAnalyticsQuery,
   runSqlPreview,
   type AnalyticsDataRow,
   type AnalyticsFilterOptionsResponse,
   type AnalyticsQueryRequest,
   type SqlPreviewResponse,
+  type StationLiveSnapshotResponse,
 } from '@/api/modules/analytics';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,9 +51,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type ChartType = 'line' | 'bar' | 'scatter' | 'heatmap';
+type TimeGranularity = 'hour' | 'day' | 'month' | 'year';
 
-interface DailyVariablePoint {
-  date: string;
+interface TemporalPoint {
+  bucket: string;
   overall: number;
   [key: string]: string | number;
 }
@@ -62,7 +67,6 @@ interface StationBarPoint {
 interface ScatterPoint {
   hour: number;
   value: number;
-  station: string;
 }
 
 interface HistogramPoint {
@@ -94,6 +98,30 @@ const CHART_OPTIONS: {
   { id: 'scatter', label: 'Scatter', icon: Orbit },
   { id: 'heatmap', label: 'Heatmap', icon: Table2 },
 ];
+
+const GRANULARITY_OPTIONS: {
+  id: TimeGranularity;
+  label: string;
+}[] = [
+  { id: 'hour', label: 'Hour' },
+  { id: 'day', label: 'Day' },
+  { id: 'month', label: 'Month' },
+  { id: 'year', label: 'Year' },
+];
+
+const RANGE_PRESETS: {
+  id: string;
+  label: string;
+  days: number | null;
+}[] = [
+  { id: '24h', label: '24h', days: 2 },
+  { id: '7d', label: '7d', days: 7 },
+  { id: '30d', label: '30d', days: 30 },
+  { id: '1y', label: '1y', days: 365 },
+  { id: 'all', label: 'All', days: null },
+];
+
+const CHART_COLORS = ['#509EE3', '#1F5A8A', '#0EA5E9', '#0B7285', '#16A34A', '#E9730C', '#D946EF', '#A16207'];
 
 const SQL_TEMPLATES = [
   {
@@ -151,47 +179,83 @@ function normalizeDateRange(from: string, to: string): { from?: string; to?: str
   return { from: to, to: from };
 }
 
-function computeDailySeries(rows: AnalyticsDataRow[]): DailyVariablePoint[] {
-  const grouped = new Map<string, Map<string, { sum: number; count: number }>>();
+function formatDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getUTCDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(baseDate: string, deltaDays: number): string {
+  const date = new Date(`${baseDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + deltaDays);
+  return formatDate(date);
+}
+
+function getBucketKey(observedAt: string, granularity: TimeGranularity): string {
+  const dt = new Date(observedAt);
+  const year = dt.getUTCFullYear();
+  const month = `${dt.getUTCMonth() + 1}`.padStart(2, '0');
+  const day = `${dt.getUTCDate()}`.padStart(2, '0');
+  const hour = `${dt.getUTCHours()}`.padStart(2, '0');
+
+  if (granularity === 'year') {
+    return `${year}`;
+  }
+  if (granularity === 'month') {
+    return `${year}-${month}`;
+  }
+  if (granularity === 'hour') {
+    return `${year}-${month}-${day} ${hour}:00`;
+  }
+  return `${year}-${month}-${day}`;
+}
+
+function computeTemporalSeries(
+  rows: AnalyticsDataRow[],
+  granularity: TimeGranularity,
+  splitByStation: boolean,
+): { points: TemporalPoint[]; keys: string[] } {
+  const bucketMap = new Map<string, Map<string, { sum: number; count: number }>>();
+  const seriesCounter = new Map<string, number>();
 
   for (const row of rows) {
-    const date = row.observed_at.slice(0, 10);
-    const byDate = grouped.get(date) ?? new Map<string, { sum: number; count: number }>();
-    const variableBucket = byDate.get(row.variable_code) ?? { sum: 0, count: 0 };
-    variableBucket.sum += row.value;
-    variableBucket.count += 1;
-    byDate.set(row.variable_code, variableBucket);
+    const bucket = getBucketKey(row.observed_at, granularity);
+    const seriesKey = splitByStation ? row.station_code : row.variable_code;
 
-    const overallBucket = byDate.get('overall') ?? { sum: 0, count: 0 };
-    overallBucket.sum += row.value;
-    overallBucket.count += 1;
-    byDate.set('overall', overallBucket);
+    const seriesBuckets = bucketMap.get(bucket) ?? new Map<string, { sum: number; count: number }>();
 
-    grouped.set(date, byDate);
+    const item = seriesBuckets.get(seriesKey) ?? { sum: 0, count: 0 };
+    item.sum += row.value;
+    item.count += 1;
+    seriesBuckets.set(seriesKey, item);
+
+    const overall = seriesBuckets.get('overall') ?? { sum: 0, count: 0 };
+    overall.sum += row.value;
+    overall.count += 1;
+    seriesBuckets.set('overall', overall);
+
+    bucketMap.set(bucket, seriesBuckets);
+    seriesCounter.set(seriesKey, (seriesCounter.get(seriesKey) ?? 0) + 1);
   }
 
-  return Array.from(grouped.entries())
-    .map(([date, variables]) => {
-      const point: DailyVariablePoint = { date, overall: 0 };
-      for (const [variable, aggregate] of variables.entries()) {
-        point[variable] = aggregate.sum / aggregate.count;
+  const points: TemporalPoint[] = Array.from(bucketMap.entries())
+    .map(([bucket, grouped]) => {
+      const point: TemporalPoint = { bucket, overall: 0 };
+      for (const [key, values] of grouped.entries()) {
+        point[key] = values.sum / values.count;
       }
       point.overall = Number(point.overall ?? 0);
       return point;
     })
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
+    .sort((a, b) => String(a.bucket).localeCompare(String(b.bucket)));
 
-function topVariableCodes(rows: AnalyticsDataRow[], max = 3): string[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    counts.set(row.variable_code, (counts.get(row.variable_code) ?? 0) + 1);
-  }
-
-  return Array.from(counts.entries())
+  const keys = Array.from(seriesCounter.entries())
     .sort((a, b) => b[1] - a[1])
-    .slice(0, max)
-    .map(([code]) => code);
+    .map(([key]) => key);
+
+  const effectiveKeys = splitByStation ? keys : keys.slice(0, 4);
+  return { points, keys: effectiveKeys };
 }
 
 function computeStationBars(rows: AnalyticsDataRow[]): StationBarPoint[] {
@@ -209,22 +273,23 @@ function computeStationBars(rows: AnalyticsDataRow[]): StationBarPoint[] {
       station,
       avg: aggregate.sum / aggregate.count,
     }))
-    .sort((a, b) => b.avg - a.avg)
-    .slice(0, 14);
+    .sort((a, b) => b.avg - a.avg);
 }
 
-function computeScatterRows(rows: AnalyticsDataRow[]): ScatterPoint[] {
-  return rows.slice(0, 3000).map((row) => {
-    const date = new Date(row.observed_at);
-    return {
-      hour: round(date.getHours() + date.getMinutes() / 60, 2),
-      value: row.value,
-      station: row.station_code,
-    };
-  });
+function computeScatterByStation(rows: AnalyticsDataRow[]): Record<string, ScatterPoint[]> {
+  const output: Record<string, ScatterPoint[]> = {};
+  for (const row of rows.slice(0, 4000)) {
+    const dt = new Date(row.observed_at);
+    const hour = round(dt.getUTCHours() + dt.getUTCMinutes() / 60, 2);
+    if (!output[row.station_code]) {
+      output[row.station_code] = [];
+    }
+    output[row.station_code].push({ hour, value: row.value });
+  }
+  return output;
 }
 
-function computeHistogram(rows: AnalyticsDataRow[], bins = 14): HistogramPoint[] {
+function computeHistogram(rows: AnalyticsDataRow[], bins = 16): HistogramPoint[] {
   if (rows.length === 0) {
     return [];
   }
@@ -234,18 +299,18 @@ function computeHistogram(rows: AnalyticsDataRow[], bins = 14): HistogramPoint[]
   const max = Math.max(...values);
 
   if (Math.abs(max - min) < 1e-9) {
-    return [{ range: `${round(min)} - ${round(max)}`, count: rows.length }];
+    return [{ range: `${round(min)}-${round(max)}`, count: rows.length }];
   }
 
   const width = (max - min) / bins;
-  const bucketCounts = Array.from({ length: bins }, () => 0);
+  const buckets = Array.from({ length: bins }, () => 0);
 
   for (const value of values) {
     const index = Math.min(bins - 1, Math.floor((value - min) / width));
-    bucketCounts[index] += 1;
+    buckets[index] += 1;
   }
 
-  return bucketCounts.map((count, index) => {
+  return buckets.map((count, index) => {
     const start = min + width * index;
     const end = start + width;
     return {
@@ -260,14 +325,16 @@ function computeHeatmap(rows: AnalyticsDataRow[]): HeatMatrix {
   const daySet = new Set<string>();
 
   for (const row of rows) {
-    const date = row.observed_at.slice(0, 10);
-    const hour = new Date(row.observed_at).getHours();
-    const key = `${date}|${hour}`;
+    const dt = new Date(row.observed_at);
+    const day = `${dt.getUTCFullYear()}-${`${dt.getUTCMonth() + 1}`.padStart(2, '0')}-${`${dt.getUTCDate()}`.padStart(2, '0')}`;
+    const hour = dt.getUTCHours();
+    const key = `${day}|${hour}`;
+
     const bucket = grouped.get(key) ?? { sum: 0, count: 0 };
     bucket.sum += row.value;
     bucket.count += 1;
     grouped.set(key, bucket);
-    daySet.add(date);
+    daySet.add(day);
   }
 
   const days = Array.from(daySet.values()).sort().slice(-14);
@@ -277,9 +344,9 @@ function computeHeatmap(rows: AnalyticsDataRow[]): HeatMatrix {
   for (const day of days) {
     for (const hour of hours) {
       const key = `${day}|${hour}`;
-      const bucket = grouped.get(key);
-      if (bucket) {
-        values.set(key, bucket.sum / bucket.count);
+      const item = grouped.get(key);
+      if (item) {
+        values.set(key, item.sum / item.count);
       }
     }
   }
@@ -287,7 +354,7 @@ function computeHeatmap(rows: AnalyticsDataRow[]): HeatMatrix {
   return { days, hours, values };
 }
 
-function buildSummary(rows: AnalyticsDataRow[], dailySeries: DailyVariablePoint[]): SummaryStats {
+function buildSummary(rows: AnalyticsDataRow[], temporalSeries: TemporalPoint[]): SummaryStats {
   if (rows.length === 0) {
     return { samples: 0, mean: 0, min: 0, max: 0, trend: 'Stable' };
   }
@@ -298,9 +365,9 @@ function buildSummary(rows: AnalyticsDataRow[], dailySeries: DailyVariablePoint[
   const max = Math.max(...values);
 
   let trend: SummaryStats['trend'] = 'Stable';
-  if (dailySeries.length >= 2) {
-    const first = Number(dailySeries[0].overall ?? 0);
-    const last = Number(dailySeries[dailySeries.length - 1].overall ?? 0);
+  if (temporalSeries.length >= 2) {
+    const first = Number(temporalSeries[0].overall ?? 0);
+    const last = Number(temporalSeries[temporalSeries.length - 1].overall ?? 0);
     const delta = last - first;
     const threshold = Math.max(0.05, Math.abs(mean) * 0.02);
     if (delta > threshold) {
@@ -334,14 +401,19 @@ export function AnalyticalWorkspace() {
   const [selectedSourceId, setSelectedSourceId] = useState<number | null>(null);
   const [selectedStations, setSelectedStations] = useState<string[]>([]);
   const [chartType, setChartType] = useState<ChartType>('line');
+  const [granularity, setGranularity] = useState<TimeGranularity>('day');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [rangePreset, setRangePreset] = useState<string>('all');
   const [sourceSearch, setSourceSearch] = useState('');
-  const [limit, setLimit] = useState(3000);
+  const [rowLimit, setRowLimit] = useState(5000);
   const [bootstrapReady, setBootstrapReady] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [liveSnapshot, setLiveSnapshot] = useState<StationLiveSnapshotResponse | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
 
   const [sqlText, setSqlText] = useState(SQL_TEMPLATES[0].sql);
   const [sqlLimit, setSqlLimit] = useState(120);
@@ -350,11 +422,13 @@ export function AnalyticalWorkspace() {
   const [sqlPreview, setSqlPreview] = useState<SqlPreviewResponse | null>(null);
 
   const requestIdRef = useRef(0);
+  const liveRequestIdRef = useRef(0);
 
   const filteredSources = useMemo(() => {
     if (!filters) {
       return [];
     }
+
     const keyword = sourceSearch.trim().toLowerCase();
     if (!keyword) {
       return filters.sources;
@@ -372,15 +446,21 @@ export function AnalyticalWorkspace() {
     }
     return filters.sources.find((source) => source.id === selectedSourceId) ?? null;
   }, [filters, selectedSourceId]);
+  const sourceMaxRows = useMemo(
+    () => Math.max(100, selectedSource?.row_count ?? 5000),
+    [selectedSource],
+  );
 
-  const dailySeries = useMemo(() => computeDailySeries(rows), [rows]);
-  const topVariables = useMemo(() => topVariableCodes(rows, 3), [rows]);
-  const lineSeriesKeys = useMemo(() => (topVariables.length > 0 ? topVariables : ['overall']), [topVariables]);
+  const splitLineByStation = selectedStations.length > 1;
+  const temporalSeries = useMemo(
+    () => computeTemporalSeries(rows, granularity, splitLineByStation),
+    [rows, granularity, splitLineByStation],
+  );
   const stationBars = useMemo(() => computeStationBars(rows), [rows]);
-  const scatterRows = useMemo(() => computeScatterRows(rows), [rows]);
+  const scatterByStation = useMemo(() => computeScatterByStation(rows), [rows]);
   const histogram = useMemo(() => computeHistogram(rows), [rows]);
   const heatmap = useMemo(() => computeHeatmap(rows), [rows]);
-  const summary = useMemo(() => buildSummary(rows, dailySeries), [rows, dailySeries]);
+  const summary = useMemo(() => buildSummary(rows, temporalSeries.points), [rows, temporalSeries.points]);
   const sampleRows = useMemo(() => rows.slice(0, 180), [rows]);
 
   const runAnalysis = useCallback(
@@ -389,13 +469,13 @@ export function AnalyticalWorkspace() {
       stationCodes,
       fromDate,
       toDate,
-      customLimit,
+      requestedLimit,
     }: {
       sourceId: number | null;
       stationCodes: string[];
       fromDate: string;
       toDate: string;
-      customLimit?: number;
+      requestedLimit: number;
     }) => {
       if (sourceId === null) {
         setRows([]);
@@ -403,13 +483,16 @@ export function AnalyticalWorkspace() {
         return;
       }
 
+      const sourceForLimit = filters?.sources.find((source) => source.id === sourceId);
+      const datasetMaxRows = Math.max(100, sourceForLimit?.row_count ?? requestedLimit);
+      const effectiveLimit = Math.max(100, Math.min(requestedLimit, datasetMaxRows));
       const normalizedRange = normalizeDateRange(fromDate, toDate);
       const payload: AnalyticsQueryRequest = {
         source_file_ids: [sourceId],
         station_codes: stationCodes.length > 0 ? stationCodes : undefined,
         date_from: normalizedRange.from,
         date_to: normalizedRange.to,
-        limit: customLimit ?? limit,
+        limit: effectiveLimit,
       };
 
       const requestId = requestIdRef.current + 1;
@@ -426,8 +509,6 @@ export function AnalyticalWorkspace() {
         setRows(response.rows);
         if (response.rows.length === 0) {
           setError('No data for the selected source and filters.');
-        } else if (response.truncated) {
-          setError(`Showing ${response.row_count.toLocaleString()} rows (query truncated).`);
         }
       } catch (err) {
         if (requestId !== requestIdRef.current) {
@@ -441,8 +522,31 @@ export function AnalyticalWorkspace() {
         }
       }
     },
-    [limit],
+    [filters],
   );
+
+  const refreshLiveSnapshot = useCallback(async (stationCodes: string[]) => {
+    const requestId = liveRequestIdRef.current + 1;
+    liveRequestIdRef.current = requestId;
+
+    setLiveLoading(true);
+    try {
+      const response = await getStationLiveSnapshot(stationCodes);
+      if (requestId !== liveRequestIdRef.current) {
+        return;
+      }
+      setLiveSnapshot(response);
+    } catch {
+      if (requestId !== liveRequestIdRef.current) {
+        return;
+      }
+      setLiveSnapshot(null);
+    } finally {
+      if (requestId === liveRequestIdRef.current) {
+        setLiveLoading(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -459,6 +563,8 @@ export function AnalyticalWorkspace() {
         setDateFrom(from);
         setDateTo(to);
         setSelectedSourceId(firstSource?.id ?? null);
+        setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
+        setRangePreset('all');
         setBootstrapReady(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load analytics filters.');
@@ -481,11 +587,53 @@ export function AnalyticalWorkspace() {
         stationCodes: selectedStations,
         fromDate: dateFrom,
         toDate: dateTo,
+        requestedLimit: rowLimit,
       });
-    }, 140);
+    }, 130);
 
     return () => clearTimeout(timeout);
-  }, [bootstrapReady, selectedSourceId, selectedStations, dateFrom, dateTo, runAnalysis]);
+  }, [bootstrapReady, selectedSourceId, selectedStations, dateFrom, dateTo, rowLimit, runAnalysis]);
+
+  useEffect(() => {
+    setRowLimit((current) => Math.min(Math.max(100, current), sourceMaxRows));
+  }, [sourceMaxRows]);
+
+  useEffect(() => {
+    if (!bootstrapReady) {
+      return;
+    }
+    void refreshLiveSnapshot(selectedStations);
+  }, [bootstrapReady, selectedStations, refreshLiveSnapshot]);
+
+  const applyRangePreset = (presetId: string) => {
+    if (!filters) {
+      return;
+    }
+
+    const minDate = toIsoDate(filters.min_observed_at);
+    const maxDate = toIsoDate(filters.max_observed_at);
+    if (!maxDate) {
+      return;
+    }
+
+    const preset = RANGE_PRESETS.find((item) => item.id === presetId);
+    if (!preset) {
+      return;
+    }
+
+    if (preset.days === null) {
+      setDateFrom(minDate);
+      setDateTo(maxDate);
+      setRangePreset(presetId);
+      return;
+    }
+
+    const from = addDays(maxDate, -(preset.days - 1));
+    const boundedFrom = minDate && from < minDate ? minDate : from;
+    setDateFrom(boundedFrom);
+    setDateTo(maxDate);
+    setRangePreset(presetId);
+  };
 
   const handleRunClick = () => {
     void runAnalysis({
@@ -493,7 +641,7 @@ export function AnalyticalWorkspace() {
       stationCodes: selectedStations,
       fromDate: dateFrom,
       toDate: dateTo,
-      customLimit: limit,
+      requestedLimit: rowLimit,
     });
   };
 
@@ -527,19 +675,21 @@ export function AnalyticalWorkspace() {
   const heatMin = heatValues.length > 0 ? Math.min(...heatValues) : 0;
   const heatMax = heatValues.length > 0 ? Math.max(...heatValues) : 1;
 
+  const scatterEntries = Object.entries(scatterByStation);
+
   return (
     <div className="h-full overflow-y-auto bg-[linear-gradient(180deg,#f7fafc_0%,#f2f6fb_100%)]">
       <div className="px-6 lg:px-8 py-6 space-y-6">
         <div>
           <h1 className="text-2xl font-semibold text-foreground mb-1">Analytical Workspace</h1>
-          <p className="text-muted-foreground">Explore atmospheric datasets with visual filters and immediate charts.</p>
+          <p className="text-muted-foreground">Explore atmospheric datasets with temporal detail levels and station-aware charts.</p>
         </div>
 
         <Card className="bg-white border-[#dce5f1]">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Data Logic</CardTitle>
             <CardDescription>
-              Source file by name, date range, station filters, and chart type in one compact flow.
+              Select loaded file, define time range and detail level, filter stations and render chart instantly.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -598,7 +748,10 @@ export function AnalyticalWorkspace() {
                       id="date-from"
                       type="date"
                       value={dateFrom}
-                      onChange={(event) => setDateFrom(event.target.value)}
+                      onChange={(event) => {
+                        setDateFrom(event.target.value);
+                        setRangePreset('custom');
+                      }}
                       className="pr-8"
                     />
                     <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -608,11 +761,33 @@ export function AnalyticalWorkspace() {
                       id="date-to"
                       type="date"
                       value={dateTo}
-                      onChange={(event) => setDateTo(event.target.value)}
+                      onChange={(event) => {
+                        setDateTo(event.target.value);
+                        setRangePreset('custom');
+                      }}
                       className="pr-8"
                     />
                     <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {RANGE_PRESETS.map((preset) => {
+                    const active = rangePreset === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => applyRangePreset(preset.id)}
+                        className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
+                          active
+                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                            : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -640,8 +815,30 @@ export function AnalyticalWorkspace() {
                   })}
                 </ToggleGroup>
 
+                <Label className="flex items-center gap-1.5">
+                  <Clock3 className="w-3.5 h-3.5" />
+                  Time Detail Level
+                </Label>
+                <ToggleGroup
+                  type="single"
+                  value={granularity}
+                  onValueChange={(value) => {
+                    if (value) {
+                      setGranularity(value as TimeGranularity);
+                    }
+                  }}
+                  variant="outline"
+                  className="w-full grid grid-cols-4"
+                >
+                  {GRANULARITY_OPTIONS.map((option) => (
+                    <ToggleGroupItem key={option.id} value={option.id} className="h-9 text-xs">
+                      {option.label}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+
                 <Label>Stations</Label>
-                <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[82px] overflow-auto">
+                <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[96px] overflow-auto">
                   {(filters?.stations ?? []).map((station) => {
                     const active = selectedStations.includes(station.code);
                     return (
@@ -654,6 +851,7 @@ export function AnalyticalWorkspace() {
                             ? 'border-[#509EE3] bg-[#509EE3] text-white'
                             : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
                         }`}
+                        title={station.name}
                       >
                         <MapPin className="w-3.5 h-3.5" />
                         {station.code}
@@ -666,22 +864,30 @@ export function AnalyticalWorkspace() {
 
             <div className="flex items-center gap-3 flex-wrap">
               <div className="flex items-center gap-2">
-                <Label htmlFor="query-limit" className="text-xs text-muted-foreground">
-                  Row limit
+                <Label htmlFor="row-limit" className="text-xs text-muted-foreground">
+                  Rows to load
                 </Label>
                 <Input
-                  id="query-limit"
+                  id="row-limit"
                   type="number"
-                  value={limit}
-                  min={1000}
-                  max={20000}
-                  step={500}
+                  min={100}
+                  max={sourceMaxRows}
+                  step={100}
+                  value={rowLimit}
                   onChange={(event) =>
-                    setLimit(Math.min(20000, Math.max(1000, Number(event.target.value || 1000))))
+                    setRowLimit(
+                      Math.min(
+                        sourceMaxRows,
+                        Math.max(100, Number(event.target.value || 100)),
+                      ),
+                    )
                   }
-                  className="w-28 h-8"
+                  className="h-8 w-32"
                 />
               </div>
+              <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/30">
+                Max for dataset: {sourceMaxRows.toLocaleString()}
+              </Badge>
               <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={handleRunClick} disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
                 Refresh
@@ -717,9 +923,12 @@ export function AnalyticalWorkspace() {
               <CardHeader>
                 <CardTitle className="text-lg">Visualization Preview</CardTitle>
                 <CardDescription>
-                  {chartType === 'line' && 'Temporal trends by dominant variables'}
-                  {chartType === 'bar' && 'Station averages for selected filters'}
-                  {chartType === 'scatter' && 'Hourly dispersion across selected samples'}
+                  {chartType === 'line' &&
+                    (splitLineByStation
+                      ? 'Color-coded lines by station for multi-station comparison'
+                      : `Temporal trends grouped by ${granularity}`)}
+                  {chartType === 'bar' && 'Average concentration by station'}
+                  {chartType === 'scatter' && 'Hourly dispersion with station-based colors'}
                   {chartType === 'heatmap' && 'Day-hour intensity matrix'}
                 </CardDescription>
               </CardHeader>
@@ -731,19 +940,19 @@ export function AnalyticalWorkspace() {
                     </div>
                   ) : chartType === 'line' ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={dailySeries} margin={{ top: 8, right: 20, left: 10, bottom: 12 }}>
+                      <LineChart data={temporalSeries.points} margin={{ top: 8, right: 20, left: 10, bottom: 12 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="date" />
+                        <XAxis dataKey="bucket" />
                         <YAxis />
                         <Tooltip />
                         <Legend />
-                        {lineSeriesKeys.map((key, index) => (
+                        {temporalSeries.keys.map((key, index) => (
                           <Line
                             key={key}
                             type="monotone"
                             dataKey={key}
-                            name={key === 'overall' ? 'overall_avg' : key}
-                            stroke={['#509EE3', '#1F5A8A', '#0EA5E9'][index] ?? '#509EE3'}
+                            name={key}
+                            stroke={CHART_COLORS[index % CHART_COLORS.length]}
                             strokeWidth={2.6}
                             dot={false}
                           />
@@ -757,7 +966,11 @@ export function AnalyticalWorkspace() {
                         <XAxis dataKey="station" />
                         <YAxis />
                         <Tooltip />
-                        <Bar dataKey="avg" fill="#509EE3" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="avg" radius={[6, 6, 0, 0]}>
+                          {stationBars.map((item, index) => (
+                            <Cell key={`station-bar-${item.station}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   ) : chartType === 'scatter' ? (
@@ -768,7 +981,7 @@ export function AnalyticalWorkspace() {
                           type="number"
                           dataKey="hour"
                           name="Hour"
-                          label={{ value: 'Hour of Day', position: 'insideBottom', offset: -5 }}
+                          label={{ value: 'Hour of Day (UTC)', position: 'insideBottom', offset: -5 }}
                         />
                         <YAxis
                           type="number"
@@ -777,7 +990,15 @@ export function AnalyticalWorkspace() {
                           label={{ value: 'Measured Value', angle: -90, position: 'insideLeft' }}
                         />
                         <Tooltip cursor={{ strokeDasharray: '4 4' }} />
-                        <Scatter name="Samples" data={scatterRows} fill="#509EE3" />
+                        <Legend />
+                        {scatterEntries.map(([stationCode, points], index) => (
+                          <Scatter
+                            key={stationCode}
+                            name={stationCode}
+                            data={points}
+                            fill={CHART_COLORS[index % CHART_COLORS.length]}
+                          />
+                        ))}
                       </ScatterChart>
                     </ResponsiveContainer>
                   ) : (
@@ -823,7 +1044,7 @@ export function AnalyticalWorkspace() {
             <Card className="bg-white border-[#dce5f1]">
               <CardHeader>
                 <CardTitle className="text-lg">Distribution Snapshot</CardTitle>
-                <CardDescription>Histogram of measured values for quick statistical inspection.</CardDescription>
+                <CardDescription>Histogram of measured values using all filtered records.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[300px] w-full">
@@ -884,8 +1105,55 @@ export function AnalyticalWorkspace() {
             </Card>
           </div>
 
-          <div className="xl:col-span-3">
-            <Card className="bg-white border-[#dce5f1] sticky top-6">
+          <div className="xl:col-span-3 space-y-6">
+            <Card className="bg-white border-[#dce5f1]">
+              <CardHeader>
+                <CardTitle className="text-lg">Station Live Snapshot</CardTitle>
+                <CardDescription>Latest value per variable by station (simulated real-time).</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {liveLoading ? (
+                  <div className="py-6 flex items-center justify-center text-muted-foreground text-sm">
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Loading latest station data...
+                  </div>
+                ) : !liveSnapshot || liveSnapshot.stations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No latest station records available.</p>
+                ) : (
+                  <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
+                    {liveSnapshot.stations.map((station) => (
+                      <div key={station.station_code} className="border rounded-md p-2.5 bg-[#f8fbff]">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm font-semibold text-foreground">{station.station_name}</p>
+                            <p className="text-[11px] text-muted-foreground">{station.station_code}</p>
+                          </div>
+                          <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/25">{station.region ?? 'Region N/A'}</Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          {station.latitude ?? '--'}, {station.longitude ?? '--'}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          Last update: {new Date(station.latest_observed_at).toLocaleString()}
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          {station.variables.map((item) => (
+                            <div key={`${station.station_code}-${item.variable_code}`} className="flex items-center justify-between text-[11px]">
+                              <span className="font-medium text-foreground">{item.variable_code}</span>
+                              <span className="text-muted-foreground">
+                                {round(item.value)} {item.unit ?? ''}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-[#dce5f1]">
               <CardHeader>
                 <CardTitle className="text-lg">SQL Quick Preview</CardTitle>
                 <CardDescription>Read-only SQL for fast table samples.</CardDescription>

@@ -22,15 +22,23 @@ from app.schemas.analytics import (
     AnalyticsVariableOption,
     SqlPreviewRequest,
     SqlPreviewResponse,
+    StationLatestVariableResponse,
+    StationLiveSnapshotResponse,
+    StationLiveSnapshotResponseItem,
 )
+from app.services.station_reference import resolve_station_reference, sync_station_reference_metadata
 
 FORBIDDEN_SQL_PATTERN = re.compile(
     r"\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|comment|copy|call|do|merge)\b",
     flags=re.IGNORECASE,
 )
 
+DEFAULT_ANALYTICS_LIMIT = 5000
+
 
 def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
+    sync_station_reference_metadata(db)
+
     measurement_count = func.count(Measurement.id).label("measurement_count")
     source_rows = db.execute(
         select(
@@ -55,7 +63,9 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         .limit(300)
     ).all()
 
-    station_rows = db.execute(select(Station.code, Station.name).order_by(Station.code.asc())).all()
+    station_rows = db.execute(
+        select(Station.code, Station.name, Station.latitude, Station.longitude).order_by(Station.code.asc())
+    ).all()
     variable_rows = db.execute(select(Variable.code, Variable.display_name).order_by(Variable.code.asc())).all()
 
     min_observed_at, max_observed_at = db.execute(
@@ -74,7 +84,16 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
             )
             for row in source_rows
         ],
-        stations=[AnalyticsStationOption(code=row.code, name=row.name) for row in station_rows],
+        stations=[
+            AnalyticsStationOption(
+                code=row.code,
+                name=row.name,
+                latitude=row.latitude,
+                longitude=row.longitude,
+                region=(resolve_station_reference(row.code, row.name).region if resolve_station_reference(row.code, row.name) else None),
+            )
+            for row in station_rows
+        ],
         variables=[AnalyticsVariableOption(code=row.code, name=row.display_name) for row in variable_rows],
         min_observed_at=min_observed_at,
         max_observed_at=max_observed_at,
@@ -113,12 +132,14 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
         end_dt = datetime.combine(payload.date_to + timedelta(days=1), time.min)
         statement = statement.where(Measurement.observed_at < end_dt)
 
-    result_rows = db.execute(
-        statement.order_by(Measurement.observed_at.asc()).limit(payload.limit + 1)
-    ).all()
+    ordered_statement = statement.order_by(Measurement.observed_at.asc())
+    dataset_max_rows = _resolve_dataset_max_rows(db, payload.source_file_ids)
+    requested_limit = max(100, payload.limit or DEFAULT_ANALYTICS_LIMIT)
+    effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
 
-    truncated = len(result_rows) > payload.limit
-    capped_rows = result_rows[: payload.limit]
+    result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
+    truncated = len(result_rows) > effective_limit
+    capped_rows = result_rows[:effective_limit]
 
     return AnalyticsQueryResponse(
         rows=[
@@ -138,6 +159,97 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
         ],
         row_count=len(capped_rows),
         truncated=truncated,
+    )
+
+
+def get_station_live_snapshot(
+    db: Session,
+    *,
+    station_codes: list[str] | None = None,
+) -> StationLiveSnapshotResponse:
+    sync_station_reference_metadata(db)
+
+    latest_ranked = (
+        select(
+            Measurement.station_id.label("station_id"),
+            Measurement.variable_id.label("variable_id"),
+            Measurement.observed_at.label("observed_at"),
+            Measurement.value.label("value"),
+            Measurement.unit.label("unit"),
+            func.row_number()
+            .over(
+                partition_by=(Measurement.station_id, Measurement.variable_id),
+                order_by=Measurement.observed_at.desc(),
+            )
+            .label("row_num"),
+        )
+        .subquery()
+    )
+
+    statement = (
+        select(
+            Station.code.label("station_code"),
+            Station.name.label("station_name"),
+            Station.latitude.label("latitude"),
+            Station.longitude.label("longitude"),
+            Variable.code.label("variable_code"),
+            Variable.display_name.label("variable_name"),
+            latest_ranked.c.value,
+            latest_ranked.c.unit,
+            latest_ranked.c.observed_at,
+        )
+        .join(latest_ranked, latest_ranked.c.station_id == Station.id)
+        .join(Variable, Variable.id == latest_ranked.c.variable_id)
+        .where(latest_ranked.c.row_num == 1)
+    )
+
+    if station_codes:
+        statement = statement.where(Station.code.in_(station_codes))
+
+    rows = db.execute(statement.order_by(Station.code.asc(), Variable.code.asc())).all()
+
+    grouped: dict[str, StationLiveSnapshotResponseItem] = {}
+    global_latest: datetime | None = None
+
+    for row in rows:
+        reference = resolve_station_reference(row.station_code, row.station_name)
+        station_item = grouped.get(row.station_code)
+
+        if station_item is None:
+            station_item = StationLiveSnapshotResponseItem(
+                station_code=row.station_code,
+                station_name=row.station_name,
+                latitude=row.latitude if row.latitude is not None else (reference.latitude if reference else None),
+                longitude=row.longitude if row.longitude is not None else (reference.longitude if reference else None),
+                region=reference.region if reference else None,
+                variables=[],
+                latest_observed_at=row.observed_at,
+            )
+            grouped[row.station_code] = station_item
+
+        station_item.variables.append(
+            StationLatestVariableResponse(
+                variable_code=row.variable_code,
+                variable_name=row.variable_name,
+                value=float(row.value),
+                unit=row.unit,
+                observed_at=row.observed_at,
+            )
+        )
+
+        if row.observed_at > station_item.latest_observed_at:
+            station_item.latest_observed_at = row.observed_at
+
+        if global_latest is None or row.observed_at > global_latest:
+            global_latest = row.observed_at
+
+    stations = list(grouped.values())
+    stations.sort(key=lambda item: item.station_code)
+
+    return StationLiveSnapshotResponse(
+        stations=stations,
+        total=len(stations),
+        latest_observed_at=global_latest,
     )
 
 
@@ -192,3 +304,11 @@ def _serialize_scalar(value: Any) -> Any:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
+
+
+def _resolve_dataset_max_rows(db: Session, source_file_ids: list[int]) -> int:
+    statement = select(func.count(Measurement.id))
+    if source_file_ids:
+        statement = statement.where(Measurement.source_file_id.in_(source_file_ids))
+    count = db.scalar(statement)
+    return int(count or 0)
