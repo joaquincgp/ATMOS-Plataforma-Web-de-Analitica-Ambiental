@@ -23,7 +23,7 @@ Actualmente, ATMOS utiliza la red de monitoreo REMMAQ (Quito, Ecuador) como ento
 
 ---
 
-## 🛠️ Stack Tecnológico
+## Stack Tecnológico
 
 ### Backend (Data & ML Services)
 * **Framework:** FastAPI (Python 3.11+)
