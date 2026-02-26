@@ -75,7 +75,7 @@ export function DataSourceManager() {
                   </div>
                   <div>
                     <CardTitle className="text-lg">REMMAQ Auto-Sync Status</CardTitle>
-                    <CardDescription>Automatic data ingestion from REMMAQ API</CardDescription>
+                    <CardDescription>Automatic data ingestion from REMMAQ Website</CardDescription>
                   </div>
                 </div>
                 <Badge className="bg-green-100 text-green-800 border-green-200 hover:bg-green-100">

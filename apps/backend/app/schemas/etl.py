@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DbInitResponse(BaseModel):
@@ -23,6 +24,7 @@ class EtlRunResponse(BaseModel):
     records_inserted: int
     records_updated: int
     records_skipped: int
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class EtlMetricsResponse(BaseModel):

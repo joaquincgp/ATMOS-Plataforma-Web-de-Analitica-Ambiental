@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import {
+  getEtlRun,
   getEtlMetrics,
   getEtlPreview,
   getEtlRuns,
   initializeDatabase,
-  syncRemmaq,
+  startSyncRemmaq,
+  startUploadEtlFile,
   type SyncRemmaqParams,
-  uploadEtlFile,
   type DbInitResponse,
   type EtlMetricsResponse,
   type EtlPreviewRowResponse,
@@ -16,6 +17,7 @@ import {
 
 interface UseEtlState {
   runs: EtlRunResponse[];
+  currentRun: EtlRunResponse | null;
   metrics: EtlMetricsResponse | null;
   previewRows: EtlPreviewRowResponse[];
   loading: boolean;
@@ -32,11 +34,21 @@ interface UseEtlActions {
 
 export function useEtl(): UseEtlState & UseEtlActions {
   const [runs, setRuns] = useState<EtlRunResponse[]>([]);
+  const [currentRun, setCurrentRun] = useState<EtlRunResponse | null>(null);
   const [metrics, setMetrics] = useState<EtlMetricsResponse | null>(null);
   const [previewRows, setPreviewRows] = useState<EtlPreviewRowResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const upsertRun = useCallback((run: EtlRunResponse) => {
+    setRuns((previous) => {
+      const next = [run, ...previous.filter((item) => item.id !== run.id)];
+      next.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+      return next;
+    });
+    setCurrentRun(run);
+  }, []);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -45,6 +57,7 @@ export function useEtl(): UseEtlState & UseEtlActions {
     try {
       const [nextRuns, nextMetrics] = await Promise.all([getEtlRuns(20), getEtlMetrics()]);
       setRuns(nextRuns);
+      setCurrentRun(nextRuns[0] ?? null);
       setMetrics(nextMetrics);
       const preview = await getEtlPreview(nextRuns[0]?.id, 80);
       setPreviewRows(preview.rows);
@@ -55,6 +68,35 @@ export function useEtl(): UseEtlState & UseEtlActions {
       setLoading(false);
     }
   }, []);
+
+  const pollRun = useCallback(
+    async (runId: string) => {
+      let lastRun: EtlRunResponse | null = null;
+
+      for (let attempt = 0; attempt < 600; attempt += 1) {
+        const run = await getEtlRun(runId);
+        upsertRun(run);
+        lastRun = run;
+
+        if (run.status !== 'running') {
+          break;
+        }
+
+        if (attempt % 4 === 0) {
+          const nextMetrics = await getEtlMetrics();
+          setMetrics(nextMetrics);
+        }
+
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 1200);
+        });
+      }
+
+      await refresh();
+      return lastRun;
+    },
+    [refresh, upsertRun],
+  );
 
   useEffect(() => {
     void refresh();
@@ -68,24 +110,27 @@ export function useEtl(): UseEtlState & UseEtlActions {
 
   const triggerRemmaqSync = useCallback(
     async (params: SyncRemmaqParams = {}) => {
-      const response = await syncRemmaq(params);
-      await refresh();
-      return response;
+      const run = await startSyncRemmaq(params);
+      upsertRun(run);
+      const lastRun = await pollRun(run.id);
+      return lastRun ?? run;
     },
-    [refresh],
+    [pollRun, upsertRun],
   );
 
   const uploadManualFile = useCallback(
     async (file: File, forceReprocess = false) => {
-      const response = await uploadEtlFile(file, forceReprocess);
-      await refresh();
-      return response;
+      const run = await startUploadEtlFile(file, forceReprocess);
+      upsertRun(run);
+      const lastRun = await pollRun(run.id);
+      return lastRun ?? run;
     },
-    [refresh],
+    [pollRun, upsertRun],
   );
 
   return {
     runs,
+    currentRun,
     metrics,
     previewRows,
     loading,

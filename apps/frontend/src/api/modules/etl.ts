@@ -20,6 +20,7 @@ export interface EtlRunResponse {
   records_inserted: number;
   records_updated: number;
   records_skipped: number;
+  details: Record<string, unknown>;
 }
 
 export interface EtlMetricsResponse {
@@ -46,7 +47,6 @@ export interface EtlPreviewResponse {
 export interface SyncRemmaqParams {
   forceReprocess?: boolean;
   variableCodes?: string[];
-  maxArchives?: number;
 }
 
 export const REMMAQ_VARIABLE_OPTIONS = [
@@ -73,9 +73,6 @@ export function initializeDatabase(): Promise<DbInitResponse> {
 export function syncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunResponse> {
   const searchParams = new URLSearchParams();
   searchParams.set('force_reprocess', String(params.forceReprocess ?? false));
-  if (params.maxArchives && params.maxArchives > 0) {
-    searchParams.set('max_archives', String(params.maxArchives));
-  }
   if (params.variableCodes?.length) {
     for (const code of params.variableCodes) {
       searchParams.append('variable_codes', code);
@@ -83,6 +80,19 @@ export function syncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunRespons
   }
 
   return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq?${searchParams.toString()}`, {
+    method: 'POST',
+  });
+}
+
+export function startSyncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.variableCodes?.length) {
+    for (const code of params.variableCodes) {
+      searchParams.append('variable_codes', code);
+    }
+  }
+
+  return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq/start?${searchParams.toString()}`, {
     method: 'POST',
   });
 }
@@ -115,8 +125,40 @@ export async function uploadEtlFile(file: File, forceReprocess = false): Promise
   return (await response.json()) as EtlRunResponse;
 }
 
+export async function startUploadEtlFile(file: File, forceReprocess = false): Promise<EtlRunResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(
+    `${env.apiBaseUrl}/api/v1/etl/upload/start?force_reprocess=${forceReprocess}`,
+    {
+      method: 'POST',
+      body: formData,
+    },
+  );
+
+  if (!response.ok) {
+    let detail = `Upload failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) {
+        detail = payload.detail;
+      }
+    } catch {
+      // Keep fallback detail
+    }
+    throw new Error(detail);
+  }
+
+  return (await response.json()) as EtlRunResponse;
+}
+
 export function getEtlRuns(limit = 20): Promise<EtlRunResponse[]> {
   return apiRequest<EtlRunResponse[]>(`/api/v1/etl/runs?limit=${limit}`);
+}
+
+export function getEtlRun(runId: string): Promise<EtlRunResponse> {
+  return apiRequest<EtlRunResponse>(`/api/v1/etl/runs/${runId}`);
 }
 
 export function getEtlMetrics(): Promise<EtlMetricsResponse> {
