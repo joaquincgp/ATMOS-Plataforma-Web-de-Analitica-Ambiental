@@ -44,6 +44,8 @@ def normalize_variable_code(value: str) -> str:
     code = code.replace(" ", "")
     code = code.replace("μ", "u")
     code = code.replace("µ", "u")
+    if code in {"PM2.5", "PM2_5", "PM2-5"}:
+        return "PM25"
     return code
 
 

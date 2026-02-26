@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 import re
 import shutil
+import time
+from typing import Any
 import zipfile
 
 from bs4 import BeautifulSoup
 import httpx
 import pandas as pd
-from sqlalchemy import desc, func, select, tuple_
+from sqlalchemy import delete, desc, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
@@ -136,36 +138,132 @@ class EtlService:
         variable_codes: list[str] | None = None,
         max_archives: int | None = None,
     ) -> EtlRun:
-        run = self._create_run(trigger_type="automatic", source=self.settings.remmaq_base_url)
-        normalized_variables = self._normalize_variable_selection(variable_codes)
-        max_archives_effective = max_archives or self.settings.etl_sync_default_max_archives
+        run, normalized_variables, max_archives_effective = self.create_remmaq_run(
+            variable_codes=variable_codes,
+            max_archives=max_archives,
+        )
+        return self.run_remmaq_sync(
+            run_id=run.id,
+            selected_variables=normalized_variables,
+            max_archives=max_archives_effective,
+        )
 
+    def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
+        suffix = Path(filename).suffix.lower()
+        if suffix not in MANUAL_FILE_SUFFIXES:
+            allowed = ", ".join(MANUAL_FILE_SUFFIXES)
+            raise ValueError(f"Formato de carga manual no soportado. Usa: {allowed}")
+        run = self.create_manual_run(filename=filename)
+        return self.run_manual_ingestion(
+            run_id=run.id,
+            filename=filename,
+            content=content,
+            force_reprocess=force_reprocess,
+        )
+
+    def _create_run(self, *, trigger_type: str, source: str) -> EtlRun:
+        run = EtlRun(trigger_type=trigger_type, source=source, status="running")
+        self.db.add(run)
+        self.db.commit()
+        self.db.refresh(run)
+        return run
+
+    def get_run(self, run_id: str) -> EtlRun | None:
+        return self.db.get(EtlRun, run_id)
+
+    def create_remmaq_run(
+        self,
+        *,
+        variable_codes: list[str] | None,
+        max_archives: int | None,
+    ) -> tuple[EtlRun, list[str], int]:
+        normalized_variables = self._normalize_variable_selection(variable_codes)
+        # When the caller explicitly selects variables, process exactly those.
+        if variable_codes:
+            max_archives_effective = len(normalized_variables)
+        else:
+            max_archives_effective = max_archives or self.settings.etl_sync_default_max_archives
+        run = self._create_run(trigger_type="automatic", source=self.settings.remmaq_base_url)
+        self._set_run_progress(
+            run,
+            stage="queued",
+            stage_label="En cola",
+            progress_percent=0,
+            selected_variables=normalized_variables,
+            max_archives=max_archives_effective,
+        )
+        return run, normalized_variables, max_archives_effective
+
+    def create_manual_run(self, *, filename: str) -> EtlRun:
+        run = self._create_run(trigger_type="manual", source="manual-upload")
+        self._set_run_progress(
+            run,
+            stage="queued",
+            stage_label="En cola",
+            progress_percent=0,
+            filename=filename,
+        )
+        return run
+
+    def run_remmaq_sync(
+        self,
+        *,
+        run_id: str,
+        selected_variables: list[str],
+        max_archives: int,
+    ) -> EtlRun:
+        run = self._get_run_or_raise(run_id)
         try:
+            self._set_run_progress(
+                run,
+                stage="discovering",
+                stage_label="Descubriendo enlaces",
+                progress_percent=2,
+                selected_variables=selected_variables,
+                max_archives=max_archives,
+            )
+
             archives = self._discover_archive_urls(
                 root_url=self.settings.remmaq_base_url,
-                selected_variables=normalized_variables,
-                max_archives=max_archives_effective,
+                selected_variables=selected_variables,
+                max_archives=max_archives,
             )
             run.archives_discovered = len(archives)
-            run.details = {
-                "selected_variables": normalized_variables,
-                "max_archives": max_archives_effective,
-                "stage": "discovered",
-            }
             self.db.commit()
 
-            for index, archive in enumerate(archives, start=1):
-                run.details = {
-                    "selected_variables": normalized_variables,
-                    "max_archives": max_archives_effective,
-                    "stage": "processing",
-                    "current_archive": index,
-                    "current_variable": archive["variable_code"],
-                    "current_url": archive["url"],
-                }
-                self.db.commit()
+            discovered_variable_codes = sorted({archive["variable_code"] for archive in archives})
+            deleted_measurements = self._delete_existing_measurements_for_variable_codes(discovered_variable_codes)
+            self._set_run_progress(
+                run,
+                stage="discovering",
+                stage_label="Fuentes identificadas",
+                progress_percent=5,
+                archives_total=len(archives),
+                selected_variables=selected_variables,
+                max_archives=max_archives,
+                overwritten_variables=discovered_variable_codes,
+                deleted_measurements=deleted_measurements,
+            )
 
+            for archive_index, archive in enumerate(archives, start=1):
                 archive_url = archive["url"]
+                variable_code = archive["variable_code"]
+
+                self._set_run_progress(
+                    run,
+                    stage="download",
+                    stage_label="Descarga",
+                    progress_percent=self._compute_progress_percent(
+                        archives_total=len(archives),
+                        archives_completed=archive_index - 1,
+                        stage_fraction=0.05,
+                    ),
+                    archives_total=len(archives),
+                    current_archive=archive_index,
+                    current_variable=variable_code,
+                    current_url=archive_url,
+                )
+
                 content, filename = self._download_binary(archive_url)
                 self._process_binary(
                     etl_run=run,
@@ -173,43 +271,57 @@ class EtlService:
                     original_name=filename,
                     source_type="automatic",
                     source_url=archive_url,
-                    force_reprocess=force_reprocess,
+                    force_reprocess=True,
+                    archive_index=archive_index,
+                    archives_total=len(archives),
+                    selected_variables=selected_variables,
+                    current_variable=variable_code,
                 )
 
             run.status = "completed"
             run.finished_at = datetime.utcnow()
-            run.details = {
-                "selected_variables": normalized_variables,
-                "max_archives": max_archives_effective,
-                "stage": "completed",
-            }
+            self.db.add(run)
             self.db.commit()
+            self._set_run_progress(
+                run,
+                stage="completed",
+                stage_label="Completado",
+                progress_percent=100,
+                archives_total=run.archives_discovered,
+                archives_processed=run.archives_processed,
+                records_inserted=run.records_inserted,
+                records_updated=run.records_updated,
+                records_skipped=run.records_skipped,
+            )
             self.db.refresh(run)
             return run
         except Exception as exc:  # noqa: BLE001
-            self.db.rollback()
-            try:
-                run.status = "failed"
-                run.finished_at = datetime.utcnow()
-                run.details = {"error": str(exc)}
-                self.db.add(run)
-                self.db.commit()
-                self.db.refresh(run)
-            except Exception:  # noqa: BLE001
-                self.db.rollback()
+            self._mark_run_failed(run_id=run_id, error_message=str(exc))
             raise
 
-    def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
-        suffix = Path(filename).suffix.lower()
-        if suffix not in MANUAL_FILE_SUFFIXES:
-            allowed = ", ".join(MANUAL_FILE_SUFFIXES)
-            raise ValueError(f"Formato de carga manual no soportado. Usa: {allowed}")
-
-        run = self._create_run(trigger_type="manual", source="manual-upload")
-
+    def run_manual_ingestion(
+        self,
+        *,
+        run_id: str,
+        filename: str,
+        content: bytes,
+        force_reprocess: bool = False,
+    ) -> EtlRun:
+        run = self._get_run_or_raise(run_id)
         try:
             run.archives_discovered = 1
+            self.db.add(run)
             self.db.commit()
+
+            self._set_run_progress(
+                run,
+                stage="download",
+                stage_label="Descarga",
+                progress_percent=5,
+                archives_total=1,
+                current_archive=1,
+                filename=filename,
+            )
 
             self._process_binary(
                 etl_run=run,
@@ -218,32 +330,98 @@ class EtlService:
                 source_type="manual",
                 source_url=None,
                 force_reprocess=force_reprocess,
+                archive_index=1,
+                archives_total=1,
+                selected_variables=[],
+                current_variable="MANUAL",
             )
 
             run.status = "completed"
             run.finished_at = datetime.utcnow()
+            self.db.add(run)
             self.db.commit()
+            self._set_run_progress(
+                run,
+                stage="completed",
+                stage_label="Completado",
+                progress_percent=100,
+                archives_total=1,
+                archives_processed=run.archives_processed,
+                records_inserted=run.records_inserted,
+                records_updated=run.records_updated,
+                records_skipped=run.records_skipped,
+            )
             self.db.refresh(run)
             return run
         except Exception as exc:  # noqa: BLE001
-            self.db.rollback()
-            try:
-                run.status = "failed"
-                run.finished_at = datetime.utcnow()
-                run.details = {"error": str(exc)}
-                self.db.add(run)
-                self.db.commit()
-                self.db.refresh(run)
-            except Exception:  # noqa: BLE001
-                self.db.rollback()
+            self._mark_run_failed(run_id=run_id, error_message=str(exc))
             raise
 
-    def _create_run(self, *, trigger_type: str, source: str) -> EtlRun:
-        run = EtlRun(trigger_type=trigger_type, source=source, status="running")
+    def _get_run_or_raise(self, run_id: str) -> EtlRun:
+        run = self.get_run(run_id)
+        if run is None:
+            raise ValueError(f"No existe corrida ETL con id {run_id}.")
+        return run
+
+    def _mark_run_failed(self, *, run_id: str, error_message: str) -> None:
+        self.db.rollback()
+        run = self.get_run(run_id)
+        if run is None:
+            return
+        run.status = "failed"
+        run.finished_at = datetime.utcnow()
         self.db.add(run)
         self.db.commit()
-        self.db.refresh(run)
-        return run
+        self._set_run_progress(
+            run,
+            stage="failed",
+            stage_label="Falló",
+            progress_percent=100,
+            error=error_message,
+        )
+
+    def _set_run_progress(
+        self,
+        run: EtlRun,
+        *,
+        stage: str,
+        stage_label: str,
+        progress_percent: int,
+        **extra: Any,
+    ) -> None:
+        details = dict(run.details or {})
+        details.update(extra)
+        details["stage"] = stage
+        details["stage_label"] = stage_label
+        details["progress_percent"] = max(0, min(100, int(progress_percent)))
+        details["updated_at"] = datetime.now(timezone.utc).isoformat()
+        run.details = details
+        self.db.add(run)
+        self.db.commit()
+
+    def _compute_progress_percent(self, *, archives_total: int, archives_completed: int, stage_fraction: float) -> int:
+        safe_total = max(1, archives_total)
+        safe_completed = max(0, min(archives_completed, safe_total))
+        safe_fraction = max(0.0, min(stage_fraction, 1.0))
+        value = ((safe_completed + safe_fraction) / safe_total) * 100
+        return int(max(0, min(100, round(value))))
+
+    def _delete_existing_measurements_for_variable_codes(self, variable_codes: list[str]) -> int:
+        if not variable_codes:
+            return 0
+
+        normalized_codes = sorted({normalize_variable_code(code) for code in variable_codes if code})
+        if not normalized_codes:
+            return 0
+
+        variable_ids = list(self.db.scalars(select(Variable.id).where(Variable.code.in_(normalized_codes))).all())
+        if not variable_ids:
+            return 0
+
+        result = self.db.execute(delete(Measurement).where(Measurement.variable_id.in_(variable_ids)))
+        self.db.commit()
+        rowcount = int(result.rowcount or 0)
+        return max(0, rowcount)
 
     def _normalize_variable_selection(self, variable_codes: list[str] | None) -> list[str]:
         if not variable_codes:
@@ -278,6 +456,7 @@ class EtlService:
 
         discovered: list[dict[str, str]] = []
         discovered_urls: set[str] = set()
+        discovered_variables: set[str] = set()
         selected_set = set(selected_variables)
 
         with httpx.Client(
@@ -314,6 +493,8 @@ class EtlService:
             variable_code = self._match_remmaq_variable(text=text, href=href, full_url=normalized_url)
             if variable_code is None or variable_code not in selected_set:
                 continue
+            if variable_code in discovered_variables:
+                continue
 
             discovered.append(
                 {
@@ -323,6 +504,7 @@ class EtlService:
                 }
             )
             discovered_urls.add(normalized_url)
+            discovered_variables.add(variable_code)
             if len(discovered) >= max_archives:
                 break
 
@@ -408,8 +590,30 @@ class EtlService:
         source_type: str,
         source_url: str | None,
         force_reprocess: bool,
+        archive_index: int,
+        archives_total: int,
+        selected_variables: list[str],
+        current_variable: str,
     ) -> None:
         checksum = compute_sha256(content)
+
+        self._set_run_progress(
+            etl_run,
+            stage="download",
+            stage_label="Descarga",
+            progress_percent=self._compute_progress_percent(
+                archives_total=archives_total,
+                archives_completed=max(0, archive_index - 1),
+                stage_fraction=0.1,
+            ),
+            archives_total=archives_total,
+            current_archive=archive_index,
+            current_variable=current_variable,
+            selected_variables=selected_variables,
+            records_inserted=etl_run.records_inserted,
+            records_updated=etl_run.records_updated,
+            records_skipped=etl_run.records_skipped,
+        )
 
         existing_file = self.db.scalar(
             select(SourceFile).where(SourceFile.checksum_sha256 == checksum, SourceFile.status == "completed")
@@ -419,6 +623,23 @@ class EtlService:
                 etl_run.records_skipped += existing_file.row_count
                 etl_run.archives_processed += 1
                 self.db.commit()
+                self._set_run_progress(
+                    etl_run,
+                    stage="completed_archive",
+                    stage_label="Archivo ya procesado",
+                    progress_percent=self._compute_progress_percent(
+                        archives_total=archives_total,
+                        archives_completed=archive_index,
+                        stage_fraction=0.0,
+                    ),
+                    archives_total=archives_total,
+                    current_archive=archive_index,
+                    current_variable=current_variable,
+                    selected_variables=selected_variables,
+                    records_inserted=etl_run.records_inserted,
+                    records_updated=etl_run.records_updated,
+                    records_skipped=etl_run.records_skipped,
+                )
                 return
 
         safe_name = original_name.replace("/", "_").replace("\\", "_")
@@ -440,13 +661,90 @@ class EtlService:
         self.db.commit()
         self.db.refresh(source_file)
 
+        self._set_run_progress(
+            etl_run,
+            stage="extraction",
+            stage_label="Extracción",
+            progress_percent=self._compute_progress_percent(
+                archives_total=archives_total,
+                archives_completed=max(0, archive_index - 1),
+                stage_fraction=0.25,
+            ),
+            archives_total=archives_total,
+            current_archive=archive_index,
+            current_variable=current_variable,
+            selected_variables=selected_variables,
+        )
+
         extracted_path = self._extract_input_file(archive_path, checksum)
         source_file.extracted_path = str(extracted_path)
         source_file.status = "processing"
         self.db.commit()
 
+        self._set_run_progress(
+            etl_run,
+            stage="normalization",
+            stage_label="Normalización",
+            progress_percent=self._compute_progress_percent(
+                archives_total=archives_total,
+                archives_completed=max(0, archive_index - 1),
+                stage_fraction=0.5,
+            ),
+            archives_total=archives_total,
+            current_archive=archive_index,
+            current_variable=current_variable,
+            selected_variables=selected_variables,
+        )
+
         rows = self._extract_rows_from_directory(extracted_path)
-        inserted, updated, skipped = self._load_rows(rows, source_file.id)
+        self._set_run_progress(
+            etl_run,
+            stage="insertion",
+            stage_label="Inserción",
+            progress_percent=self._compute_progress_percent(
+                archives_total=archives_total,
+                archives_completed=max(0, archive_index - 1),
+                stage_fraction=0.7,
+            ),
+            archives_total=archives_total,
+            current_archive=archive_index,
+            current_variable=current_variable,
+            selected_variables=selected_variables,
+            records_inserted=etl_run.records_inserted,
+            records_updated=etl_run.records_updated,
+            records_skipped=etl_run.records_skipped,
+        )
+
+        chunk_counter = 0
+        last_progress_update = time.monotonic()
+
+        def _on_insert_progress(partial_inserted: int, partial_updated: int, partial_skipped: int) -> None:
+            nonlocal chunk_counter, last_progress_update
+            chunk_counter += 1
+            now = time.monotonic()
+            if chunk_counter % 3 != 0 and now - last_progress_update < 0.8:
+                return
+            last_progress_update = now
+            stage_fraction = min(0.98, 0.75 + min(0.2, chunk_counter * 0.01))
+            self._set_run_progress(
+                etl_run,
+                stage="insertion",
+                stage_label="Inserción",
+                progress_percent=self._compute_progress_percent(
+                    archives_total=archives_total,
+                    archives_completed=max(0, archive_index - 1),
+                    stage_fraction=stage_fraction,
+                ),
+                archives_total=archives_total,
+                current_archive=archive_index,
+                current_variable=current_variable,
+                selected_variables=selected_variables,
+                records_inserted=etl_run.records_inserted + partial_inserted,
+                records_updated=etl_run.records_updated + partial_updated,
+                records_skipped=etl_run.records_skipped + partial_skipped,
+            )
+
+        inserted, updated, skipped = self._load_rows(rows, source_file.id, progress_callback=_on_insert_progress)
 
         source_file.row_count = inserted + updated
         source_file.status = "completed"
@@ -457,6 +755,23 @@ class EtlService:
         etl_run.records_updated += updated
         etl_run.records_skipped += skipped
         self.db.commit()
+        self._set_run_progress(
+            etl_run,
+            stage="completed_archive",
+            stage_label="Archivo procesado",
+            progress_percent=self._compute_progress_percent(
+                archives_total=archives_total,
+                archives_completed=archive_index,
+                stage_fraction=0.0,
+            ),
+            archives_total=archives_total,
+            current_archive=archive_index,
+            current_variable=current_variable,
+            selected_variables=selected_variables,
+            records_inserted=etl_run.records_inserted,
+            records_updated=etl_run.records_updated,
+            records_skipped=etl_run.records_skipped,
+        )
 
     def _extract_input_file(self, input_path: Path, checksum: str) -> Path:
         destination = self.extracted_dir / f"{checksum[:12]}-{input_path.stem}"
@@ -582,6 +897,9 @@ class EtlService:
         wide_value_columns = self._detect_wide_value_columns(dataframe, metadata_columns)
 
         for index, row in dataframe.iterrows():
+            if row.dropna(how="all").empty:
+                continue
+
             station_code = self._extract_station_code(row, station_column)
             observed_at = self._extract_observed_at(row, datetime_column, date_column, time_column)
             if observed_at is None:
@@ -607,6 +925,11 @@ class EtlService:
                     source_workbook=workbook_name,
                 )
                 continue
+
+            if wide_value_columns:
+                row_values = pd.to_numeric(row[wide_value_columns], errors="coerce")
+                if int(row_values.notna().sum()) == 0:
+                    continue
 
             for value_col in wide_value_columns:
                 raw_value = row.get(value_col)
@@ -738,7 +1061,13 @@ class EtlService:
                 return mapped
         return None
 
-    def _load_rows(self, rows: Iterable[NormalizedMeasurementRow], source_file_id: int) -> tuple[int, int, int]:
+    def _load_rows(
+        self,
+        rows: Iterable[NormalizedMeasurementRow],
+        source_file_id: int,
+        *,
+        progress_callback: Callable[[int, int, int], None] | None = None,
+    ) -> tuple[int, int, int]:
         total_inserted = 0
         total_updated = 0
         total_skipped = 0
@@ -752,6 +1081,8 @@ class EtlService:
                 total_inserted += inserted
                 total_updated += updated
                 total_skipped += skipped
+                if progress_callback is not None:
+                    progress_callback(total_inserted, total_updated, total_skipped)
                 chunk = []
 
         if chunk:
@@ -759,6 +1090,8 @@ class EtlService:
             total_inserted += inserted
             total_updated += updated
             total_skipped += skipped
+            if progress_callback is not None:
+                progress_callback(total_inserted, total_updated, total_skipped)
 
         return total_inserted, total_updated, total_skipped
 
@@ -767,10 +1100,28 @@ class EtlService:
         updated = 0
         skipped = 0
 
+        deduplicated_rows: dict[tuple[str, str, datetime], NormalizedMeasurementRow] = {}
+        for row in rows:
+            if row.value is None:
+                skipped += 1
+                continue
+            observed_at = row.observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            key = (
+                normalize_variable_code(row.station_code),
+                normalize_variable_code(row.variable_code),
+                observed_at,
+            )
+            if key in deduplicated_rows:
+                skipped += 1
+            deduplicated_rows[key] = row
+
+        if not deduplicated_rows:
+            return inserted, updated, skipped
+
         prepared_rows: list[tuple[NormalizedMeasurementRow, int, int, datetime]] = []
         keys: list[tuple[int, int, datetime]] = []
 
-        for row in rows:
+        for row in deduplicated_rows.values():
             station = self._get_or_create_station(row.station_code)
             variable = self._get_or_create_variable(row.variable_code, row.unit)
             observed_at = row.observed_at.astimezone(timezone.utc).replace(tzinfo=None)
@@ -780,7 +1131,6 @@ class EtlService:
         self.db.flush()
 
         if not prepared_rows:
-            self.db.commit()
             return inserted, updated, skipped
 
         try:

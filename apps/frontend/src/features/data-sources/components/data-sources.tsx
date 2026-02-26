@@ -21,6 +21,8 @@ import { Separator } from '@/components/ui/separator';
 import { useEtl } from '@/hooks/use-etl';
 import { REMMAQ_VARIABLE_OPTIONS } from '@/api/modules/etl';
 
+const MAX_REMMAQ_VARIABLES = 3;
+
 interface StepperProps {
   currentStep: number;
   onStepClick: (step: number) => void;
@@ -91,12 +93,12 @@ export function DataSources() {
   const [sourceType, setSourceType] = useState('file');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [selectedVariables, setSelectedVariables] = useState<string[]>(['PM25']);
-  const [maxArchivesPerRun, setMaxArchivesPerRun] = useState<number>(2);
   const [actionMessage, setActionMessage] = useState<StepMessage | null>(null);
   const [processingAction, setProcessingAction] = useState<'db' | 'sync' | 'upload' | null>(null);
 
   const {
     runs,
+    currentRun,
     metrics,
     previewRows,
     loading,
@@ -108,7 +110,7 @@ export function DataSources() {
     refresh,
   } = useEtl();
 
-  const latestRun = useMemo(() => runs[0] ?? null, [runs]);
+  const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const nextFile = event.target.files?.[0] ?? null;
@@ -161,7 +163,6 @@ export function DataSources() {
     try {
       const run = await triggerRemmaqSync({
         variableCodes: selectedVariables,
-        maxArchives: maxArchivesPerRun,
       });
       setActionMessage({
         type: 'success',
@@ -221,6 +222,13 @@ export function DataSources() {
       if (current.includes(code)) {
         return current.filter((item) => item !== code);
       }
+      if (current.length >= MAX_REMMAQ_VARIABLES) {
+        setActionMessage({
+          type: 'info',
+          text: `Máximo ${MAX_REMMAQ_VARIABLES} variables por corrida.`,
+        });
+        return current;
+      }
       return [...current, code];
     });
   };
@@ -274,9 +282,7 @@ export function DataSources() {
               loading={loading || refreshing}
               processingAction={processingAction}
               selectedVariables={selectedVariables}
-              maxArchivesPerRun={maxArchivesPerRun}
               onToggleVariable={toggleVariable}
-              onChangeMaxArchivesPerRun={setMaxArchivesPerRun}
               onInitializeDb={handleInitializeDb}
               onSyncRemmaq={handleSyncRemmaq}
               onUploadManual={handleManualUpload}
@@ -323,18 +329,19 @@ interface SourceStepProps {
   handleFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
   metrics: { total_measurements: number; total_stations: number; total_variables: number; latest_run_status: string } | null;
   latestRun: {
+    id: string;
+    trigger_type: string;
     started_at: string;
     records_inserted: number;
     records_updated: number;
     records_skipped: number;
     status: string;
+    details?: Record<string, unknown>;
   } | null;
   loading: boolean;
   processingAction: 'db' | 'sync' | 'upload' | null;
   selectedVariables: string[];
-  maxArchivesPerRun: number;
   onToggleVariable: (code: string) => void;
-  onChangeMaxArchivesPerRun: (value: number) => void;
   onInitializeDb: () => Promise<void>;
   onSyncRemmaq: () => Promise<void>;
   onUploadManual: () => Promise<void>;
@@ -350,19 +357,30 @@ function SourceStep({
   loading,
   processingAction,
   selectedVariables,
-  maxArchivesPerRun,
   onToggleVariable,
-  onChangeMaxArchivesPerRun,
   onInitializeDb,
   onSyncRemmaq,
   onUploadManual,
 }: SourceStepProps) {
+  const details = latestRun?.details ?? {};
+  const stageLabel =
+    typeof details.stage_label === 'string' ? details.stage_label : latestRun?.status === 'running' ? 'Procesando' : 'Completado';
+  const progressPercent =
+    typeof details.progress_percent === 'number'
+      ? Math.max(0, Math.min(100, Math.round(details.progress_percent)))
+      : latestRun?.status === 'completed'
+        ? 100
+        : 0;
+  const currentVariable = typeof details.current_variable === 'string' ? details.current_variable : null;
+  const currentArchive = typeof details.current_archive === 'number' ? details.current_archive : null;
+  const totalArchives = typeof details.archives_total === 'number' ? details.archives_total : null;
+
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
           <CardTitle>Select Data Source</CardTitle>
-          <CardDescription>Selecciona REMMAQ automático o carga manual</CardDescription>
+          <CardDescription>Selecciona carga de archivos automática o manual</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -376,7 +394,7 @@ function SourceStep({
             >
               <Upload className="w-8 h-8 mb-3 text-[#509EE3]" />
               <h3 className="font-semibold mb-1">File Upload</h3>
-              <p className="text-xs text-muted-foreground">CSV, XLSX o TXT</p>
+              <p className="text-xs text-muted-foreground">XLSX, CSV o TXT</p>
             </button>
 
             <button
@@ -389,7 +407,7 @@ function SourceStep({
             >
               <Server className="w-8 h-8 mb-3 text-[#509EE3]" />
               <h3 className="font-semibold mb-1">REMMAQ Auto-Sync</h3>
-              <p className="text-xs text-muted-foreground">Página estática + ETL por lotes</p>
+              <p className="text-xs text-muted-foreground">Página oficial de la REMMAQ</p>
             </button>
 
             <button
@@ -439,45 +457,70 @@ function SourceStep({
                   {processingAction === 'upload' ? 'Uploading...' : 'Process Manual Upload'}
                 </Button>
               </div>
+
+              {latestRun?.status === 'running' && latestRun.trigger_type === 'manual' && (
+                <div className="p-3 bg-white rounded-lg border border-border">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium">Progreso carga manual</p>
+                    <p className="text-sm font-semibold text-[#509EE3]">{progressPercent}%</p>
+                  </div>
+                  <div className="h-2 rounded-full bg-[#E7EEF7] overflow-hidden">
+                    <div className="h-full bg-[#509EE3] transition-all duration-500" style={{ width: `${progressPercent}%` }} />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
           {sourceType === 'remmaq' && (
             <div className="space-y-6 border-2 border-[#509EE3]/20 rounded-lg p-6 bg-[#509EE3]/5">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-sm font-medium block">Variables REMMAQ a procesar</Label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-white rounded-lg border">
-                    {REMMAQ_VARIABLE_OPTIONS.map((option) => (
-                      <label key={option.code} className="flex items-center gap-2 text-sm cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedVariables.includes(option.code)}
-                          onChange={() => onToggleVariable(option.code)}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground">Sugerido: cargar 1 a 3 variables por corrida.</p>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <Label className="text-sm font-medium block">Variables REMMAQ</Label>
+                  <Badge variant="outline">
+                    {selectedVariables.length}/{MAX_REMMAQ_VARIABLES}
+                  </Badge>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="max-archives" className="text-sm font-medium block">
-                    Cantidad de enlaces REMMAQ por corrida
-                  </Label>
-                  <input
-                    id="max-archives"
-                    type="number"
-                    min={1}
-                    max={30}
-                    value={maxArchivesPerRun}
-                    onChange={(event) => onChangeMaxArchivesPerRun(Math.max(1, Number(event.target.value || 1)))}
-                    className="w-full rounded-md border px-3 py-2 text-sm bg-white"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Cada enlace corresponde a un archivo histórico (por variable). Usa valores bajos para ejecutar por partes.
-                  </p>
+                <div className="flex flex-wrap gap-2 rounded-lg border bg-white p-3">
+                  {REMMAQ_VARIABLE_OPTIONS.map((option) => {
+                    const isSelected = selectedVariables.includes(option.code);
+                    const reachedLimit = selectedVariables.length >= MAX_REMMAQ_VARIABLES;
+                    const isDisabled = !isSelected && reachedLimit;
+                    return (
+                      <button
+                        key={option.code}
+                        type="button"
+                        onClick={() => onToggleVariable(option.code)}
+                        disabled={isDisabled}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                          isSelected
+                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                            : isDisabled
+                              ? 'cursor-not-allowed border-gray-200 bg-gray-100 text-gray-400'
+                              : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60 hover:bg-[#509EE3]/10'
+                        }`}
+                      >
+                        {option.code}
+                      </button>
+                    );
+                  })}
                 </div>
+                <div className="flex flex-wrap gap-2">
+                  {selectedVariables.map((code) => {
+                    const option = REMMAQ_VARIABLE_OPTIONS.find((item) => item.code === code);
+                    return (
+                      <Badge key={code} className="bg-[#509EE3]/15 text-[#1F5A8A] border-[#509EE3]/20 hover:bg-[#509EE3]/15">
+                        {option?.label ?? code}
+                      </Badge>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Máximo {MAX_REMMAQ_VARIABLES} variables por corrida. Al llegar al límite, no puedes seleccionar más.
+                </p>
               </div>
 
               <div className="flex items-center justify-between">
@@ -515,6 +558,24 @@ function SourceStep({
                   <RefreshCw className="w-3 h-3 mr-1.5" />
                   {processingAction === 'sync' ? 'Syncing...' : 'Sync Now'}
                 </Button>
+              </div>
+
+              <div className="p-3 bg-white rounded-lg border border-border">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium">Progreso ETL por etapa</p>
+                  <p className="text-sm font-semibold text-[#509EE3]">{progressPercent}%</p>
+                </div>
+                <div className="h-2 rounded-full bg-[#E7EEF7] overflow-hidden">
+                  <div
+                    className="h-full bg-[#509EE3] transition-all duration-500"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
+                  {currentVariable ? ` · Variable: ${currentVariable}` : ''}
+                  {currentArchive && totalArchives ? ` · Archivo ${currentArchive}/${totalArchives}` : ''}
+                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
