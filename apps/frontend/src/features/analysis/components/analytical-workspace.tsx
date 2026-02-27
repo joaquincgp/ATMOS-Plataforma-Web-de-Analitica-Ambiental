@@ -23,6 +23,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -47,7 +48,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type ChartType = 'line' | 'bar' | 'scatter' | 'heatmap';
@@ -88,6 +90,8 @@ interface SummaryStats {
   trend: 'Rising' | 'Falling' | 'Stable';
 }
 
+type LabSection = 'rolling' | 'seasonality' | 'autocorr' | 'anomaly';
+
 const CHART_OPTIONS: {
   id: ChartType;
   label: string;
@@ -123,33 +127,12 @@ const RANGE_PRESETS: {
 
 const CHART_COLORS = ['#509EE3', '#1F5A8A', '#0EA5E9', '#0B7285', '#16A34A', '#E9730C', '#D946EF', '#A16207'];
 
-const SQL_TEMPLATES = [
-  {
-    label: 'Latest Samples',
-    sql: `SELECT
-  m.observed_at,
-  s.code AS station_code,
-  v.code AS variable_code,
-  m.value,
-  m.unit
-FROM measurements m
-JOIN stations s ON s.id = m.station_id
-JOIN variables v ON v.id = m.variable_id
-ORDER BY m.observed_at DESC`,
-  },
-  {
-    label: 'Daily Aggregation',
-    sql: `SELECT
-  date_trunc('day', m.observed_at) AS day,
-  s.code AS station_code,
-  v.code AS variable_code,
-  AVG(m.value) AS avg_value
-FROM measurements m
-JOIN stations s ON s.id = m.station_id
-JOIN variables v ON v.id = m.variable_id
-GROUP BY 1, 2, 3
-ORDER BY day DESC`,
-  },
+const SQL_SOURCE_TABLES: { value: string; label: string; sql: string }[] = [
+  { value: 'measurements', label: 'measurements', sql: 'SELECT * FROM measurements ORDER BY observed_at DESC' },
+  { value: 'stations', label: 'stations', sql: 'SELECT * FROM stations ORDER BY code ASC' },
+  { value: 'variables', label: 'variables', sql: 'SELECT * FROM variables ORDER BY code ASC' },
+  { value: 'source_files', label: 'source_files', sql: 'SELECT * FROM source_files ORDER BY downloaded_at DESC' },
+  { value: 'etl_runs', label: 'etl_runs', sql: 'SELECT * FROM etl_runs ORDER BY started_at DESC' },
 ];
 
 function toIsoDate(value: string | null): string {
@@ -190,6 +173,34 @@ function addDays(baseDate: string, deltaDays: number): string {
   const date = new Date(`${baseDate}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + deltaDays);
   return formatDate(date);
+}
+
+function applyExploreRange(
+  fromDate: string,
+  toDate: string,
+  rangePercent: [number, number],
+): { from: string; to: string } {
+  if (!fromDate || !toDate) {
+    return { from: fromDate, to: toDate };
+  }
+
+  const fromMs = new Date(`${fromDate}T00:00:00Z`).getTime();
+  const toMs = new Date(`${toDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs >= toMs) {
+    return { from: fromDate, to: toDate };
+  }
+
+  const totalSpan = toMs - fromMs;
+  const startPct = Math.max(0, Math.min(100, rangePercent[0]));
+  const endPct = Math.max(startPct, Math.min(100, rangePercent[1]));
+
+  const startMs = fromMs + (totalSpan * startPct) / 100;
+  const endMs = fromMs + (totalSpan * endPct) / 100;
+
+  return {
+    from: formatDate(new Date(startMs)),
+    to: formatDate(new Date(endMs)),
+  };
 }
 
 function getBucketKey(observedAt: string, granularity: TimeGranularity): string {
@@ -386,6 +397,107 @@ function buildSummary(rows: AnalyticsDataRow[], temporalSeries: TemporalPoint[])
   };
 }
 
+function computeRollingStats(points: TemporalPoint[], windowSize: number): TemporalPoint[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const safeWindow = Math.max(2, Math.min(90, windowSize));
+  return points.map((point, index) => {
+    const slice = points.slice(Math.max(0, index - safeWindow + 1), index + 1);
+    const values = slice.map((item) => Number(item.overall ?? 0));
+    const mean = values.reduce((acc, value) => acc + value, 0) / values.length;
+    const variance = values.reduce((acc, value) => acc + (value - mean) ** 2, 0) / values.length;
+    const std = Math.sqrt(variance);
+    return {
+      bucket: String(point.bucket),
+      overall: Number(point.overall ?? 0),
+      mean,
+      upper: mean + std,
+      lower: mean - std,
+    };
+  });
+}
+
+function computeSeasonalProfile(rows: AnalyticsDataRow[], mode: 'weekday' | 'month' | 'hour'): TemporalPoint[] {
+  const grouped = new Map<string, { sum: number; count: number }>();
+  for (const row of rows) {
+    const dt = new Date(row.observed_at);
+    let key = '';
+    if (mode === 'weekday') {
+      key = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getUTCDay()] ?? 'N/A';
+    } else if (mode === 'month') {
+      key = `${dt.getUTCMonth() + 1}`.padStart(2, '0');
+    } else {
+      key = `${dt.getUTCHours()}`.padStart(2, '0');
+    }
+    const current = grouped.get(key) ?? { sum: 0, count: 0 };
+    current.sum += row.value;
+    current.count += 1;
+    grouped.set(key, current);
+  }
+
+  return Array.from(grouped.entries())
+    .map(([bucket, aggregate]) => ({
+      bucket,
+      overall: aggregate.sum / aggregate.count,
+    }))
+    .sort((a, b) => String(a.bucket).localeCompare(String(b.bucket)));
+}
+
+function computeAutocorrelation(points: TemporalPoint[], maxLag = 30): TemporalPoint[] {
+  const values = points.map((point) => Number(point.overall ?? 0));
+  if (values.length < 3) {
+    return [];
+  }
+
+  const mean = values.reduce((acc, value) => acc + value, 0) / values.length;
+  const denominator = values.reduce((acc, value) => acc + (value - mean) ** 2, 0);
+  if (denominator <= 1e-12) {
+    return [];
+  }
+
+  const lagLimit = Math.min(maxLag, values.length - 2);
+  const result: TemporalPoint[] = [];
+  for (let lag = 1; lag <= lagLimit; lag += 1) {
+    let numerator = 0;
+    for (let index = lag; index < values.length; index += 1) {
+      numerator += (values[index] - mean) * (values[index - lag] - mean);
+    }
+    result.push({
+      bucket: `Lag ${lag}`,
+      overall: numerator / denominator,
+    });
+  }
+
+  return result;
+}
+
+function computeAnomalySeries(points: TemporalPoint[]): TemporalPoint[] {
+  const values = points.map((point) => Number(point.overall ?? 0));
+  if (values.length < 5) {
+    return points;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const q1 = sorted[Math.floor(sorted.length * 0.25)] ?? sorted[0] ?? 0;
+  const q3 = sorted[Math.floor(sorted.length * 0.75)] ?? sorted[sorted.length - 1] ?? 0;
+  const iqr = q3 - q1;
+  const lower = q1 - iqr * 1.5;
+  const upper = q3 + iqr * 1.5;
+
+  return points.map((point) => {
+    const value = Number(point.overall ?? 0);
+    return {
+      bucket: String(point.bucket),
+      overall: value,
+      is_anomaly: value < lower || value > upper ? 1 : 0,
+      anomaly_value: value < lower || value > upper ? value : Number.NaN,
+      lower,
+      upper,
+    };
+  });
+}
+
 function intensityColor(value: number, min: number, max: number): string {
   if (max <= min) {
     return 'hsl(205, 80%, 88%)';
@@ -407,6 +519,12 @@ export function AnalyticalWorkspace() {
   const [rangePreset, setRangePreset] = useState<string>('all');
   const [sourceSearch, setSourceSearch] = useState('');
   const [rowLimit, setRowLimit] = useState(5000);
+  const [exploreRange, setExploreRange] = useState<[number, number]>([0, 100]);
+  const [heatmapWindowDays, setHeatmapWindowDays] = useState(14);
+  const [heatmapOffset, setHeatmapOffset] = useState(0);
+  const [labSection, setLabSection] = useState<LabSection>('rolling');
+  const [rollingWindow, setRollingWindow] = useState(14);
+  const [seasonalityMode, setSeasonalityMode] = useState<'weekday' | 'month' | 'hour'>('weekday');
   const [bootstrapReady, setBootstrapReady] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -415,7 +533,7 @@ export function AnalyticalWorkspace() {
   const [liveSnapshot, setLiveSnapshot] = useState<StationLiveSnapshotResponse | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
 
-  const [sqlText, setSqlText] = useState(SQL_TEMPLATES[0].sql);
+  const [selectedSqlTable, setSelectedSqlTable] = useState('');
   const [sqlLimit, setSqlLimit] = useState(120);
   const [sqlLoading, setSqlLoading] = useState(false);
   const [sqlError, setSqlError] = useState<string | null>(null);
@@ -462,6 +580,39 @@ export function AnalyticalWorkspace() {
   const heatmap = useMemo(() => computeHeatmap(rows), [rows]);
   const summary = useMemo(() => buildSummary(rows, temporalSeries.points), [rows, temporalSeries.points]);
   const sampleRows = useMemo(() => rows.slice(0, 180), [rows]);
+  const rollingSeries = useMemo(
+    () => computeRollingStats(temporalSeries.points, rollingWindow),
+    [temporalSeries.points, rollingWindow],
+  );
+  const seasonalitySeries = useMemo(
+    () => computeSeasonalProfile(rows, seasonalityMode),
+    [rows, seasonalityMode],
+  );
+  const autocorrSeries = useMemo(() => computeAutocorrelation(temporalSeries.points, 30), [temporalSeries.points]);
+  const anomalySeries = useMemo(() => computeAnomalySeries(temporalSeries.points), [temporalSeries.points]);
+  const exploredDateRange = useMemo(
+    () => applyExploreRange(dateFrom, dateTo, exploreRange),
+    [dateFrom, dateTo, exploreRange],
+  );
+  const selectedSqlSource = useMemo(
+    () => SQL_SOURCE_TABLES.find((item) => item.value === selectedSqlTable) ?? null,
+    [selectedSqlTable],
+  );
+  const heatmapView = useMemo(() => {
+    const totalDays = heatmap.days.length;
+    const clampedWindow = Math.max(7, Math.min(60, heatmapWindowDays));
+    const maxOffset = Math.max(0, totalDays - clampedWindow);
+    const safeOffset = Math.min(heatmapOffset, maxOffset);
+    const startIndex = Math.max(0, totalDays - clampedWindow - safeOffset);
+    const endIndex = totalDays - safeOffset;
+
+    return {
+      days: heatmap.days.slice(startIndex, endIndex),
+      maxOffset,
+      safeOffset,
+      totalDays,
+    };
+  }, [heatmap.days, heatmapOffset, heatmapWindowDays]);
 
   const runAnalysis = useCallback(
     async ({
@@ -470,12 +621,14 @@ export function AnalyticalWorkspace() {
       fromDate,
       toDate,
       requestedLimit,
+      rangePercent,
     }: {
       sourceId: number | null;
       stationCodes: string[];
       fromDate: string;
       toDate: string;
       requestedLimit: number;
+      rangePercent: [number, number];
     }) => {
       if (sourceId === null) {
         setRows([]);
@@ -486,7 +639,8 @@ export function AnalyticalWorkspace() {
       const sourceForLimit = filters?.sources.find((source) => source.id === sourceId);
       const datasetMaxRows = Math.max(100, sourceForLimit?.row_count ?? requestedLimit);
       const effectiveLimit = Math.max(100, Math.min(requestedLimit, datasetMaxRows));
-      const normalizedRange = normalizeDateRange(fromDate, toDate);
+      const exploredRange = applyExploreRange(fromDate, toDate, rangePercent);
+      const normalizedRange = normalizeDateRange(exploredRange.from, exploredRange.to);
       const payload: AnalyticsQueryRequest = {
         source_file_ids: [sourceId],
         station_codes: stationCodes.length > 0 ? stationCodes : undefined,
@@ -564,6 +718,7 @@ export function AnalyticalWorkspace() {
         setDateTo(to);
         setSelectedSourceId(firstSource?.id ?? null);
         setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
+        setExploreRange([0, 100]);
         setRangePreset('all');
         setBootstrapReady(true);
       } catch (err) {
@@ -588,15 +743,20 @@ export function AnalyticalWorkspace() {
         fromDate: dateFrom,
         toDate: dateTo,
         requestedLimit: rowLimit,
+        rangePercent: exploreRange,
       });
     }, 130);
 
     return () => clearTimeout(timeout);
-  }, [bootstrapReady, selectedSourceId, selectedStations, dateFrom, dateTo, rowLimit, runAnalysis]);
+  }, [bootstrapReady, selectedSourceId, selectedStations, dateFrom, dateTo, rowLimit, exploreRange, runAnalysis]);
 
   useEffect(() => {
     setRowLimit((current) => Math.min(Math.max(100, current), sourceMaxRows));
   }, [sourceMaxRows]);
+
+  useEffect(() => {
+    setHeatmapOffset((current) => Math.min(current, heatmapView.maxOffset));
+  }, [heatmapView.maxOffset]);
 
   useEffect(() => {
     if (!bootstrapReady) {
@@ -624,6 +784,7 @@ export function AnalyticalWorkspace() {
     if (preset.days === null) {
       setDateFrom(minDate);
       setDateTo(maxDate);
+      setExploreRange([0, 100]);
       setRangePreset(presetId);
       return;
     }
@@ -632,6 +793,7 @@ export function AnalyticalWorkspace() {
     const boundedFrom = minDate && from < minDate ? minDate : from;
     setDateFrom(boundedFrom);
     setDateTo(maxDate);
+    setExploreRange([0, 100]);
     setRangePreset(presetId);
   };
 
@@ -642,6 +804,7 @@ export function AnalyticalWorkspace() {
       fromDate: dateFrom,
       toDate: dateTo,
       requestedLimit: rowLimit,
+      rangePercent: exploreRange,
     });
   };
 
@@ -655,10 +818,16 @@ export function AnalyticalWorkspace() {
   };
 
   const handleRunSqlPreview = async () => {
+    if (!selectedSqlSource) {
+      setSqlError('Select a source table.');
+      setSqlPreview(null);
+      return;
+    }
+
     setSqlLoading(true);
     setSqlError(null);
     try {
-      const response = await runSqlPreview({ sql: sqlText, limit: sqlLimit });
+      const response = await runSqlPreview({ sql: selectedSqlSource.sql, limit: sqlLimit });
       setSqlPreview(response);
       if (response.truncated) {
         setSqlError(`SQL preview truncated to ${response.row_count} rows.`);
@@ -750,6 +919,7 @@ export function AnalyticalWorkspace() {
                       value={dateFrom}
                       onChange={(event) => {
                         setDateFrom(event.target.value);
+                        setExploreRange([0, 100]);
                         setRangePreset('custom');
                       }}
                       className="pr-8"
@@ -763,6 +933,7 @@ export function AnalyticalWorkspace() {
                       value={dateTo}
                       onChange={(event) => {
                         setDateTo(event.target.value);
+                        setExploreRange([0, 100]);
                         setRangePreset('custom');
                       }}
                       className="pr-8"
@@ -933,6 +1104,29 @@ export function AnalyticalWorkspace() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4 rounded-md border border-gray-200 bg-white px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                    <span>
+                      Explore window: {exploredDateRange.from || '--'} to {exploredDateRange.to || '--'}
+                    </span>
+                    <span>
+                      {Math.round(exploreRange[0])}% - {Math.round(exploreRange[1])}%
+                    </span>
+                  </div>
+                  <Slider
+                    value={exploreRange}
+                    min={0}
+                    max={100}
+                    step={1}
+                    minStepsBetweenThumbs={2}
+                    onValueChange={(value) => {
+                      if (value.length === 2) {
+                        setExploreRange([value[0] ?? 0, value[1] ?? 100]);
+                      }
+                    }}
+                    className="mt-2 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-slate-200 [&_[data-slot=slider-range]]:bg-slate-400 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-slate-500 [&_[data-slot=slider-thumb]]:bg-white"
+                  />
+                </div>
                 <div className="h-[520px] w-full">
                   {rows.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
@@ -1003,6 +1197,54 @@ export function AnalyticalWorkspace() {
                     </ResponsiveContainer>
                   ) : (
                     <div className="h-full overflow-auto border rounded-md p-3 bg-[#f8fbff]">
+                      <div className="flex items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="heatmap-window" className="text-xs text-muted-foreground">
+                            Window (days)
+                          </Label>
+                          <Input
+                            id="heatmap-window"
+                            type="number"
+                            min={7}
+                            max={60}
+                            value={heatmapWindowDays}
+                            onChange={(event) =>
+                              setHeatmapWindowDays(
+                                Math.max(7, Math.min(60, Number(event.target.value || 14))),
+                              )
+                            }
+                            className="h-7 w-20"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setHeatmapOffset((current) =>
+                                Math.min(heatmapView.maxOffset, current + heatmapWindowDays),
+                              )
+                            }
+                            disabled={heatmapView.safeOffset >= heatmapView.maxOffset}
+                          >
+                            Older
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setHeatmapOffset((current) =>
+                                Math.max(0, current - heatmapWindowDays),
+                              )
+                            }
+                            disabled={heatmapView.safeOffset <= 0}
+                          >
+                            Newer
+                          </Button>
+                        </div>
+                      </div>
                       <div className="min-w-[780px]">
                         <div className="grid grid-cols-[84px_repeat(24,minmax(26px,1fr))] gap-1">
                           <div />
@@ -1011,7 +1253,7 @@ export function AnalyticalWorkspace() {
                               {hour}
                             </div>
                           ))}
-                          {heatmap.days.map((day) => (
+                          {heatmapView.days.map((day) => (
                             <Fragment key={`heat-row-${day}`}>
                               <div className="text-[10px] text-muted-foreground pr-1">{day.slice(5)}</div>
                               {heatmap.hours.map((hour) => {
@@ -1061,6 +1303,144 @@ export function AnalyticalWorkspace() {
                         <Tooltip />
                         <Bar dataKey="count" fill="#1F5A8A" radius={[4, 4, 0, 0]} />
                       </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white border-[#dce5f1]">
+              <CardHeader>
+                <CardTitle className="text-lg">Advanced Time-Series Lab</CardTitle>
+                <CardDescription>
+                  Rolling behavior, seasonal profiles, autocorrelation and anomaly inspection.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <ToggleGroup
+                  type="single"
+                  value={labSection}
+                  onValueChange={(value) => {
+                    if (value) {
+                      setLabSection(value as LabSection);
+                    }
+                  }}
+                  variant="outline"
+                  className="grid grid-cols-2 lg:grid-cols-4 w-full"
+                >
+                  <ToggleGroupItem value="rolling" className="h-9 text-xs">
+                    Rolling
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="seasonality" className="h-9 text-xs">
+                    Seasonality
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="autocorr" className="h-9 text-xs">
+                    ACF
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="anomaly" className="h-9 text-xs">
+                    Anomaly
+                  </ToggleGroupItem>
+                </ToggleGroup>
+
+                {labSection === 'rolling' && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="rolling-window" className="text-xs text-muted-foreground">
+                      Rolling window
+                    </Label>
+                    <Input
+                      id="rolling-window"
+                      type="number"
+                      min={2}
+                      max={90}
+                      value={rollingWindow}
+                      onChange={(event) =>
+                        setRollingWindow(Math.max(2, Math.min(90, Number(event.target.value || 14))))
+                      }
+                      className="h-8 w-24"
+                    />
+                  </div>
+                )}
+
+                {labSection === 'seasonality' && (
+                  <ToggleGroup
+                    type="single"
+                    value={seasonalityMode}
+                    onValueChange={(value) => {
+                      if (value === 'weekday' || value === 'month' || value === 'hour') {
+                        setSeasonalityMode(value);
+                      }
+                    }}
+                    variant="outline"
+                    className="w-full grid grid-cols-3"
+                  >
+                    <ToggleGroupItem value="weekday" className="h-8 text-xs">
+                      Weekday
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="month" className="h-8 text-xs">
+                      Month
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value="hour" className="h-8 text-xs">
+                      Hour
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                )}
+
+                <div className="h-[320px] w-full">
+                  {labSection === 'rolling' ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={rollingSeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="bucket" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+                        <Line type="monotone" dataKey="mean" name="Rolling Mean" stroke="#509EE3" dot={false} />
+                        <Line type="monotone" dataKey="upper" name="Upper Band" stroke="#94A3B8" dot={false} />
+                        <Line type="monotone" dataKey="lower" name="Lower Band" stroke="#94A3B8" dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : labSection === 'seasonality' ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={seasonalitySeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="bucket" />
+                        <YAxis />
+                        <Tooltip />
+                        <Bar dataKey="overall" name="Mean" fill="#509EE3" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : labSection === 'autocorr' ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={autocorrSeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="bucket" />
+                        <YAxis domain={[-1, 1]} />
+                        <Tooltip />
+                        <ReferenceLine y={0} stroke="#64748B" />
+                        <Bar dataKey="overall" name="Autocorrelation" fill="#1F5A8A" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={anomalySeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                        <XAxis dataKey="bucket" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+                        <Line type="monotone" dataKey="upper" name="Upper IQR" stroke="#94A3B8" dot={false} />
+                        <Line type="monotone" dataKey="lower" name="Lower IQR" stroke="#94A3B8" dot={false} />
+                        <Line
+                          type="monotone"
+                          dataKey="anomaly_value"
+                          name="Anomaly"
+                          stroke="#DC2626"
+                          dot={{ r: 3, fill: '#DC2626' }}
+                          connectNulls={false}
+                        />
+                      </LineChart>
                     </ResponsiveContainer>
                   )}
                 </div>
@@ -1156,28 +1536,38 @@ export function AnalyticalWorkspace() {
             <Card className="bg-white border-[#dce5f1]">
               <CardHeader>
                 <CardTitle className="text-lg">SQL Quick Preview</CardTitle>
-                <CardDescription>Read-only SQL for fast table samples.</CardDescription>
+                <CardDescription>Select source table for read-only sample query.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {SQL_TEMPLATES.map((template) => (
-                    <Button
-                      key={template.label}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSqlText(template.sql)}
-                    >
-                      {template.label}
-                    </Button>
-                  ))}
+                <div className="space-y-1">
+                  <Label htmlFor="source-table-select">Source Table</Label>
+                  <Select
+                    value={selectedSqlTable}
+                    onValueChange={(value) => {
+                      setSelectedSqlTable(value);
+                      setSqlPreview(null);
+                      setSqlError(null);
+                    }}
+                  >
+                    <SelectTrigger id="source-table-select">
+                      <SelectValue placeholder="Select table..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SQL_SOURCE_TABLES.map((table) => (
+                        <SelectItem key={table.value} value={table.value}>
+                          {table.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
-                <Textarea
-                  value={sqlText}
-                  onChange={(event) => setSqlText(event.target.value)}
-                  className="font-mono text-xs h-36 bg-[#f8fbff]"
-                />
+                <div className="rounded-md border bg-[#f8fbff] px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground mb-1">Generated query (read-only)</p>
+                  <code className="text-xs">
+                    {selectedSqlSource?.sql ?? '--'}
+                  </code>
+                </div>
 
                 <div className="flex items-end gap-3">
                   <div className="space-y-1">
