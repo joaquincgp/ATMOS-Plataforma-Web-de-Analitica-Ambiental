@@ -2,6 +2,26 @@ import { env } from '@/shared/config/env';
 
 import { apiRequest } from '@/api/http-client';
 
+const AUTH_STORAGE_KEY = 'atmos.auth.v1';
+
+function getStoredAccessToken(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { accessToken?: string };
+    return parsed.accessToken ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export interface DbInitResponse {
   status: string;
   database: string;
@@ -100,12 +120,14 @@ export function startSyncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunRe
 export async function uploadEtlFile(file: File, forceReprocess = false): Promise<EtlRunResponse> {
   const formData = new FormData();
   formData.append('file', file);
+  const accessToken = getStoredAccessToken();
 
   const response = await fetch(
     `${env.apiBaseUrl}/api/v1/etl/upload?force_reprocess=${forceReprocess}`,
     {
       method: 'POST',
       body: formData,
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     },
   );
 
@@ -128,12 +150,14 @@ export async function uploadEtlFile(file: File, forceReprocess = false): Promise
 export async function startUploadEtlFile(file: File, forceReprocess = false): Promise<EtlRunResponse> {
   const formData = new FormData();
   formData.append('file', file);
+  const accessToken = getStoredAccessToken();
 
   const response = await fetch(
     `${env.apiBaseUrl}/api/v1/etl/upload/start?force_reprocess=${forceReprocess}`,
     {
       method: 'POST',
       body: formData,
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
     },
   );
 

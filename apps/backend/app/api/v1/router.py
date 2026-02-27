@@ -5,6 +5,7 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.etl import router as etl_router
 from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.stations import router as stations_router
+from app.api.v1.endpoints.workspaces import router as workspaces_router
 
 api_router = APIRouter()
 api_router.include_router(health_router, tags=["health"])
@@ -12,3 +13,4 @@ api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
 api_router.include_router(stations_router, prefix="/stations", tags=["stations"])
 api_router.include_router(etl_router, prefix="/etl", tags=["etl"])
 api_router.include_router(analytics_router, prefix="/analytics", tags=["analytics"])
+api_router.include_router(workspaces_router, prefix="/workspaces", tags=["workspaces"])

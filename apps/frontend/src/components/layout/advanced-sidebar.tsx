@@ -6,10 +6,17 @@ interface AdvancedSidebarProps {
   activeView: AppView;
   onNavigate: (view: AppView) => void;
   selectedProject: string | null;
+  selectedProjectName: string | null;
   onCloseProject: () => void;
 }
 
-export function AdvancedSidebar({ activeView, onNavigate, selectedProject, onCloseProject }: AdvancedSidebarProps) {
+export function AdvancedSidebar({
+  activeView,
+  onNavigate,
+  selectedProject,
+  selectedProjectName,
+  onCloseProject,
+}: AdvancedSidebarProps) {
   const baseNavItems: Array<{ id: AppView; icon: typeof Home; label: string }> = [
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'projects', icon: FolderOpen, label: 'Projects' },
@@ -107,7 +114,7 @@ export function AdvancedSidebar({ activeView, onNavigate, selectedProject, onClo
             {/* Project Info */}
             <div className="mt-3 px-3 py-2 bg-[#509EE3]/10 rounded-lg">
               <p className="text-xs font-medium text-[#509EE3] truncate">
-                Quito South Analysis
+                {selectedProjectName ?? selectedProject}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Active Project

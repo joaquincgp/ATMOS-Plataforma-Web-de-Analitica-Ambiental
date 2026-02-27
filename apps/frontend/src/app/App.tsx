@@ -1,75 +1,256 @@
-import { TopBar } from '@/components/layout/top-bar';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+
 import { AdvancedSidebar } from '@/components/layout/advanced-sidebar';
-import { Login } from '@/features/auth/components/login';
+import { TopBar } from '@/components/layout/top-bar';
 import { AnalyticalWorkspace } from '@/features/analysis/components/analytical-workspace';
+import { ForgotPassword } from '@/features/auth/components/forgot-password';
+import { Login } from '@/features/auth/components/login';
+import { ResetPassword } from '@/features/auth/components/reset-password';
+import { SignUp } from '@/features/auth/components/sign-up';
 import { DataSources } from '@/features/data-sources/components/data-sources';
+import { WorkspaceDashboardBuilder } from '@/features/dashboard/components/workspace-dashboard-builder';
 import { AdvancedHomeDashboard } from '@/features/dashboard/components/advanced-home-dashboard';
 import { MLExperimentRunner } from '@/features/modeling/components/ml-experiment-runner';
 import { ModelViewer } from '@/features/modeling/components/model-viewer';
 import { Projects } from '@/features/projects/components/projects';
 import { LandingPage } from '@/features/public/components/landing-page';
-import { useAppStore } from '@/store/app-store';
+import { PublicDashboard } from '@/features/public/components/public-dashboard';
+import { SettingsPanel } from '@/features/settings/components/settings-panel';
+import { useAuth } from '@/contexts/auth-context';
+import { useWorkspace } from '@/contexts/workspace-context';
+import type { AppView } from '@/store/app-store';
+
+function normalizePath(path: string): string {
+  if (!path) {
+    return '/';
+  }
+  const clean = path.split('?')[0].split('#')[0] || '/';
+  if (clean.length > 1 && clean.endsWith('/')) {
+    return clean.slice(0, -1);
+  }
+  return clean;
+}
+
+function useSimpleRouter() {
+  const [path, setPath] = useState(() => normalizePath(window.location.pathname));
+
+  useEffect(() => {
+    const onPopState = () => {
+      setPath(normalizePath(window.location.pathname));
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const navigate = useCallback((to: string, replace = false) => {
+    const next = normalizePath(to);
+    if (replace) {
+      window.history.replaceState({}, '', next);
+    } else {
+      window.history.pushState({}, '', next);
+    }
+    setPath(next);
+  }, []);
+
+  return { path, navigate };
+}
 
 function App() {
+  const { path, navigate } = useSimpleRouter();
   const {
-    showLanding,
-    isLoggedIn,
-    activeView,
-    selectedProject,
-    explorePlatform,
+    user,
+    isLoading,
+    isAuthenticated,
     login,
-    navigate,
-    selectProject,
-    closeProject,
-  } = useAppStore();
+    register,
+    forgotPassword,
+    resetPassword,
+    logout,
+  } = useAuth();
+  const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
 
-  const renderView = () => {
+  const [activeView, setActiveView] = useState<AppView>('home');
+  const [resetTokenPrefill, setResetTokenPrefill] = useState<string | undefined>(undefined);
+
+  const isGenericUser = user?.role === 'generic';
+  const isPrivatePath = path.startsWith('/app');
+  const isAuthPath = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    if (!isAuthenticated && isPrivatePath) {
+      navigate('/login', true);
+      return;
+    }
+
+    if (isAuthenticated && isGenericUser && isPrivatePath) {
+      navigate('/public-dashboard', true);
+      return;
+    }
+
+    if (isAuthenticated && isGenericUser && path !== '/public-dashboard' && path !== '/' && !isAuthPath) {
+      navigate('/public-dashboard', true);
+      return;
+    }
+
+    if (isAuthenticated && isAuthPath) {
+      navigate(isGenericUser ? '/public-dashboard' : '/app', true);
+      return;
+    }
+
+    if (
+      isAuthenticated &&
+      !isGenericUser &&
+      !path.startsWith('/app') &&
+      path !== '/public-dashboard' &&
+      path !== '/'
+    ) {
+      navigate('/app', true);
+    }
+  }, [isAuthenticated, isAuthPath, isGenericUser, isLoading, isPrivatePath, navigate, path]);
+
+  const handleSelectWorkspace = useCallback(
+    (workspaceId: string) => {
+      setActiveWorkspaceId(workspaceId);
+      setActiveView('analytical-workspace');
+    },
+    [setActiveWorkspaceId],
+  );
+
+  const handleCloseWorkspace = useCallback(() => {
+    setActiveWorkspaceId(null);
+    setActiveView('projects');
+  }, [setActiveWorkspaceId]);
+
+  const privateView = useMemo(() => {
     switch (activeView) {
       case 'home':
-        return <AdvancedHomeDashboard />;
+        return (
+          <div className="p-6 space-y-6">
+            {activeWorkspaceId && <WorkspaceDashboardBuilder workspaceId={activeWorkspaceId} />}
+            <AdvancedHomeDashboard />
+          </div>
+        );
       case 'projects':
-        return <Projects onSelectProject={selectProject} />;
+        return <Projects onSelectProject={handleSelectWorkspace} />;
       case 'data-sources':
         return <DataSources />;
       case 'code-editor':
-        return selectedProject ? <ModelViewer /> : <Projects onSelectProject={selectProject} />;
+        return activeWorkspaceId ? <ModelViewer /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'ml-experiments':
-        return selectedProject ? <MLExperimentRunner /> : <Projects onSelectProject={selectProject} />;
+        return activeWorkspaceId ? <MLExperimentRunner /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'analytical-workspace':
-        return selectedProject ? <AnalyticalWorkspace /> : <Projects onSelectProject={selectProject} />;
+        return activeWorkspaceId ? <AnalyticalWorkspace /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'settings':
-        return (
-          <div className="p-8">
-            <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
-            <p className="text-muted-foreground mt-2">Configure your ATMOS platform</p>
-          </div>
-        );
+        return <SettingsPanel />;
       default:
         return <AdvancedHomeDashboard />;
     }
-  };
+  }, [activeView, activeWorkspaceId, handleSelectWorkspace]);
 
-  if (showLanding) {
-    return <LandingPage onExplore={explorePlatform} onLogin={explorePlatform} />;
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#F9FBFC] text-muted-foreground">
+        Loading session...
+      </div>
+    );
   }
 
-  if (!isLoggedIn) {
-    return <Login onLogin={login} />;
+  if (path === '/') {
+    return <LandingPage onExplore={() => navigate('/public-dashboard')} onLogin={() => navigate('/login')} />;
+  }
+
+  if (path === '/public-dashboard') {
+    return <PublicDashboard onGoToLogin={() => navigate('/login')} />;
+  }
+
+  if (!isAuthenticated) {
+    if (path === '/register') {
+      return (
+        <SignUp
+          onRegister={async (payload) => {
+            await register(payload);
+          }}
+          onBackToLogin={() => navigate('/login')}
+        />
+      );
+    }
+
+    if (path === '/forgot-password') {
+      return (
+        <ForgotPassword
+          onSend={forgotPassword}
+          onBackToLogin={() => navigate('/login')}
+          onOpenResetPassword={(token) => {
+            setResetTokenPrefill(token);
+            navigate('/reset-password');
+          }}
+        />
+      );
+    }
+
+    if (path === '/reset-password') {
+      return (
+        <ResetPassword
+          initialToken={resetTokenPrefill}
+          onReset={async (payload) => {
+            await resetPassword(payload);
+          }}
+          onBackToLogin={() => navigate('/login')}
+        />
+      );
+    }
+
+    return (
+      <Login
+        onLogin={async (payload) => {
+          const loggedUser = await login(payload);
+          if (loggedUser.role === 'generic') {
+            navigate('/public-dashboard', true);
+          } else {
+            navigate('/app', true);
+          }
+        }}
+        onOpenRegister={() => navigate('/register')}
+        onOpenForgotPassword={() => navigate('/forgot-password')}
+      />
+    );
+  }
+
+  if (isGenericUser) {
+    return (
+      <PublicDashboard
+        onGoToLogin={() => {
+          void (async () => {
+            await logout();
+            navigate('/login', true);
+          })();
+        }}
+      />
+    );
+  }
+
+  if (!path.startsWith('/app')) {
+    return null;
   }
 
   return (
     <div className="flex h-screen bg-background">
       <AdvancedSidebar
         activeView={activeView}
-        onNavigate={navigate}
-        selectedProject={selectedProject}
-        onCloseProject={closeProject}
+        onNavigate={setActiveView}
+        selectedProject={activeWorkspaceId}
+        selectedProjectName={activeWorkspace?.name ?? null}
+        onCloseProject={handleCloseWorkspace}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar />
-
-        <main className="flex-1 overflow-y-auto">{renderView()}</main>
+        <TopBar userName={user?.full_name ?? user?.email ?? 'User'} onLogout={() => void logout()} />
+        <main className="flex-1 overflow-y-auto">{privateView}</main>
       </div>
     </div>
   );

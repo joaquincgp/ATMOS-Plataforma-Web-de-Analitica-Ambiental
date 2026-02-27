@@ -6,13 +6,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session
+from app.api.deps import get_db_session, require_roles
 from app.db.session import SessionLocal
 from app.models.etl_run import EtlRun
+from app.schemas.auth import UserRole
 from app.schemas.etl import DbInitResponse, EtlMetricsResponse, EtlPreviewResponse, EtlRunResponse
 from app.services.etl import EtlService
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
 
 
 def _to_run_response(run: EtlRun) -> EtlRunResponse:

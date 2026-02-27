@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -9,6 +11,7 @@ from app.core.config import get_settings
 from app.db.init_db import init_db
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.app_name,
@@ -28,7 +31,12 @@ app.include_router(api_router)
 
 
 if settings.auto_init_db_on_startup:
-    init_db()
+    try:
+        init_db()
+    except OperationalError:
+        logger.warning(
+            "Database auto-initialization skipped because PostgreSQL is unavailable at startup."
+        )
 
 
 @app.exception_handler(OperationalError)

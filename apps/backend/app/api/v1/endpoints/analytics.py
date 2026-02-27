@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session
+from app.api.deps import get_db_session, require_roles
 from app.schemas.analytics import (
     AnalyticsFilterOptionsResponse,
     AnalyticsQueryRequest,
@@ -12,6 +12,7 @@ from app.schemas.analytics import (
     SqlPreviewResponse,
     StationLiveSnapshotResponse,
 )
+from app.schemas.auth import UserRole
 from app.services.analytics_service import (
     get_filter_options,
     get_station_live_snapshot,
@@ -19,7 +20,7 @@ from app.services.analytics_service import (
     query_data,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
 
 
 @router.get("/filters", response_model=AnalyticsFilterOptionsResponse)
