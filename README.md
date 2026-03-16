@@ -115,4 +115,4 @@ El archivo `package.json` raíz simplifica la inicialización orquestando las ac
 4. **Análisis Continuo:** Ingresa dentro del workspace donde podrás administrar fuentes ETL, importar datos de CSVs/Excel, procesar información de API externas, y graficar resultados montando un Dashboard propio que será almacenado de manera continua y persistente bajo ese contexto virtual.
 
 ## Licencia
-Este proyecto es de uso privado / restringido. Todos los derechos reservados bajo sus autores e institución. (Ajustar por la licencia de dominio público predefinida que se necesite, por ejemplo MIT License o Propietaria).
+Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
