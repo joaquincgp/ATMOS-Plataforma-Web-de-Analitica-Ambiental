@@ -37,6 +37,7 @@ from app.schemas.workspace import (
     DashboardResponse,
     DashboardSaveRequest,
     WorkspaceCreateRequest,
+    WorkspaceUpdateRequest,
     WorkspaceResponse,
 )
 
@@ -72,6 +73,7 @@ __all__ = [
     "EtlPreviewRowResponse",
     "EtlPreviewResponse",
     "WorkspaceCreateRequest",
+    "WorkspaceUpdateRequest",
     "WorkspaceResponse",
     "DashboardSaveRequest",
     "DashboardResponse",

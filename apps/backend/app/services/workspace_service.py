@@ -4,16 +4,23 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import shutil
 import uuid
 
-from sqlalchemy import asc, desc, select, text
+from sqlalchemy import asc, desc, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.schemas.auth import UserRole
-from app.schemas.workspace import DashboardResponse, DashboardSaveRequest, WorkspaceCreateRequest, WorkspaceResponse
+from app.schemas.workspace import (
+    DashboardResponse,
+    DashboardSaveRequest,
+    WorkspaceCreateRequest,
+    WorkspaceResponse,
+    WorkspaceUpdateRequest,
+)
 
 settings = get_settings()
 SLUG_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -32,6 +39,10 @@ def _slugify(value: str) -> str:
     lowered = value.strip().lower()
     lowered = SLUG_PATTERN.sub("-", lowered).strip("-")
     return lowered or "workspace"
+
+
+def _clean_workspace_name(value: str) -> str:
+    return " ".join(value.strip().split())
 
 
 def _sanitize_identifier(value: str) -> str:
@@ -120,11 +131,48 @@ def _assert_workspace_access(user: User, workspace: Workspace) -> None:
         raise WorkspaceError("You do not have access to this workspace.")
 
 
+def _get_workspace_entity(db: Session, workspace_id: str) -> Workspace:
+    workspace = db.scalar(
+        select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True))
+    )
+    if workspace is None:
+        raise WorkspaceError("Workspace not found.")
+    return workspace
+
+
+def _validate_workspace_name_uniqueness(
+    db: Session,
+    *,
+    user_id: str,
+    workspace_name: str,
+    exclude_workspace_id: str | None = None,
+) -> None:
+    normalized_name = _clean_workspace_name(workspace_name).lower()
+    statement = (
+        select(Workspace.id)
+        .where(
+            Workspace.owner_user_id == user_id,
+            Workspace.is_active.is_(True),
+            func.lower(Workspace.name) == normalized_name,
+        )
+        .limit(1)
+    )
+    existing_id = db.scalar(statement)
+    if existing_id is None:
+        return
+    if exclude_workspace_id is not None and str(existing_id) == exclude_workspace_id:
+        return
+    raise WorkspaceError("A workspace with this name already exists.")
+
+
 def create_workspace(db: Session, user: User, payload: WorkspaceCreateRequest) -> WorkspaceResponse:
     if user.role not in {UserRole.admin.value, UserRole.researcher.value}:
         raise WorkspaceError("Only admin or researcher users can create workspaces.")
 
-    base_slug = _slugify(payload.name)
+    cleaned_name = _clean_workspace_name(payload.name)
+    _validate_workspace_name_uniqueness(db, user_id=user.id, workspace_name=cleaned_name)
+
+    base_slug = _slugify(cleaned_name)
     slug = _generate_unique_workspace_slug(db, base_slug)
     schema_name = _generate_schema_name(user.id, slug)
 
@@ -134,7 +182,7 @@ def create_workspace(db: Session, user: User, payload: WorkspaceCreateRequest) -
 
     workspace = Workspace(
         owner_user_id=user.id,
-        name=payload.name,
+        name=cleaned_name,
         slug=slug,
         schema_name=schema_name,
         storage_path=str(storage_path.resolve()),
@@ -161,17 +209,63 @@ def list_workspaces(db: Session, user: User) -> list[WorkspaceResponse]:
 
 
 def get_workspace(db: Session, user: User, workspace_id: str) -> WorkspaceResponse:
-    workspace = db.scalar(select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True)))
-    if workspace is None:
-        raise WorkspaceError("Workspace not found.")
+    workspace = _get_workspace_entity(db, workspace_id)
     _assert_workspace_access(user, workspace)
     return _workspace_to_response(workspace)
 
 
+def update_workspace(
+    db: Session,
+    user: User,
+    workspace_id: str,
+    payload: WorkspaceUpdateRequest,
+) -> WorkspaceResponse:
+    workspace = _get_workspace_entity(db, workspace_id)
+    _assert_workspace_access(user, workspace)
+
+    updated = False
+
+    if payload.name is not None:
+        cleaned_name = _clean_workspace_name(payload.name)
+        _validate_workspace_name_uniqueness(
+            db,
+            user_id=workspace.owner_user_id,
+            workspace_name=cleaned_name,
+            exclude_workspace_id=workspace.id,
+        )
+        if workspace.name != cleaned_name:
+            workspace.name = cleaned_name
+            updated = True
+
+    if payload.description is not None and workspace.description != payload.description:
+        workspace.description = payload.description
+        updated = True
+
+    if updated:
+        workspace.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(workspace)
+
+    return _workspace_to_response(workspace)
+
+
+def delete_workspace(db: Session, user: User, workspace_id: str) -> None:
+    workspace = _get_workspace_entity(db, workspace_id)
+    _assert_workspace_access(user, workspace)
+
+    quoted_schema = _quote_identifier(workspace.schema_name)
+    db.execute(text(f"DROP SCHEMA IF EXISTS {quoted_schema} CASCADE"))
+
+    if workspace.storage_path:
+        shutil.rmtree(workspace.storage_path, ignore_errors=True)
+
+    workspace.is_active = False
+    workspace.updated_at = datetime.utcnow()
+    db.commit()
+
+
 def save_dashboard(db: Session, user: User, workspace_id: str, payload: DashboardSaveRequest) -> DashboardResponse:
-    workspace = db.scalar(select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True)))
-    if workspace is None:
-        raise WorkspaceError("Workspace not found.")
+    workspace = _get_workspace_entity(db, workspace_id)
     _assert_workspace_access(user, workspace)
 
     dashboard_id = payload.dashboard_id or str(uuid.uuid4())
@@ -243,9 +337,7 @@ def list_dashboards(
     *,
     limit: int = 100,
 ) -> list[DashboardResponse]:
-    workspace = db.scalar(select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True)))
-    if workspace is None:
-        raise WorkspaceError("Workspace not found.")
+    workspace = _get_workspace_entity(db, workspace_id)
     _assert_workspace_access(user, workspace)
 
     quoted_schema = _quote_identifier(workspace.schema_name)

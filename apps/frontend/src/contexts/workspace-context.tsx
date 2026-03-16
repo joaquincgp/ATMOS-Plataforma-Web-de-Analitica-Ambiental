@@ -10,9 +10,11 @@ import {
 
 import {
   createWorkspace,
+  deleteWorkspace,
   listWorkspaces,
   listWorkspaceDashboards,
   saveWorkspaceDashboard,
+  updateWorkspace,
   type DashboardResponse,
   type WorkspaceResponse,
 } from '@/api/modules/workspaces';
@@ -25,6 +27,11 @@ interface WorkspaceContextValue {
   isLoading: boolean;
   refreshWorkspaces: () => Promise<void>;
   createNewWorkspace: (payload: { name: string; description?: string }) => Promise<WorkspaceResponse>;
+  updateExistingWorkspace: (
+    workspaceId: string,
+    payload: { name?: string; description?: string },
+  ) => Promise<WorkspaceResponse>;
+  deleteExistingWorkspace: (workspaceId: string) => Promise<void>;
   setActiveWorkspaceId: (workspaceId: string | null) => void;
   getDashboards: (workspaceId: string, limit?: number) => Promise<DashboardResponse[]>;
   saveDashboard: (
@@ -110,6 +117,31 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [setActiveWorkspaceId],
   );
 
+  const updateExistingWorkspace = useCallback(
+    async (workspaceId: string, payload: { name?: string; description?: string }) => {
+      const updatedWorkspace = await updateWorkspace(workspaceId, payload);
+      setWorkspaces((current) =>
+        current.map((workspace) => (workspace.id === updatedWorkspace.id ? updatedWorkspace : workspace)),
+      );
+      return updatedWorkspace;
+    },
+    [],
+  );
+
+  const deleteExistingWorkspace = useCallback(
+    async (workspaceId: string) => {
+      await deleteWorkspace(workspaceId);
+      setWorkspaces((current) => {
+        const next = current.filter((workspace) => workspace.id !== workspaceId);
+        if (activeWorkspaceId === workspaceId) {
+          setActiveWorkspaceId(next[0]?.id ?? null);
+        }
+        return next;
+      });
+    },
+    [activeWorkspaceId, setActiveWorkspaceId],
+  );
+
   const getDashboards = useCallback(async (workspaceId: string, limit = 100) => {
     return listWorkspaceDashboards(workspaceId, limit);
   }, []);
@@ -143,6 +175,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       isLoading,
       refreshWorkspaces,
       createNewWorkspace,
+      updateExistingWorkspace,
+      deleteExistingWorkspace,
       setActiveWorkspaceId,
       getDashboards,
       saveDashboard: saveDashboardForWorkspace,
@@ -154,6 +188,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       isLoading,
       refreshWorkspaces,
       createNewWorkspace,
+      updateExistingWorkspace,
+      deleteExistingWorkspace,
       setActiveWorkspaceId,
       getDashboards,
       saveDashboardForWorkspace,

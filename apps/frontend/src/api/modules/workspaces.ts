@@ -5,6 +5,11 @@ export interface WorkspaceCreateRequest {
   description?: string;
 }
 
+export interface WorkspaceUpdateRequest {
+  name?: string;
+  description?: string;
+}
+
 export interface WorkspaceResponse {
   id: string;
   owner_user_id: string;
@@ -45,6 +50,22 @@ export function createWorkspace(payload: WorkspaceCreateRequest): Promise<Worksp
   return apiRequest<WorkspaceResponse>('/api/v1/workspaces/', {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export function updateWorkspace(
+  workspaceId: string,
+  payload: WorkspaceUpdateRequest,
+): Promise<WorkspaceResponse> {
+  return apiRequest<WorkspaceResponse>(`/api/v1/workspaces/${workspaceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteWorkspace(workspaceId: string): Promise<{ message: string }> {
+  return apiRequest<{ message: string }>(`/api/v1/workspaces/${workspaceId}`, {
+    method: 'DELETE',
   });
 }
 

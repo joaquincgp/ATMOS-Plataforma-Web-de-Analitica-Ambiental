@@ -6,14 +6,22 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db_session, require_roles
 from app.models.user import User
 from app.schemas.auth import UserRole
-from app.schemas.workspace import DashboardResponse, DashboardSaveRequest, WorkspaceCreateRequest, WorkspaceResponse
+from app.schemas.workspace import (
+    DashboardResponse,
+    DashboardSaveRequest,
+    WorkspaceCreateRequest,
+    WorkspaceResponse,
+    WorkspaceUpdateRequest,
+)
 from app.services.workspace_service import (
     WorkspaceError,
     create_workspace,
+    delete_workspace,
     get_workspace,
     list_dashboards,
     list_workspaces,
     save_dashboard,
+    update_workspace,
 )
 
 router = APIRouter()
@@ -49,6 +57,32 @@ def get_workspace_details(
         return get_workspace(db, user, workspace_id)
     except WorkspaceError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceResponse)
+def patch_workspace(
+    workspace_id: str,
+    payload: WorkspaceUpdateRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> WorkspaceResponse:
+    try:
+        return update_workspace(db, user, workspace_id, payload)
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/{workspace_id}", response_model=dict[str, str])
+def remove_workspace(
+    workspace_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> dict[str, str]:
+    try:
+        delete_workspace(db, user, workspace_id)
+        return {"message": "Workspace deleted successfully."}
+    except WorkspaceError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.get("/{workspace_id}/dashboards", response_model=list[DashboardResponse])
