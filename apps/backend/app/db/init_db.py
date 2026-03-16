@@ -3,9 +3,9 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app import models  # noqa: F401
 from app.db.session import engine
 from app.models.base import Base
-from app import models  # noqa: F401
 
 
 def init_db() -> None:

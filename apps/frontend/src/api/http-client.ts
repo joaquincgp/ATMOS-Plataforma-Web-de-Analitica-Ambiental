@@ -23,7 +23,7 @@ export function configureHttpClientAuth({
 }
 
 interface ApiValidationIssue {
-  loc?: Array<string | number>;
+  loc?: (string | number)[];
   msg?: string;
 }
 
@@ -45,7 +45,7 @@ function extractApiErrorMessage(payload: unknown, status: number): string {
         const reason = typedIssue.msg ?? 'Invalid value.';
         return fieldPath ? `${fieldPath}: ${reason}` : reason;
       })
-      .filter((value) => Boolean(value && value.trim()));
+      .filter((value) => Boolean(value?.trim()));
 
     if (parts.length > 0) {
       return parts.join(' | ');

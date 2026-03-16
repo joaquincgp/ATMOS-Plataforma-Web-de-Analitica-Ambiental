@@ -34,7 +34,7 @@ export function DataIngestionWizard() {
 
   const [mappings, setMappings] = useState(columnMappings);
 
-  const getErrorMessage = (row: any, col: string) => {
+  const getErrorMessage = (row: Record<string, any>, col: string) => {
     if (col === 'pm25' && row.pm25 === 'NaN') {
       return 'Invalid Format: Expected Float';
     }

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import re
 import unicodedata
+from datetime import UTC, datetime
 
 import pandas as pd
-
 
 DEFAULT_VARIABLE_UNITS = {
     "PM25": "ug/m3",
@@ -62,8 +61,8 @@ def parse_datetime(value: object) -> datetime | None:
         dt = dt.to_pydatetime()
 
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 def guess_unit(variable_code: str, provided_unit: str | None) -> str | None:
@@ -77,5 +76,5 @@ def compute_sha256(content: bytes) -> str:
 
 
 def compute_record_hash(station_code: str, variable_code: str, observed_at: datetime) -> str:
-    payload = f"{station_code}|{variable_code}|{observed_at.isoformat()}".encode("utf-8")
+    payload = f"{station_code}|{variable_code}|{observed_at.isoformat()}".encode()
     return hashlib.sha256(payload).hexdigest()

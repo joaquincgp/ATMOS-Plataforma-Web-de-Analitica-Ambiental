@@ -1,9 +1,8 @@
 import logging
 
-from fastapi import FastAPI
-from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 
 from app.api.router import api_router

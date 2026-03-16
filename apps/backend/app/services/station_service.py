@@ -1,5 +1,5 @@
-from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.models.station import Station
 from app.schemas.station import StationListResponse, StationSummary

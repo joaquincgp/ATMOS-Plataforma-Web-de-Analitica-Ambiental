@@ -235,7 +235,7 @@ export function Projects({ onSelectProject }: ProjectsProps) {
                   ) : (
                     <>
                       <p className="text-sm text-muted-foreground line-clamp-2">
-                        {workspace.description || 'No description provided.'}
+                        {workspace.description ?? 'No description provided.'}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Updated: {new Date(workspace.updated_at).toLocaleString()}

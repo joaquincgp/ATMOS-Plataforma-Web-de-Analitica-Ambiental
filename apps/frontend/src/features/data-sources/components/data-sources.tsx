@@ -249,7 +249,7 @@ export function DataSources() {
           </CardContent>
         </Card>
 
-        {(error || actionMessage) && (
+        {(error !== null || actionMessage !== null) && (
           <Card className="bg-white mb-6 border-l-4 border-l-[#509EE3]">
             <CardContent className="py-4">
               {error && <p className="text-sm text-red-700">{error}</p>}
@@ -647,14 +647,14 @@ function ValidationStep({
   loading,
   previewRows,
 }: {
-  runs: Array<{
+  runs: {
     id: string;
     status: string;
     started_at: string;
     records_inserted: number;
     records_updated: number;
     records_skipped: number;
-  }>;
+  }[];
   latestRun: {
     status: string;
     records_inserted: number;
@@ -662,14 +662,14 @@ function ValidationStep({
     records_skipped: number;
   } | null;
   loading: boolean;
-  previewRows: Array<{
+  previewRows: {
     observed_at: string;
     station_code: string;
     variable_code: string;
     value: number;
     unit: string | null;
     source_file_name: string;
-  }>;
+  }[];
 }) {
   return (
     <div className="space-y-6">

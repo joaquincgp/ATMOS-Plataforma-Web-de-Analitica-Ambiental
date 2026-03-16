@@ -1,7 +1,6 @@
 from app.core.config import get_settings
 from app.schemas.health import HealthResponse
 
-
 settings = get_settings()
 
 

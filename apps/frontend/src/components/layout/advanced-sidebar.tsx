@@ -17,14 +17,14 @@ export function AdvancedSidebar({
   selectedProjectName,
   onCloseProject,
 }: AdvancedSidebarProps) {
-  const baseNavItems: Array<{ id: AppView; icon: typeof Home; label: string }> = [
+  const baseNavItems: { id: AppView; icon: typeof Home; label: string }[] = [
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'projects', icon: FolderOpen, label: 'Projects' },
     { id: 'data-sources', icon: Database, label: 'Data Manager' },
     { id: 'settings', icon: Settings, label: 'Settings' },
   ];
 
-  const projectAssets: Array<{ id: AppView; icon: typeof Code; label: string }> = [
+  const projectAssets: { id: AppView; icon: typeof Code; label: string }[] = [
     { id: 'code-editor', icon: Code, label: 'Code Editor' },
     { id: 'ml-experiments', icon: Cpu, label: 'ML Experiments' },
     { id: 'analytical-workspace', icon: BarChart3, label: 'Analytics' },

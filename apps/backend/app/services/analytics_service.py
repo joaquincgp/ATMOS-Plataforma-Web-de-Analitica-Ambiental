@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-import re
 from typing import Any
 
 from sqlalchemy import desc, func, select, text
@@ -26,7 +26,10 @@ from app.schemas.analytics import (
     StationLiveSnapshotResponse,
     StationLiveSnapshotResponseItem,
 )
-from app.services.station_reference import resolve_station_reference, sync_station_reference_metadata
+from app.services.station_reference import (
+    resolve_station_reference,
+    sync_station_reference_metadata,
+)
 
 FORBIDDEN_SQL_PATTERN = re.compile(
     r"\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|comment|copy|call|do|merge)\b",
@@ -90,7 +93,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 name=row.name,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                region=(resolve_station_reference(row.code, row.name).region if resolve_station_reference(row.code, row.name) else None),
+                region=resolve_station_reference(row.code, row.name).region if resolve_station_reference(row.code, row.name) else None,  # noqa: E501
             )
             for row in station_rows
         ],

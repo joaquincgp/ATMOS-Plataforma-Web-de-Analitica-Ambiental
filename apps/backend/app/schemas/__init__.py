@@ -37,8 +37,8 @@ from app.schemas.workspace import (
     DashboardResponse,
     DashboardSaveRequest,
     WorkspaceCreateRequest,
-    WorkspaceUpdateRequest,
     WorkspaceResponse,
+    WorkspaceUpdateRequest,
 )
 
 __all__ = [

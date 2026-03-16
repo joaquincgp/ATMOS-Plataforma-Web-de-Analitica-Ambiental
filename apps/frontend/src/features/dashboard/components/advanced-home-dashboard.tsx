@@ -9,6 +9,7 @@ import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveC
 import L from 'leaflet';
 
 // Fix Leaflet default marker icon issue
+// eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -16,7 +17,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-const createCustomIcon = (color: string, shouldPulse: boolean = false) => {
+const createCustomIcon = (color: string, shouldPulse = false) => {
   const pulseAnimation = shouldPulse ? `
     @keyframes pulse {
       0%, 100% { box-shadow: 0 0 0 0 ${color}80, 0 2px 8px rgba(0,0,0,0.3); }
@@ -380,7 +381,7 @@ export function AdvancedHomeDashboard() {
             smoothFactor: 2,
           });
           
-          streamline.addTo(windLayerRef.current!);
+          streamline.addTo(windLayerRef.current);
         }
       }
     }

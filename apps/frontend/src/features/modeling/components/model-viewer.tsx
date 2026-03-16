@@ -354,7 +354,7 @@ export function ModelViewer() {
   };
 
   const handleCopyCode = () => {
-    navigator.clipboard.writeText(sampleCode);
+    void navigator.clipboard.writeText(sampleCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

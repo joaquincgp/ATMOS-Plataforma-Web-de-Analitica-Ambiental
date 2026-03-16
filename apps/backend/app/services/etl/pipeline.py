@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
-from datetime import datetime, timezone
-from pathlib import Path
 import re
 import shutil
 import time
-from typing import Any
 import zipfile
+from collections.abc import Callable, Iterable, Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
-from bs4 import BeautifulSoup
 import httpx
 import pandas as pd
+from bs4 import BeautifulSoup
 from sqlalchemy import delete, desc, func, select, tuple_
 from sqlalchemy.orm import Session
 
@@ -124,7 +124,7 @@ class EtlService:
         return {
             "status": "initialized",
             "database": str(self.settings.database_url),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
     def list_runs(self, limit: int = 20) -> list[EtlRun]:
@@ -394,7 +394,7 @@ class EtlService:
         details["stage"] = stage
         details["stage_label"] = stage_label
         details["progress_percent"] = max(0, min(100, int(progress_percent)))
-        details["updated_at"] = datetime.now(timezone.utc).isoformat()
+        details["updated_at"] = datetime.now(UTC).isoformat()
         run.details = details
         self.db.add(run)
         self.db.commit()
@@ -890,7 +890,7 @@ class EtlService:
 
         metadata_columns = {
             column
-            for column in [station_column, datetime_column, date_column, time_column, variable_column, value_column, unit_column]
+            for column in [station_column, datetime_column, date_column, time_column, variable_column, value_column, unit_column]  # noqa: E501
             if column is not None
         }
 
@@ -1105,7 +1105,7 @@ class EtlService:
             if row.value is None:
                 skipped += 1
                 continue
-            observed_at = row.observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            observed_at = row.observed_at.astimezone(UTC).replace(tzinfo=None)
             key = (
                 normalize_variable_code(row.station_code),
                 normalize_variable_code(row.variable_code),
@@ -1124,7 +1124,7 @@ class EtlService:
         for row in deduplicated_rows.values():
             station = self._get_or_create_station(row.station_code)
             variable = self._get_or_create_variable(row.variable_code, row.unit)
-            observed_at = row.observed_at.astimezone(timezone.utc).replace(tzinfo=None)
+            observed_at = row.observed_at.astimezone(UTC).replace(tzinfo=None)
             prepared_rows.append((row, station.id, variable.id, observed_at))
             keys.append((station.id, variable.id, observed_at))
 

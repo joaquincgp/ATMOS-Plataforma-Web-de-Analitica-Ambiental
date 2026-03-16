@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
-from enum import Enum
 import re
+from datetime import datetime
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,13 +21,13 @@ class AuthBaseModel(BaseModel):
         return email
 
 
-class UserRole(str, Enum):
+class UserRole(StrEnum):
     admin = "admin"
     researcher = "researcher"
     generic = "generic"
 
 
-class UserStatus(str, Enum):
+class UserStatus(StrEnum):
     pending_validation = "pending_validation"
     active = "active"
     suspended = "suspended"

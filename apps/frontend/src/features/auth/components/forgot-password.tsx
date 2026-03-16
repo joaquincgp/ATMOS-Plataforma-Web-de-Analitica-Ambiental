@@ -46,7 +46,7 @@ export function ForgotPassword({ onSend, onBackToLogin, onOpenResetPassword }: F
           <CardDescription>We will generate a one-time token to reset your password.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={(e) => void submit(e)} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="forgot-email">Email</Label>
               <Input
