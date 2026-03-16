@@ -114,5 +114,8 @@ El archivo `package.json` raíz simplifica la inicialización orquestando las ac
 3. **Página de Workspaces:** Creada tu sesión, entra a la zona de Workspaces. Si el rol que posees lo permite, podrás crear uno. Al nombrarlo y configurarlo, el backend actuará de orquestador creando inmediatamente en la BD el esquema individualizado dedicado (ej. `ws_joaquin_clima_1`).
 4. **Análisis Continuo:** Ingresa dentro del workspace donde podrás administrar fuentes ETL, importar datos de CSVs/Excel, procesar información de API externas, y graficar resultados montando un Dashboard propio que será almacenado de manera continua y persistente bajo ese contexto virtual.
 
+## Contribución
+¡Las contribuciones y Pull Requests son siempre bienvenidos! Por favor, asegúrate de revisar nuestra [Guía de Contribución](CONTRIBUTING.md) para conocer los estándares del proyecto y el ciclo de desarrollo recomendado.
+
 ## Licencia
 Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
