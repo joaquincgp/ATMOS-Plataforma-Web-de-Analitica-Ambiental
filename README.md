@@ -108,7 +108,7 @@ El archivo `package.json` raíz simplifica la inicialización orquestando las ac
 - `npm run backend:test`: Busca y corre pruebas de verificación unitarias empleando `pytest` en la carpeta backend.
 - `npm run backend:lint`: Ejecuta el analizador sintáctico `ruff` en el Python de la API para garantizar el formato del código.
 
-## 🔄 Flujo Básico de Uso (Quickstart)
+## Flujo Básico de Uso (Quickstart)
 1. **Puesta a Punto de DB:** Arranca el servidor (idealmente con `AUTO_INIT_DB_ON_STARTUP=true`). Esto sembrará las tablas y esquemas indispensables eliminando la necesidad de migraciones previas.
 2. **Acceso y Registro Inicial:** Accede a `http://localhost:5173`, regístrate usando la página de inicio como un nuevo usuario. Por lo general asimilarás un rol de `researcher` o `generic` lo que condiciona tu acceso.
 3. **Página de Workspaces:** Creada tu sesión, entra a la zona de Workspaces. Si el rol que posees lo permite, podrás crear uno. Al nombrarlo y configurarlo, el backend actuará de orquestador creando inmediatamente en la BD el esquema individualizado dedicado (ej. `ws_joaquin_clima_1`).
