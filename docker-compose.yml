@@ -29,6 +29,10 @@ services:
       JWT_SECRET_KEY: change-this-in-production
       JWT_ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
+      REFRESH_TOKEN_EXPIRE_DAYS: 14
+      PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: 30
+      WORKSPACE_STORAGE_DIR: ./data/workspaces
+      AUTO_INIT_DB_ON_STARTUP: "true"
     depends_on:
       db:
         condition: service_healthy

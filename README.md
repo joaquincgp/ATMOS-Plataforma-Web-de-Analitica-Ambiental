@@ -1,102 +1,24 @@
 # ATMOS (Analytics Time-Series Modeling Operational System)
 
-![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)
-![React](https://img.shields.io/badge/React-18.x-61DAFB?logo=react&logoColor=black)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL_PostGIS-336791?logo=postgresql&logoColor=white)
-![Machine Learning](https://img.shields.io/badge/Machine_Learning-LSTM_%7C_Prophet-FF6F00)
+ATMOS es una plataforma web para ingestión ETL, analítica atmosférica y gestión de workspaces de investigación aislados.
 
-**ATMOS** es una plataforma web de inteligencia ambiental de arquitectura modular y desacoplada, diseñada para la gestión integral de datos espaciotemporales. El sistema centraliza la ingesta automatizada mediante pipelines ETL, el análisis exploratorio y la predicción de fenómenos atmosféricos utilizando modelos avanzados de Machine Learning.
+## Módulos principales
+- ETL para ingestión de series históricas y cargas manuales.
+- Analytical Workspace con visualizaciones interactivas.
+- Autenticación JWT con RBAC (`admin`, `researcher`, `generic`).
+- Multi-tenant por esquema PostgreSQL (`schema-per-tenant`) para workspaces.
+- Persistencia de dashboards por workspace con bloques dinámicos.
 
-Actualmente, ATMOS utiliza la red de monitoreo REMMAQ (Quito, Ecuador) como entorno de validación funcional, pero su diseño agnóstico permite su escalabilidad a diversos contextos de investigación ambiental.
+## Stack
+- Backend: FastAPI + SQLAlchemy + PostgreSQL/PostGIS
+- Frontend: React + TypeScript + Recharts + Tailwind
 
----
+## Roles RBAC
+- `admin`: acceso total, creación de usuarios, configuración global.
+- `researcher`: workspaces propios, ETL, análisis avanzado y guardado de dashboards.
+- `generic`: acceso restringido solo a `/public-dashboard`.
 
-## Características Principales
-
-* **Pipeline ETL Robusto:** Módulo backend capaz de descargar, extraer (RAR/XLSX), transformar (Wide-to-Long) y cargar millones de registros históricos en lotes (*chunking*) de manera eficiente.
-* **Workspaces de Investigación:** Aislamiento lógico de proyectos mediante un esquema Multi-Tenant, garantizando que los investigadores administren sus *datasets*, modelos y visualizaciones de forma privada.
-* **Almacenamiento Geoespacial:** Integración nativa con PostGIS para consultas espaciales complejas (ubicación de estaciones, cruce de variables por radio geográfico).
-* **Laboratorio ML Integrado:** Entrenamiento, validación y persistencia de modelos predictivos de series temporales (Random Forest, XGBoost, LSTM, Prophet) con métricas de evaluación en tiempo real (RMSE, MAE).
-* **Consciencia Situacional (Map-First):** Dashboard público con renderizado geoespacial interactivo para la interpretación de la calidad del aire orientada a la ciudadanía.
-* **Seguridad y API Contract:** Autenticación *stateless* mediante JWT y control de acceso basado en roles (RBAC).
-
----
-
-## Stack Tecnológico
-
-### Backend (Data & ML Services)
-* **Framework:** FastAPI (Python 3.11+)
-* **Procesamiento de Datos:** Pandas, NumPy, GeoPandas.
-* **Inteligencia Artificial:** Scikit-Learn, Statsmodels, TensorFlow (Keras).
-* **ORM & Base de Datos:** SQLAlchemy, PostgreSQL + extensión PostGIS.
-
-### Frontend (SPA & Visualization)
-* **Framework:** React con TypeScript.
-* **Visualización de Datos:** Recharts / Chart.js.
-* **Mapas:** Leaflet / React-Leaflet.
-* **Estado:** React Context API / Zustand.
-
----
-
-## Arquitectura 
-
-La solución está desarrollada bajo una arquitectura de microservicios lógica (monolitos modulares desacoplados), con una separación estricta entre la presentación (Frontend SPA) y los servicios de datos (Backend REST API). 
-
-El backend actúa mediante un esquema de **API Contract**, donde el motor de análisis solo acepta configuraciones estructuradas, garantizando validación estricta antes de la ejecución de algoritmos computacionalmente costosos.
-
----
-
-## ⚙️ Instalación y Configuración Local
-
-### Prerrequisitos
-* Python 3.11 o superior.
-* Node.js 18.x o superior.
-* PostgreSQL 14+ con la extensión `postgis` habilitada.
-
-### 1. Configuración del Backend (API)
-```bash
-# Navegar al directorio del backend
-cd apps/backend
-
-# Crear y activar entorno virtual
-python -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
-
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Inicializar Base de Datos y correr ETL base
-python init_db.py
-
-# Iniciar el servidor local
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-## Arranque rapido
-
-### Opcion A: stack completo con Docker
-
-```bash
-npm run dev
-```
-
-Servicios:
-
-- Frontend: `http://localhost:5173`
-- Backend: `http://localhost:8000`
-- Docs OpenAPI: `http://localhost:8000/docs`
-
-### Opcion B: frontend y backend por separado
-
-Frontend:
-
-```bash
-npm install --workspace @atmos/frontend
-npm run dev:frontend
-```
-
-Backend:
-
+## Backend (desarrollo local)
 ```bash
 cd apps/backend
 python -m venv .venv
@@ -105,26 +27,53 @@ pip install -e ".[dev]"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## Calidad y checks
-
-Frontend:
-
+## Frontend (desarrollo local)
 ```bash
-npm run lint:frontend
-npm run typecheck:frontend
-npm run build:frontend
+npm install --workspace @atmos/frontend
+npm run dev:frontend
 ```
 
-Backend:
-
+## Docker (stack completo)
 ```bash
-npm run backend:lint
-npm run backend:test
+npm run dev
 ```
 
-## Despliegue
+Servicios:
+- Frontend: `http://localhost:5173`
+- Backend: `http://localhost:8000`
+- OpenAPI: `http://localhost:8000/docs`
 
-- Guia general Azure App Service: `docs/deployment-azure.md`
-- Contrato API inicial: `packages/contracts/openapi/atmos-api.v1.yaml`
+## Inicialización de base de datos
+La inicialización del esquema base ahora ocurre por defecto al iniciar backend (`AUTO_INIT_DB_ON_STARTUP=true`).
+No es necesario ejecutar `curl` ni scripts manuales para crear tablas base.
 
+## Variables relevantes
+Backend (`apps/backend/.env.example`):
+- `DATABASE_URL`
+- `JWT_SECRET_KEY`
+- `ACCESS_TOKEN_EXPIRE_MINUTES`
+- `REFRESH_TOKEN_EXPIRE_DAYS`
+- `PASSWORD_RESET_TOKEN_EXPIRE_MINUTES`
+- `WORKSPACE_STORAGE_DIR`
+- `AUTO_INIT_DB_ON_STARTUP`
 
+## Endpoints de autenticación
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/session`
+- `POST /api/v1/auth/forgot-password`
+- `POST /api/v1/auth/reset-password`
+
+## Workspaces multi-tenant
+- `GET /api/v1/workspaces/`
+- `POST /api/v1/workspaces/`
+- `GET /api/v1/workspaces/{workspace_id}`
+- `GET /api/v1/workspaces/{workspace_id}/dashboards`
+- `POST /api/v1/workspaces/{workspace_id}/dashboards`
+
+Cada workspace crea:
+- esquema PostgreSQL dedicado (`ws_<user>_<slug>`)
+- tablas internas (`dashboards`, `ml_artifacts`)
+- storage aislado en disco (`data/workspaces/<user>/<workspace>`)

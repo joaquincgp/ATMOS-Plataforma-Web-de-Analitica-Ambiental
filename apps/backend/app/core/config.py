@@ -15,16 +15,19 @@ class Settings(BaseSettings):
     jwt_secret_key: str = "change-this-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    refresh_token_expire_days: int = 14
+    password_reset_token_expire_minutes: int = 30
 
     remmaq_base_url: str = "https://datosambiente.quito.gob.ec/"
     etl_storage_dir: str = "./data/etl"
+    workspace_storage_dir: str = "./data/workspaces"
     etl_request_timeout_seconds: int = 60
     etl_discovery_max_pages: int = 20
     etl_user_agent: str = "ATMOS-ETL/1.0 (+https://udla.edu.ec)"
     etl_row_chunk_size: int = 2_000
     etl_lookup_chunk_size: int = 500
     etl_sync_default_max_archives: int = 4
-    auto_init_db_on_startup: bool = False
+    auto_init_db_on_startup: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 

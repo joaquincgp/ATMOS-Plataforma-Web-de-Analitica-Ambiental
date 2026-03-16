@@ -9,7 +9,21 @@ from app.schemas.analytics import (
     StationLiveSnapshotResponse,
     StationLiveSnapshotResponseItem,
 )
-from app.schemas.auth import LoginRequest, TokenResponse
+from app.schemas.auth import (
+    AdminCreateUserRequest,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    LoginRequest,
+    LogoutRequest,
+    MessageResponse,
+    RefreshTokenRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+    SessionResponse,
+    TokenPairResponse,
+    UpdateProfileRequest,
+    UserResponse,
+)
 from app.schemas.etl import (
     DbInitResponse,
     EtlMetricsResponse,
@@ -19,11 +33,28 @@ from app.schemas.etl import (
 )
 from app.schemas.health import HealthResponse
 from app.schemas.station import StationListResponse, StationSummary
+from app.schemas.workspace import (
+    DashboardResponse,
+    DashboardSaveRequest,
+    WorkspaceCreateRequest,
+    WorkspaceResponse,
+)
 
 __all__ = [
     "HealthResponse",
     "LoginRequest",
-    "TokenResponse",
+    "RegisterRequest",
+    "AdminCreateUserRequest",
+    "TokenPairResponse",
+    "RefreshTokenRequest",
+    "LogoutRequest",
+    "SessionResponse",
+    "ForgotPasswordRequest",
+    "ForgotPasswordResponse",
+    "ResetPasswordRequest",
+    "MessageResponse",
+    "UpdateProfileRequest",
+    "UserResponse",
     "StationSummary",
     "StationListResponse",
     "AnalyticsFilterOptionsResponse",
@@ -40,4 +71,8 @@ __all__ = [
     "EtlMetricsResponse",
     "EtlPreviewRowResponse",
     "EtlPreviewResponse",
+    "WorkspaceCreateRequest",
+    "WorkspaceResponse",
+    "DashboardSaveRequest",
+    "DashboardResponse",
 ]

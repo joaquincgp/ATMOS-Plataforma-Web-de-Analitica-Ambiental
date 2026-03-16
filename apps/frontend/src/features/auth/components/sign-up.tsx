@@ -1,17 +1,26 @@
 import { useState } from 'react';
 
 import { motion } from 'motion/react';
-import { Cloud, Wind, Leaf, Droplets, Sun, CloudRain, TreeDeciduous, Waves } from 'lucide-react';
+import {
+  Cloud,
+  Wind,
+  Leaf,
+  Droplets,
+  Sun,
+  CloudRain,
+  TreeDeciduous,
+  Waves,
+  CheckCircle2,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
-interface LoginProps {
-  onLogin: (payload: { email: string; password: string }) => Promise<void>;
-  onOpenRegister?: () => void;
-  onOpenForgotPassword?: () => void;
+interface SignUpProps {
+  onRegister: (payload: { full_name: string; email: string; password: string }) => Promise<void>;
+  onBackToLogin?: () => void;
 }
 
 const floatingIcons = [
@@ -25,31 +34,72 @@ const floatingIcons = [
   { Icon: Waves, delay: 1, x: '80%', y: '85%', duration: 20, scale: 0.95 },
 ] as const;
 
-export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginProps) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+export function SignUp({ onRegister, onBackToLogin }: SignUpProps) {
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    institution: '',
+    password: '',
+    confirmPassword: '',
+    termsAccepted: false,
+  });
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleChange = (field: keyof typeof formData, value: string | boolean) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    setSuccess(null);
 
-    if (!email.trim() || !password.trim()) {
-      setError('Email and password are required.');
+    if (!formData.fullName.trim() || !formData.email.trim() || !formData.password || !formData.confirmPassword) {
+      setError('All required fields must be completed.');
       return;
     }
 
-    if (password.length < 8) {
+    if (!/^\S+@\S+\.\S+$/.test(formData.email.trim())) {
+      setError('Invalid email format.');
+      return;
+    }
+
+    if (formData.password.length < 8) {
       setError('Password must have at least 8 characters.');
       return;
     }
 
-    setError(null);
+    if (formData.password !== formData.confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
+    if (!formData.termsAccepted) {
+      setError('You must accept the terms to continue.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      await onLogin({ email: email.trim().toLowerCase(), password });
+      await onRegister({
+        full_name: formData.fullName.trim(),
+        email: formData.email.trim().toLowerCase(),
+        password: formData.password,
+      });
+
+      setSuccess('Account created successfully. You can now sign in.');
+      setFormData({
+        fullName: '',
+        email: '',
+        institution: '',
+        password: '',
+        confirmPassword: '',
+        termsAccepted: false,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not sign in.');
+      setError(err instanceof Error ? err.message : 'Could not create account.');
     } finally {
       setIsSubmitting(false);
     }
@@ -87,7 +137,7 @@ export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginPr
         className="w-full max-w-md relative z-10"
       >
         <Card className="bg-white shadow-xl border-0">
-          <CardHeader className="space-y-6 text-center pb-8 pt-10">
+          <CardHeader className="space-y-6 text-center pb-6 pt-8">
             <motion.div
               className="flex items-center justify-center gap-4"
               initial={{ scale: 0.8, opacity: 0 }}
@@ -103,15 +153,30 @@ export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginPr
             </motion.div>
 
             <div>
-              <CardTitle className="text-3xl font-bold text-foreground mb-2">ATMOS</CardTitle>
+              <CardTitle className="text-3xl font-bold text-foreground mb-2">Join ATMOS</CardTitle>
               <CardDescription className="text-sm text-muted-foreground">
-                Environmental Data Analytics Platform
+                Create your researcher account
               </CardDescription>
             </div>
           </CardHeader>
 
           <CardContent className="px-8 pb-8">
-            <form onSubmit={(event) => void handleSubmit(event)} className="space-y-5">
+            <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="fullName" className="text-sm font-medium text-foreground">
+                  Full Name
+                </Label>
+                <Input
+                  id="fullName"
+                  type="text"
+                  placeholder="Dr. María González"
+                  value={formData.fullName}
+                  onChange={(e) => handleChange('fullName', e.target.value)}
+                  className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  required
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="email" className="text-sm font-medium text-foreground">
                   Email
@@ -120,10 +185,24 @@ export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginPr
                   id="email"
                   type="email"
                   placeholder="researcher@udla.edu.ec"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={formData.email}
+                  onChange={(e) => handleChange('email', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
                   required
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="institution" className="text-sm font-medium text-foreground">
+                  Institution / Department
+                </Label>
+                <Input
+                  id="institution"
+                  type="text"
+                  placeholder="Environmental Sciences Dept."
+                  value={formData.institution}
+                  onChange={(e) => handleChange('institution', e.target.value)}
+                  className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
                 />
               </div>
 
@@ -135,31 +214,53 @@ export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginPr
                   id="password"
                   type="password"
                   placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  value={formData.password}
+                  onChange={(e) => handleChange('password', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
                   required
                 />
               </div>
 
-              <div className="text-right">
-                <button
-                  type="button"
-                  onClick={onOpenForgotPassword}
-                  className="text-sm text-[#509EE3] hover:text-[#509EE3]/80 font-medium transition-colors"
-                >
-                  Forgot Password?
-                </button>
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword" className="text-sm font-medium text-foreground">
+                  Confirm Password
+                </Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={formData.confirmPassword}
+                  onChange={(e) => handleChange('confirmPassword', e.target.value)}
+                  className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  required
+                />
+              </div>
+
+              <div className="flex items-start space-x-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="terms"
+                  checked={formData.termsAccepted}
+                  onChange={(e) => handleChange('termsAccepted', e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-[#509EE3] focus:ring-[#509EE3]"
+                  required
+                />
+                <label htmlFor="terms" className="text-xs text-muted-foreground leading-relaxed">
+                  I agree to the Terms of Service and Privacy Policy. I understand this platform is for academic
+                  research purposes.
+                </label>
               </div>
 
               {error && <p className="text-sm text-red-600">{error}</p>}
+              {success && <p className="text-sm text-green-700">{success}</p>}
 
               <Button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white h-11 font-medium shadow-lg shadow-[#509EE3]/20"
+                className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white h-11 font-medium shadow-lg shadow-[#509EE3]/20 mt-6"
               >
-                {isSubmitting ? 'Signing In...' : 'Sign In'}
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+                {isSubmitting ? 'Creating...' : 'Create Account'}
               </Button>
 
               <div className="relative my-6">
@@ -172,13 +273,13 @@ export function Login({ onLogin, onOpenRegister, onOpenForgotPassword }: LoginPr
               </div>
 
               <div className="text-center">
-                <span className="text-sm text-muted-foreground">Don't have an account? </span>
+                <span className="text-sm text-muted-foreground">Already have an account? </span>
                 <button
                   type="button"
-                  onClick={onOpenRegister}
+                  onClick={onBackToLogin}
                   className="text-sm text-[#509EE3] hover:text-[#509EE3]/80 font-medium transition-colors"
                 >
-                  Create Account
+                  Sign In
                 </button>
               </div>
             </form>
