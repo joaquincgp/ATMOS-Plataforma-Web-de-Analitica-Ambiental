@@ -67,6 +67,8 @@ export interface EtlPreviewResponse {
 export interface SyncRemmaqParams {
   forceReprocess?: boolean;
   variableCodes?: string[];
+  observedFrom?: string;
+  observedTo?: string;
 }
 
 export const REMMAQ_VARIABLE_OPTIONS = [
@@ -98,6 +100,12 @@ export function syncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunRespons
       searchParams.append('variable_codes', code);
     }
   }
+  if (params.observedFrom) {
+    searchParams.set('observed_from', params.observedFrom);
+  }
+  if (params.observedTo) {
+    searchParams.set('observed_to', params.observedTo);
+  }
 
   return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq?${searchParams.toString()}`, {
     method: 'POST',
@@ -106,10 +114,17 @@ export function syncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunRespons
 
 export function startSyncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunResponse> {
   const searchParams = new URLSearchParams();
+  searchParams.set('force_reprocess', String(params.forceReprocess ?? false));
   if (params.variableCodes?.length) {
     for (const code of params.variableCodes) {
       searchParams.append('variable_codes', code);
     }
+  }
+  if (params.observedFrom) {
+    searchParams.set('observed_from', params.observedFrom);
+  }
+  if (params.observedTo) {
+    searchParams.set('observed_to', params.observedTo);
   }
 
   return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq/start?${searchParams.toString()}`, {

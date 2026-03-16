@@ -39,3 +39,7 @@ apps/backend/.env.*
 # Coverage
 coverage/
 htmlcov/
+
+# Local Data
+apps/backend/data/
+apps/backend/test_db.py

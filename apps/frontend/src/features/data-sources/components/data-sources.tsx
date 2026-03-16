@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   Check,
@@ -18,6 +18,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useEtl } from '@/hooks/use-etl';
 import { REMMAQ_VARIABLE_OPTIONS } from '@/api/modules/etl';
 
@@ -93,6 +95,9 @@ export function DataSources() {
   const [sourceType, setSourceType] = useState('file');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [selectedVariables, setSelectedVariables] = useState<string[]>(['PM25']);
+  const [remmaqDateFrom, setRemmaqDateFrom] = useState('');
+  const [remmaqDateTo, setRemmaqDateTo] = useState('');
+  const [remmaqForceReprocess, setRemmaqForceReprocess] = useState(false);
   const [actionMessage, setActionMessage] = useState<StepMessage | null>(null);
   const [processingAction, setProcessingAction] = useState<'db' | 'sync' | 'upload' | null>(null);
 
@@ -163,6 +168,9 @@ export function DataSources() {
     try {
       const run = await triggerRemmaqSync({
         variableCodes: selectedVariables,
+        forceReprocess: remmaqForceReprocess,
+        observedFrom: remmaqDateFrom || undefined,
+        observedTo: remmaqDateTo || undefined,
       });
       setActionMessage({
         type: 'success',
@@ -282,6 +290,12 @@ export function DataSources() {
               loading={loading || refreshing}
               processingAction={processingAction}
               selectedVariables={selectedVariables}
+              remmaqDateFrom={remmaqDateFrom}
+              remmaqDateTo={remmaqDateTo}
+              remmaqForceReprocess={remmaqForceReprocess}
+              onRemmaqDateFromChange={setRemmaqDateFrom}
+              onRemmaqDateToChange={setRemmaqDateTo}
+              onRemmaqForceReprocessChange={setRemmaqForceReprocess}
               onToggleVariable={toggleVariable}
               onInitializeDb={handleInitializeDb}
               onSyncRemmaq={handleSyncRemmaq}
@@ -293,7 +307,7 @@ export function DataSources() {
             <ValidationStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />
           )}
 
-          {currentStep === 3 && <MappingStep />}
+          {currentStep === 3 && <MappingStep previewRows={previewRows} />}
 
           {currentStep === 4 && (
             <CommitStep
@@ -341,6 +355,12 @@ interface SourceStepProps {
   loading: boolean;
   processingAction: 'db' | 'sync' | 'upload' | null;
   selectedVariables: string[];
+  remmaqDateFrom: string;
+  remmaqDateTo: string;
+  remmaqForceReprocess: boolean;
+  onRemmaqDateFromChange: (value: string) => void;
+  onRemmaqDateToChange: (value: string) => void;
+  onRemmaqForceReprocessChange: (value: boolean) => void;
   onToggleVariable: (code: string) => void;
   onInitializeDb: () => Promise<void>;
   onSyncRemmaq: () => Promise<void>;
@@ -357,6 +377,12 @@ function SourceStep({
   loading,
   processingAction,
   selectedVariables,
+  remmaqDateFrom,
+  remmaqDateTo,
+  remmaqForceReprocess,
+  onRemmaqDateFromChange,
+  onRemmaqDateToChange,
+  onRemmaqForceReprocessChange,
   onToggleVariable,
   onInitializeDb,
   onSyncRemmaq,
@@ -521,6 +547,47 @@ function SourceStep({
                 <p className="text-xs text-muted-foreground">
                   Máximo {MAX_REMMAQ_VARIABLES} variables por corrida. Al llegar al límite, no puedes seleccionar más.
                 </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="remmaq-date-from" className="text-xs text-muted-foreground">
+                    Fecha desde
+                  </Label>
+                  <Input
+                    id="remmaq-date-from"
+                    type="date"
+                    value={remmaqDateFrom}
+                    onChange={(event) => onRemmaqDateFromChange(event.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="remmaq-date-to" className="text-xs text-muted-foreground">
+                    Fecha hasta
+                  </Label>
+                  <Input
+                    id="remmaq-date-to"
+                    type="date"
+                    value={remmaqDateTo}
+                    onChange={(event) => onRemmaqDateToChange(event.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Reprocesamiento</Label>
+                  <button
+                    type="button"
+                    onClick={() => onRemmaqForceReprocessChange(!remmaqForceReprocess)}
+                    className={`h-9 w-full rounded-md border px-3 text-xs font-medium transition-colors ${
+                      remmaqForceReprocess
+                        ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                        : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                    }`}
+                  >
+                    {remmaqForceReprocess ? 'Force reprocess: on' : 'Force reprocess: off'}
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
@@ -787,16 +854,244 @@ function ValidationStep({
   );
 }
 
-function MappingStep() {
+function MappingStep({
+  previewRows,
+}: {
+  previewRows: {
+    observed_at: string;
+    station_code: string;
+    variable_code: string;
+    value: number;
+    unit: string | null;
+    source_file_name: string;
+  }[];
+}) {
+  const baseRows = useMemo(
+    () =>
+      previewRows.map((row) => ({
+        observed_at: row.observed_at,
+        station_code: row.station_code,
+        variable_code: row.variable_code,
+        value: row.value,
+        unit: row.unit ?? '',
+        source_file_name: row.source_file_name,
+      })),
+    [previewRows],
+  );
+
+  const allColumns = useMemo(() => {
+    const firstRow = baseRows[0];
+    return firstRow ? Object.keys(firstRow) : [];
+  }, [baseRows]);
+
+  const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
+  const [numericColumns, setNumericColumns] = useState<string[]>([]);
+  const [samplePct, setSamplePct] = useState(100);
+  const [dateColumn, setDateColumn] = useState('observed_at');
+  const [extractDateFeatures, setExtractDateFeatures] = useState(false);
+  const [dropMissingRows, setDropMissingRows] = useState(false);
+  const [imputeMissingValues, setImputeMissingValues] = useState(false);
+
+  useEffect(() => {
+    if (allColumns.length === 0) {
+      return;
+    }
+
+    setSelectedColumns((current) => {
+      if (current.length === 0) {
+        return allColumns;
+      }
+      const filtered = current.filter((column) => allColumns.includes(column));
+      return filtered.length > 0 ? filtered : allColumns;
+    });
+
+    setNumericColumns((current) => {
+      const filtered = current.filter((column) => allColumns.includes(column));
+      if (filtered.length > 0) {
+        return filtered;
+      }
+      return allColumns.includes('value') ? ['value'] : [];
+    });
+
+    setDateColumn((current) => (allColumns.includes(current) ? current : allColumns[0] ?? ''));
+  }, [allColumns]);
+
+  const toggleSelectedColumn = (column: string) => {
+    setSelectedColumns((current) => {
+      if (current.includes(column)) {
+        const next = current.filter((item) => item !== column);
+        return next.length > 0 ? next : current;
+      }
+      return [...current, column];
+    });
+    setNumericColumns((current) => current.filter((item) => item !== column));
+  };
+
+  const toggleNumericColumn = (column: string) => {
+    if (!selectedColumns.includes(column)) {
+      return;
+    }
+    setNumericColumns((current) =>
+      current.includes(column) ? current.filter((item) => item !== column) : [...current, column],
+    );
+  };
+
+  const processedRows = useMemo(() => {
+    if (selectedColumns.length === 0) {
+      return [] as Record<string, string | number | null>[];
+    }
+
+    const categoricalColumns = selectedColumns.filter((column) => !numericColumns.includes(column));
+    let rows: Record<string, string | number | null>[] = baseRows.map((row) => {
+      const output: Record<string, string | number | null> = {};
+      for (const column of selectedColumns) {
+        const rawValue = (row as Record<string, unknown>)[column];
+        if (numericColumns.includes(column)) {
+          if (rawValue === null || rawValue === undefined || String(rawValue).trim() === '') {
+            output[column] = null;
+          } else {
+            const parsed = Number(rawValue);
+            output[column] = Number.isFinite(parsed) ? parsed : null;
+          }
+        } else {
+          output[column] = rawValue === null || rawValue === undefined ? null : String(rawValue);
+        }
+      }
+      return output;
+    });
+
+    if (dropMissingRows) {
+      rows = rows.filter((row) =>
+        selectedColumns.every((column) => {
+          const value = row[column];
+          if (value === null || value === undefined) {
+            return false;
+          }
+          return String(value).trim() !== '';
+        }),
+      );
+    }
+
+    if (imputeMissingValues) {
+      const numericMeans = new Map<string, number>();
+      for (const column of numericColumns) {
+        const values = rows
+          .map((row) => row[column])
+          .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+        const mean = values.length > 0 ? values.reduce((accumulator, value) => accumulator + value, 0) / values.length : 0;
+        numericMeans.set(column, mean);
+      }
+
+      const categoricalModes = new Map<string, string>();
+      for (const column of categoricalColumns) {
+        const counts = new Map<string, number>();
+        for (const row of rows) {
+          const value = row[column];
+          if (typeof value === 'string' && value.trim() !== '') {
+            counts.set(value, (counts.get(value) ?? 0) + 1);
+          }
+        }
+        const mode = Array.from(counts.entries()).sort((left, right) => right[1] - left[1])[0]?.[0] ?? '';
+        categoricalModes.set(column, mode);
+      }
+
+      rows = rows.map((row) => {
+        const output = { ...row };
+        for (const column of numericColumns) {
+          if (output[column] === null || output[column] === undefined) {
+            output[column] = numericMeans.get(column) ?? 0;
+          }
+        }
+        for (const column of categoricalColumns) {
+          const current = output[column];
+          if (current === null || current === undefined || String(current).trim() === '') {
+            output[column] = categoricalModes.get(column) ?? '';
+          }
+        }
+        return output;
+      });
+    }
+
+    if (extractDateFeatures && dateColumn && selectedColumns.includes(dateColumn)) {
+      rows = rows.map((row) => {
+        const output = { ...row };
+        const rawValue = row[dateColumn];
+        const parsed = new Date(String(rawValue ?? ''));
+        if (Number.isFinite(parsed.getTime())) {
+          output.year = parsed.getUTCFullYear();
+          output.month = parsed.getUTCMonth() + 1;
+          output.day = parsed.getUTCDate();
+          output.hour = parsed.getUTCHours();
+          output.weekday = parsed.getUTCDay();
+        } else {
+          output.year = null;
+          output.month = null;
+          output.day = null;
+          output.hour = null;
+          output.weekday = null;
+        }
+        return output;
+      });
+    }
+
+    if (samplePct < 100 && rows.length > 0) {
+      const targetRows = Math.max(1, Math.floor((rows.length * samplePct) / 100));
+      const stride = Math.max(1, Math.floor(rows.length / targetRows));
+      rows = rows.filter((_, index) => index % stride === 0).slice(0, targetRows);
+    }
+
+    return rows;
+  }, [
+    baseRows,
+    dateColumn,
+    dropMissingRows,
+    extractDateFeatures,
+    imputeMissingValues,
+    numericColumns,
+    samplePct,
+    selectedColumns,
+  ]);
+
+  const previewColumns = useMemo(() => {
+    const firstRow = processedRows[0];
+    return firstRow ? Object.keys(firstRow) : [];
+  }, [processedRows]);
+
+  const csvData = useMemo(() => {
+    if (processedRows.length === 0 || previewColumns.length === 0) {
+      return '';
+    }
+    const header = previewColumns.join(',');
+    const lines = processedRows.map((row) =>
+      previewColumns
+        .map((column) => {
+          const value = row[column];
+          const text = value === null || value === undefined ? '' : String(value);
+          return `"${text.replaceAll('"', '""')}"`;
+        })
+        .join(','),
+    );
+    return [header, ...lines].join('\n');
+  }, [previewColumns, processedRows]);
+
+  const csvHref = useMemo(
+    () => `data:text/csv;charset=utf-8,${encodeURIComponent(csvData)}`,
+    [csvData],
+  );
+
+  const categoricalColumns = selectedColumns.filter((column) => !numericColumns.includes(column));
+
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
           <CardTitle>Field Mapping</CardTitle>
-          <CardDescription>Contrato analítico para datos normalizados</CardDescription>
+          <CardDescription>
+            Ajusta columnas, tipos, muestreo, fechas e imputación sobre la muestra ETL para validar el mapeo.
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
+        <CardContent className="space-y-6">
+          <div className="space-y-3">
             {[
               { source: 'fecha/hora', target: 'observed_at', type: 'datetime' },
               { source: 'estacion', target: 'station.code', type: 'string' },
@@ -820,6 +1115,190 @@ function MappingStep() {
                 </div>
               </div>
             ))}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">Column Selection</Label>
+            <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3">
+              {allColumns.map((column) => {
+                const active = selectedColumns.includes(column);
+                return (
+                  <button
+                    key={`column-${column}`}
+                    type="button"
+                    onClick={() => toggleSelectedColumn(column)}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                      active
+                        ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                        : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                    }`}
+                  >
+                    {column}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Numeric Variables</Label>
+              <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3 min-h-16">
+                {selectedColumns.map((column) => {
+                  const active = numericColumns.includes(column);
+                  return (
+                    <button
+                      key={`numeric-${column}`}
+                      type="button"
+                      onClick={() => toggleNumericColumn(column)}
+                      className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                        active
+                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                      }`}
+                    >
+                      {column}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Categorical Variables</Label>
+              <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3 min-h-16">
+                {categoricalColumns.length === 0 && (
+                  <span className="text-xs text-muted-foreground">No categorical variables selected.</span>
+                )}
+                {categoricalColumns.map((column) => (
+                  <Badge key={`categorical-${column}`} variant="outline">
+                    {column}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="sample-pct" className="text-xs text-muted-foreground">
+                Subsample (%)
+              </Label>
+              <Input
+                id="sample-pct"
+                type="number"
+                min={1}
+                max={100}
+                value={samplePct}
+                onChange={(event) =>
+                  setSamplePct(Math.max(1, Math.min(100, Number(event.target.value || 100))))
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="date-column" className="text-xs text-muted-foreground">
+                Date column
+              </Label>
+              <Select value={dateColumn} onValueChange={setDateColumn}>
+                <SelectTrigger id="date-column">
+                  <SelectValue placeholder="Select date column..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {selectedColumns.map((column) => (
+                    <SelectItem key={`date-col-${column}`} value={column}>
+                      {column}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Date features</Label>
+              <button
+                type="button"
+                onClick={() => setExtractDateFeatures((current) => !current)}
+                className={`h-10 w-full rounded-md border text-xs font-medium transition-colors ${
+                  extractDateFeatures
+                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                }`}
+              >
+                {extractDateFeatures ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setDropMissingRows((current) => !current)}
+              className={`h-10 rounded-md border text-xs font-medium transition-colors ${
+                dropMissingRows
+                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+              }`}
+            >
+              {dropMissingRows ? 'Drop rows with missing values: on' : 'Drop rows with missing values: off'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setImputeMissingValues((current) => !current)}
+              className={`h-10 rounded-md border text-xs font-medium transition-colors ${
+                imputeMissingValues
+                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+              }`}
+            >
+              {imputeMissingValues ? 'Impute missing values: on' : 'Impute missing values: off'}
+            </button>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-medium">
+                Processed Preview ({processedRows.length.toLocaleString()} rows)
+              </Label>
+              <a href={csvHref} download="mapped_preview.csv">
+                <Button size="sm" className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" disabled={!csvData}>
+                  <Download className="w-4 h-4 mr-2" />
+                  Download CSV
+                </Button>
+              </a>
+            </div>
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#F9FBFC] border-b border-border sticky top-0">
+                    <tr>
+                      {previewColumns.map((column) => (
+                        <th key={`preview-head-${column}`} className="px-3 py-2 text-left font-medium text-muted-foreground">
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {processedRows.slice(0, 120).map((row, index) => (
+                      <tr key={`processed-row-${index}`} className="border-b border-border">
+                        {previewColumns.map((column) => (
+                          <td key={`processed-${index}-${column}`} className="px-3 py-2">
+                            {row[column] === null || row[column] === undefined ? '' : String(row[column])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            {processedRows.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                No hay datos disponibles para previsualización. Ejecuta una corrida ETL primero.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>

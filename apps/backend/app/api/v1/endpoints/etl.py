@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -36,6 +37,9 @@ def _run_remmaq_sync_background(
     run_id: str,
     selected_variables: list[str],
     max_archives: int,
+    force_reprocess: bool,
+    observed_from: date | None,
+    observed_to: date | None,
 ) -> None:
     db = SessionLocal()
     try:
@@ -44,6 +48,9 @@ def _run_remmaq_sync_background(
             run_id=run_id,
             selected_variables=selected_variables,
             max_archives=max_archives,
+            force_reprocess=force_reprocess,
+            observed_from=observed_from,
+            observed_to=observed_to,
         )
     finally:
         db.close()
@@ -80,6 +87,8 @@ def sync_remmaq(
     force_reprocess: bool = Query(default=False),
     variable_codes: list[str] | None = Query(default=None),
     max_archives: int | None = Query(default=None, ge=1, le=30),
+    observed_from: date | None = Query(default=None),
+    observed_to: date | None = Query(default=None),
     db: Session = Depends(get_db_session),
 ) -> EtlRunResponse:
     service = EtlService(db)
@@ -88,6 +97,8 @@ def sync_remmaq(
             force_reprocess=force_reprocess,
             variable_codes=variable_codes,
             max_archives=max_archives,
+            observed_from=observed_from,
+            observed_to=observed_to,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -97,15 +108,28 @@ def sync_remmaq(
 @router.post("/sync/remmaq/start", response_model=EtlRunResponse)
 def start_sync_remmaq(
     background_tasks: BackgroundTasks,
+    force_reprocess: bool = Query(default=False),
     variable_codes: list[str] | None = Query(default=None),
     max_archives: int | None = Query(default=None, ge=1, le=30),
+    observed_from: date | None = Query(default=None),
+    observed_to: date | None = Query(default=None),
     db: Session = Depends(get_db_session),
 ) -> EtlRunResponse:
     service = EtlService(db)
     try:
-        run, selected_variables, max_archives_effective = service.create_remmaq_run(
+        (
+            run,
+            selected_variables,
+            max_archives_effective,
+            run_force_reprocess,
+            run_observed_from,
+            run_observed_to,
+        ) = service.create_remmaq_run(
             variable_codes=variable_codes,
             max_archives=max_archives,
+            force_reprocess=force_reprocess,
+            observed_from=observed_from,
+            observed_to=observed_to,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -115,6 +139,9 @@ def start_sync_remmaq(
         run.id,
         selected_variables,
         max_archives_effective,
+        run_force_reprocess,
+        run_observed_from,
+        run_observed_to,
     )
     return _to_run_response(run)
 

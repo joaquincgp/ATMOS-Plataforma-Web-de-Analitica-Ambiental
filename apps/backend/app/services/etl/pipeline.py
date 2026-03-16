@@ -5,7 +5,8 @@ import shutil
 import time
 import zipfile
 from collections.abc import Callable, Iterable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -137,15 +138,30 @@ class EtlService:
         force_reprocess: bool = False,
         variable_codes: list[str] | None = None,
         max_archives: int | None = None,
+        observed_from: date | None = None,
+        observed_to: date | None = None,
     ) -> EtlRun:
-        run, normalized_variables, max_archives_effective = self.create_remmaq_run(
+        (
+            run,
+            normalized_variables,
+            max_archives_effective,
+            run_force_reprocess,
+            run_observed_from,
+            run_observed_to,
+        ) = self.create_remmaq_run(
             variable_codes=variable_codes,
             max_archives=max_archives,
+            force_reprocess=force_reprocess,
+            observed_from=observed_from,
+            observed_to=observed_to,
         )
         return self.run_remmaq_sync(
             run_id=run.id,
             selected_variables=normalized_variables,
             max_archives=max_archives_effective,
+            force_reprocess=run_force_reprocess,
+            observed_from=run_observed_from,
+            observed_to=run_observed_to,
         )
 
     def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
@@ -176,8 +192,12 @@ class EtlService:
         *,
         variable_codes: list[str] | None,
         max_archives: int | None,
-    ) -> tuple[EtlRun, list[str], int]:
+        force_reprocess: bool = False,
+        observed_from: date | None = None,
+        observed_to: date | None = None,
+    ) -> tuple[EtlRun, list[str], int, bool, date | None, date | None]:
         normalized_variables = self._normalize_variable_selection(variable_codes)
+        normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
         # When the caller explicitly selects variables, process exactly those.
         if variable_codes:
             max_archives_effective = len(normalized_variables)
@@ -191,8 +211,11 @@ class EtlService:
             progress_percent=0,
             selected_variables=normalized_variables,
             max_archives=max_archives_effective,
+            force_reprocess=force_reprocess,
+            observed_from=normalized_from.isoformat() if normalized_from else None,
+            observed_to=normalized_to.isoformat() if normalized_to else None,
         )
-        return run, normalized_variables, max_archives_effective
+        return run, normalized_variables, max_archives_effective, force_reprocess, normalized_from, normalized_to
 
     def create_manual_run(self, *, filename: str) -> EtlRun:
         run = self._create_run(trigger_type="manual", source="manual-upload")
@@ -211,8 +234,14 @@ class EtlService:
         run_id: str,
         selected_variables: list[str],
         max_archives: int,
+        force_reprocess: bool,
+        observed_from: date | None,
+        observed_to: date | None,
     ) -> EtlRun:
         run = self._get_run_or_raise(run_id)
+        normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
+        observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
+        effective_force_reprocess = force_reprocess or normalized_from is not None or normalized_to is not None
         try:
             self._set_run_progress(
                 run,
@@ -221,6 +250,9 @@ class EtlService:
                 progress_percent=2,
                 selected_variables=selected_variables,
                 max_archives=max_archives,
+                force_reprocess=effective_force_reprocess,
+                observed_from=normalized_from.isoformat() if normalized_from else None,
+                observed_to=normalized_to.isoformat() if normalized_to else None,
             )
 
             archives = self._discover_archive_urls(
@@ -232,7 +264,11 @@ class EtlService:
             self.db.commit()
 
             discovered_variable_codes = sorted({archive["variable_code"] for archive in archives})
-            deleted_measurements = self._delete_existing_measurements_for_variable_codes(discovered_variable_codes)
+            deleted_measurements = 0
+            overwritten_variables: list[str] = []
+            if effective_force_reprocess:
+                deleted_measurements = self._delete_existing_measurements_for_variable_codes(discovered_variable_codes)
+                overwritten_variables = discovered_variable_codes
             self._set_run_progress(
                 run,
                 stage="discovering",
@@ -241,8 +277,11 @@ class EtlService:
                 archives_total=len(archives),
                 selected_variables=selected_variables,
                 max_archives=max_archives,
-                overwritten_variables=discovered_variable_codes,
+                overwritten_variables=overwritten_variables,
                 deleted_measurements=deleted_measurements,
+                force_reprocess=effective_force_reprocess,
+                observed_from=normalized_from.isoformat() if normalized_from else None,
+                observed_to=normalized_to.isoformat() if normalized_to else None,
             )
 
             for archive_index, archive in enumerate(archives, start=1):
@@ -271,11 +310,13 @@ class EtlService:
                     original_name=filename,
                     source_type="automatic",
                     source_url=archive_url,
-                    force_reprocess=True,
+                    force_reprocess=effective_force_reprocess,
                     archive_index=archive_index,
                     archives_total=len(archives),
                     selected_variables=selected_variables,
                     current_variable=variable_code,
+                    observed_from=observed_from_dt,
+                    observed_to=observed_to_dt,
                 )
 
             run.status = "completed"
@@ -405,6 +446,24 @@ class EtlService:
         safe_fraction = max(0.0, min(stage_fraction, 1.0))
         value = ((safe_completed + safe_fraction) / safe_total) * 100
         return int(max(0, min(100, round(value))))
+
+    def _normalize_observed_range(
+        self,
+        observed_from: date | None,
+        observed_to: date | None,
+    ) -> tuple[date | None, date | None]:
+        if observed_from and observed_to and observed_from > observed_to:
+            raise ValueError("El rango de fechas es inválido: observed_from no puede ser mayor que observed_to.")
+        return observed_from, observed_to
+
+    def _date_to_datetime_range(
+        self,
+        observed_from: date | None,
+        observed_to: date | None,
+    ) -> tuple[datetime | None, datetime | None]:
+        from_dt = datetime.combine(observed_from, dt_time.min, tzinfo=UTC) if observed_from is not None else None
+        to_dt = datetime.combine(observed_to, dt_time.max, tzinfo=UTC) if observed_to is not None else None
+        return from_dt, to_dt
 
     def _delete_existing_measurements_for_variable_codes(self, variable_codes: list[str]) -> int:
         if not variable_codes:
@@ -594,6 +653,8 @@ class EtlService:
         archives_total: int,
         selected_variables: list[str],
         current_variable: str,
+        observed_from: datetime | None = None,
+        observed_to: datetime | None = None,
     ) -> None:
         checksum = compute_sha256(content)
 
@@ -744,7 +805,13 @@ class EtlService:
                 records_skipped=etl_run.records_skipped + partial_skipped,
             )
 
-        inserted, updated, skipped = self._load_rows(rows, source_file.id, progress_callback=_on_insert_progress)
+        inserted, updated, skipped = self._load_rows(
+            rows,
+            source_file.id,
+            observed_from=observed_from,
+            observed_to=observed_to,
+            progress_callback=_on_insert_progress,
+        )
 
         source_file.row_count = inserted + updated
         source_file.status = "completed"
@@ -1066,6 +1133,8 @@ class EtlService:
         rows: Iterable[NormalizedMeasurementRow],
         source_file_id: int,
         *,
+        observed_from: datetime | None = None,
+        observed_to: datetime | None = None,
         progress_callback: Callable[[int, int, int], None] | None = None,
     ) -> tuple[int, int, int]:
         total_inserted = 0
@@ -1075,6 +1144,14 @@ class EtlService:
         chunk: list[NormalizedMeasurementRow] = []
 
         for row in rows:
+            row_observed_at = row.observed_at.astimezone(UTC)
+            if observed_from is not None and row_observed_at < observed_from:
+                total_skipped += 1
+                continue
+            if observed_to is not None and row_observed_at > observed_to:
+                total_skipped += 1
+                continue
+
             chunk.append(row)
             if len(chunk) >= chunk_size:
                 inserted, updated, skipped = self._load_rows_chunk(chunk, source_file_id)
