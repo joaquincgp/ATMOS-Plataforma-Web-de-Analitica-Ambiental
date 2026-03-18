@@ -1,6 +1,6 @@
 # ATMOS (Analytics Time-Series Modeling Operational System)
 
-ATMOS es una plataforma web avanzada diseñada para la ingestión ETL, analítica de datos atmosféricos y la gestión de áreas de investigación (workspaces) totalmente aisladas.
+ATMOS es una plataforma web diseñada para la ingestión ETL, analítica y predicción de datos atmosféricos con series temporales, y la gestión de áreas de investigación (workspaces) totalmente aisladas. Además, busca visibilizar la información pública recopilada de sensores distribuidos en la ciudad de Quito, mediante visualizaciones y gráficas intuitivas que aprovechen de mejor manera los datos publicados por la REMMAQ (Red Metropolitana de Monitoreo de Calidad del Aire).
 
 ##  Características Principales
 - **ETL Robusto:** Ingestión de series temporales históricas y soporte para cargas de datos manuales.
@@ -45,15 +45,15 @@ Para configurar la API, debes copiar el archivo de ejemplo en el backend (ubicad
 - `DATABASE_URL`: Cadena de conexión principal para PostgreSQL (ej. `postgresql+psycopg://atmos:password@localhost:5432/atmos`).
 - `JWT_SECRET_KEY`: Clave secreta para firmar los tokens JWT. **Debe cambiarse para entornos de producción.**
 - `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`: Configuración de la duración y vigencia de la sesión de usuario.
-- `AUTO_INIT_DB_ON_STARTUP`: Al asiganarle `true`, el esquema base se inicializará automáticamente en la base de datos de PostgreSQL al arrancar el backend; ideal para desarrollo ya que ahorra scripts manuales de inicialización.
+- `AUTO_INIT_DB_ON_STARTUP`: Al asiganarle `true`, el esquema base se inicializará automáticamente en la base de datos de PostgreSQL.
 - `WORKSPACE_STORAGE_DIR`: Directorio en disco donde se persistirán archivos y artefactos de los workspaces (por defecto: `./data/workspaces`).
 - `CORS_ORIGINS`: URLs permitidas para solicitudes en el ambiente web (por defecto en local: `http://localhost:5173`).
 
 ## Instalación y Formas de Ejecución
 
-Existen dos vías principales para correr la plataforma ATMOS de manera local: corriendo contenedores con Docker/Docker Compose (muy recomendado para un arranque sin fricciones) o ejecutando los procesos por su cuenta en tu entorno host.
+Existen dos vías principales para correr la plataforma de manera local: corriendo contenedores con Docker/Docker Compose (muy recomendado para un arranque sin fricciones) o ejecutando los procesos por su cuenta en el entorno host.
 
-### Opción 1: Docker Compose (Stack Completo - Recomendado)
+### Opción 1: Docker Compose
 Requisitos previos: `Docker` y `Docker Compose` corriendo.
 Esta es la ruta más rápida. Inicializa contenedores para PostGIS, el servidor FastAPI (backend) y el entorno en caliente de Vite (frontend) sin configurar intérpretes locales.
 
@@ -73,10 +73,10 @@ Esta es la ruta más rápida. Inicializa contenedores para PostGIS, el servidor 
 - Documentación OpenAPI Explicativa (Swagger UI): `http://localhost:8000/docs`
 
 ### Opción 2: Ejecución Local Independiente
-Ideal para depuración pura en editores como VSCode, PyCharm u otros donde quieres utilizar los "debuggers" integrados del backend. Requieres tener Node.js 18+, Python 3.11+, e idealmente una base de datos de Postgres levantada.
+Ideal para depuración pura en editores como VSCode, PyCharm u otros donde quieres utilizar los "debuggers" integrados del backend. Es necesario tener Node.js 18+, Python 3.11+, e idealmente una base de datos de Postgres levantada.
 
 1. **Base de Datos (PostgreSQL):**
-   Aún podrías usar Docker exclusivamente para levantar tu BD y no instalar Postgis a mano en la laptop:
+   Aún podrías usar Docker exclusivamente para levantar tu BD y no instalar Postgis manualmente:
    ```bash
    docker compose up db -d
    ```
@@ -108,7 +108,7 @@ El archivo `package.json` raíz simplifica la inicialización orquestando las ac
 - `npm run backend:test`: Busca y corre pruebas de verificación unitarias empleando `pytest` en la carpeta backend.
 - `npm run backend:lint`: Ejecuta el analizador sintáctico `ruff` en el Python de la API para garantizar el formato del código.
 
-## Flujo Básico de Uso (Quickstart)
+## Flujo Básico de Uso
 1. **Puesta a Punto de DB:** Arranca el servidor (idealmente con `AUTO_INIT_DB_ON_STARTUP=true`). Esto sembrará las tablas y esquemas indispensables eliminando la necesidad de migraciones previas.
 2. **Acceso y Registro Inicial:** Accede a `http://localhost:5173`, regístrate usando la página de inicio como un nuevo usuario. Por lo general asimilarás un rol de `researcher` o `generic` lo que condiciona tu acceso.
 3. **Página de Workspaces:** Creada tu sesión, entra a la zona de Workspaces. Si el rol que posees lo permite, podrás crear uno. Al nombrarlo y configurarlo, el backend actuará de orquestador creando inmediatamente en la BD el esquema individualizado dedicado (ej. `ws_joaquin_clima_1`).
