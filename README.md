@@ -1,6 +1,8 @@
 # ATMOS (Analytics Time-Series Modeling Operational System)
 
-ATMOS es una plataforma web diseñada para la ingestión ETL, analítica y predicción de datos atmosféricos con series temporales, y la gestión de áreas de investigación (workspaces) totalmente aisladas. Además, busca visibilizar la información pública recopilada de sensores distribuidos en la ciudad de Quito, mediante visualizaciones y gráficas intuitivas que aprovechen de mejor manera los datos publicados por la REMMAQ (Red Metropolitana de Monitoreo de Calidad del Aire).
+ATMOS es una plataforma web diseñada para la ingestión, transformación (ETL), analítica, monitoreo y predicción de calidad de aire basada en series temporales. El sistema está orientado a la gestión de áreas de investigación (workspaces) completamente aisladas, permitiendo que distintos equipos o proyectos analicen datos ambientales de forma independiente, reproducible y segura. 
+
+La plataforma aprovecha los datos públicos recopilados por la REMMAQ (Red Metropolitana de Monitoreo de Calidad del Aire), gracias a su red de sensores, para visibilizar, interpretar y comunicar el estado de la calidad del aire en la ciudad de Quito, mediante visualizaciones interactivas y modelos predictivos.
 
 ##  Características Principales
 - **ETL Robusto:** Ingestión de series temporales históricas y soporte para cargas de datos manuales.
