@@ -94,12 +94,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>(() => loadStoredAuthState());
   const [isLoading, setIsLoading] = useState(true);
   const accessTokenRef = useRef<string | null>(authState.accessToken);
-
-  useEffect(() => {
-    accessTokenRef.current = authState.accessToken;
-  }, [authState.accessToken]);
+  const refreshTokenRef = useRef<string | null>(authState.refreshToken);
 
   const clearAuthState = useCallback(() => {
+    accessTokenRef.current = null;
+    refreshTokenRef.current = null;
     setAuthState({ accessToken: null, refreshToken: null, user: null });
   }, []);
 
@@ -109,6 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refresh_token: string;
       user: UserResponse;
     }) => {
+      accessTokenRef.current = payload.access_token;
+      refreshTokenRef.current = payload.refresh_token;
       setAuthState({
         accessToken: payload.access_token,
         refreshToken: payload.refresh_token,
@@ -119,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const refreshSession = useCallback(async (): Promise<boolean> => {
-    const currentRefreshToken = authState.refreshToken;
+    const currentRefreshToken = refreshTokenRef.current;
     if (!currentRefreshToken) {
       clearAuthState();
       return false;
@@ -133,7 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearAuthState();
       return false;
     }
-  }, [applyTokenPair, authState.refreshToken, clearAuthState]);
+  }, [applyTokenPair, clearAuthState]);
 
   useEffect(() => {
     configureHttpClientAuth({
