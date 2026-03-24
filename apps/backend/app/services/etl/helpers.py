@@ -9,7 +9,6 @@ import pandas as pd
 
 DEFAULT_VARIABLE_UNITS = {
     "PM25": "ug/m3",
-    "PM2.5": "ug/m3",
     "PM10": "ug/m3",
     "NO2": "ug/m3",
     "SO2": "ug/m3",
@@ -39,13 +38,21 @@ def normalize_text(value: str) -> str:
 
 
 def normalize_variable_code(value: str) -> str:
-    code = value.strip().upper()
-    code = code.replace(" ", "")
-    code = code.replace("μ", "u")
-    code = code.replace("µ", "u")
-    if code in {"PM2.5", "PM2_5", "PM2-5"}:
-        return "PM25"
-    return code
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = normalized.strip().upper()
+    normalized = normalized.replace("μ", "U")
+    normalized = normalized.replace("µ", "U")
+    normalized = re.sub(r"[^A-Z0-9]+", "", normalized)
+    return normalized
+
+
+def normalize_station_code(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = normalized.strip().upper()
+    normalized = re.sub(r"\s+", "", normalized)
+    return normalized
 
 
 def parse_datetime(value: object) -> datetime | None:

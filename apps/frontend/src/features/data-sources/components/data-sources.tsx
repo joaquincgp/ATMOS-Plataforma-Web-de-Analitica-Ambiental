@@ -5,7 +5,7 @@ import {
   CheckCircle2,
   Database,
   Download,
-  FileText,
+  Loader2,
   RefreshCw,
   Server,
   Settings,
@@ -20,6 +20,12 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  getAnalyticsFilters,
+  runAnalyticsQuery,
+  type AnalyticsDataRow,
+  type AnalyticsFilterOptionsResponse,
+} from '@/api/modules/analytics';
 import { useEtl } from '@/hooks/use-etl';
 import { REMMAQ_VARIABLE_OPTIONS } from '@/api/modules/etl';
 
@@ -35,7 +41,6 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
     { number: 1, label: 'Source', description: 'Select data source' },
     { number: 2, label: 'Validation', description: 'Validate ETL results' },
     { number: 3, label: 'Mapping', description: 'Contract mapping' },
-    { number: 4, label: 'Commit', description: 'Operational status' },
   ];
 
   return (
@@ -99,7 +104,17 @@ export function DataSources() {
   const [remmaqDateTo, setRemmaqDateTo] = useState('');
   const [remmaqForceReprocess, setRemmaqForceReprocess] = useState(false);
   const [actionMessage, setActionMessage] = useState<StepMessage | null>(null);
-  const [processingAction, setProcessingAction] = useState<'db' | 'sync' | 'upload' | null>(null);
+  const [processingAction, setProcessingAction] = useState<'sync' | 'upload' | null>(null);
+  const [managerFilters, setManagerFilters] = useState<AnalyticsFilterOptionsResponse | null>(null);
+  const [managerRows, setManagerRows] = useState<AnalyticsDataRow[]>([]);
+  const [managerLoading, setManagerLoading] = useState(false);
+  const [managerQuerying, setManagerQuerying] = useState(false);
+  const [managerError, setManagerError] = useState<string | null>(null);
+  const [managerSelectedStations, setManagerSelectedStations] = useState<string[]>([]);
+  const [managerSelectedVariables, setManagerSelectedVariables] = useState<string[]>([]);
+  const [managerDateFrom, setManagerDateFrom] = useState('');
+  const [managerDateTo, setManagerDateTo] = useState('');
+  const [managerLimit, setManagerLimit] = useState(500);
 
   const {
     runs,
@@ -109,10 +124,8 @@ export function DataSources() {
     loading,
     refreshing,
     error,
-    initDatabase,
     triggerRemmaqSync,
     uploadManualFile,
-    refresh,
   } = useEtl();
 
   const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
@@ -133,26 +146,6 @@ export function DataSources() {
     setUploadedFile(nextFile);
     if (nextFile) {
       setActionMessage({ type: 'info', text: `Archivo seleccionado: ${nextFile.name}` });
-    }
-  };
-
-  const handleInitializeDb = async () => {
-    setProcessingAction('db');
-    setActionMessage(null);
-
-    try {
-      const response = await initDatabase();
-      setActionMessage({
-        type: 'success',
-        text: `Base inicializada correctamente (${response.timestamp}).`,
-      });
-    } catch (err) {
-      setActionMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'No se pudo inicializar la base de datos.',
-      });
-    } finally {
-      setProcessingAction(null);
     }
   };
 
@@ -214,7 +207,7 @@ export function DataSources() {
   };
 
   const handleNext = () => {
-    if (currentStep < 4) {
+    if (currentStep < 3) {
       setCurrentStep((previous) => previous + 1);
     }
   };
@@ -239,6 +232,64 @@ export function DataSources() {
       }
       return [...current, code];
     });
+  };
+
+  const toggleManagerStation = (stationCode: string) => {
+    setManagerSelectedStations((current) =>
+      current.includes(stationCode) ? current.filter((item) => item !== stationCode) : [...current, stationCode],
+    );
+  };
+
+  const toggleManagerVariable = (variableCode: string) => {
+    setManagerSelectedVariables((current) =>
+      current.includes(variableCode) ? current.filter((item) => item !== variableCode) : [...current, variableCode],
+    );
+  };
+
+  useEffect(() => {
+    if (sourceType !== 'database' || managerLoading || managerFilters) {
+      return;
+    }
+
+    const loadManagerFilters = async () => {
+      setManagerLoading(true);
+      setManagerError(null);
+      try {
+        const nextFilters = await getAnalyticsFilters();
+        setManagerFilters(nextFilters);
+        setManagerDateFrom(nextFilters.min_observed_at?.slice(0, 10) ?? '');
+        setManagerDateTo(nextFilters.max_observed_at?.slice(0, 10) ?? '');
+      } catch (err) {
+        setManagerError(err instanceof Error ? err.message : 'No se pudieron cargar los filtros del Data Manager.');
+      } finally {
+        setManagerLoading(false);
+      }
+    };
+
+    void loadManagerFilters();
+  }, [managerFilters, managerLoading, sourceType]);
+
+  const handleRunManagerQuery = async () => {
+    setManagerQuerying(true);
+    setManagerError(null);
+    try {
+      const response = await runAnalyticsQuery({
+        station_codes: managerSelectedStations.length > 0 ? managerSelectedStations : undefined,
+        variable_codes: managerSelectedVariables.length > 0 ? managerSelectedVariables : undefined,
+        date_from: managerDateFrom || undefined,
+        date_to: managerDateTo || undefined,
+        limit: Math.max(100, Math.min(5000, managerLimit)),
+      });
+      setManagerRows(response.rows);
+      if (response.rows.length === 0) {
+        setManagerError('No se encontraron datos con esos filtros.');
+      }
+    } catch (err) {
+      setManagerRows([]);
+      setManagerError(err instanceof Error ? err.message : 'La consulta del Data Manager falló.');
+    } finally {
+      setManagerQuerying(false);
+    }
   };
 
   return (
@@ -297,9 +348,24 @@ export function DataSources() {
               onRemmaqDateToChange={setRemmaqDateTo}
               onRemmaqForceReprocessChange={setRemmaqForceReprocess}
               onToggleVariable={toggleVariable}
-              onInitializeDb={handleInitializeDb}
               onSyncRemmaq={handleSyncRemmaq}
               onUploadManual={handleManualUpload}
+              managerFilters={managerFilters}
+              managerRows={managerRows}
+              managerLoading={managerLoading}
+              managerQuerying={managerQuerying}
+              managerError={managerError}
+              managerSelectedStations={managerSelectedStations}
+              managerSelectedVariables={managerSelectedVariables}
+              managerDateFrom={managerDateFrom}
+              managerDateTo={managerDateTo}
+              managerLimit={managerLimit}
+              onManagerDateFromChange={setManagerDateFrom}
+              onManagerDateToChange={setManagerDateTo}
+              onManagerLimitChange={setManagerLimit}
+              onManagerToggleStation={toggleManagerStation}
+              onManagerToggleVariable={toggleManagerVariable}
+              onRunManagerQuery={handleRunManagerQuery}
             />
           )}
 
@@ -308,15 +374,6 @@ export function DataSources() {
           )}
 
           {currentStep === 3 && <MappingStep previewRows={previewRows} />}
-
-          {currentStep === 4 && (
-            <CommitStep
-              metrics={metrics}
-              latestRun={latestRun}
-              refreshing={refreshing}
-              onRefresh={refresh}
-            />
-          )}
         </div>
 
         <div className="max-w-7xl mx-auto mt-6 flex justify-between">
@@ -325,10 +382,10 @@ export function DataSources() {
           </Button>
           <Button
             onClick={handleNext}
-            disabled={currentStep === 4}
+            disabled={currentStep === 3}
             className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
           >
-            {currentStep === 4 ? 'Finish' : 'Next'}
+            Next
           </Button>
         </div>
       </div>
@@ -353,7 +410,7 @@ interface SourceStepProps {
     details?: Record<string, unknown>;
   } | null;
   loading: boolean;
-  processingAction: 'db' | 'sync' | 'upload' | null;
+  processingAction: 'sync' | 'upload' | null;
   selectedVariables: string[];
   remmaqDateFrom: string;
   remmaqDateTo: string;
@@ -362,9 +419,24 @@ interface SourceStepProps {
   onRemmaqDateToChange: (value: string) => void;
   onRemmaqForceReprocessChange: (value: boolean) => void;
   onToggleVariable: (code: string) => void;
-  onInitializeDb: () => Promise<void>;
   onSyncRemmaq: () => Promise<void>;
   onUploadManual: () => Promise<void>;
+  managerFilters: AnalyticsFilterOptionsResponse | null;
+  managerRows: AnalyticsDataRow[];
+  managerLoading: boolean;
+  managerQuerying: boolean;
+  managerError: string | null;
+  managerSelectedStations: string[];
+  managerSelectedVariables: string[];
+  managerDateFrom: string;
+  managerDateTo: string;
+  managerLimit: number;
+  onManagerDateFromChange: (value: string) => void;
+  onManagerDateToChange: (value: string) => void;
+  onManagerLimitChange: (value: number) => void;
+  onManagerToggleStation: (stationCode: string) => void;
+  onManagerToggleVariable: (variableCode: string) => void;
+  onRunManagerQuery: () => Promise<void>;
 }
 
 function SourceStep({
@@ -384,19 +456,28 @@ function SourceStep({
   onRemmaqDateToChange,
   onRemmaqForceReprocessChange,
   onToggleVariable,
-  onInitializeDb,
   onSyncRemmaq,
   onUploadManual,
+  managerFilters,
+  managerRows,
+  managerLoading,
+  managerQuerying,
+  managerError,
+  managerSelectedStations,
+  managerSelectedVariables,
+  managerDateFrom,
+  managerDateTo,
+  managerLimit,
+  onManagerDateFromChange,
+  onManagerDateToChange,
+  onManagerLimitChange,
+  onManagerToggleStation,
+  onManagerToggleVariable,
+  onRunManagerQuery,
 }: SourceStepProps) {
   const details = latestRun?.details ?? {};
   const stageLabel =
     typeof details.stage_label === 'string' ? details.stage_label : latestRun?.status === 'running' ? 'Procesando' : 'Completado';
-  const progressPercent =
-    typeof details.progress_percent === 'number'
-      ? Math.max(0, Math.min(100, Math.round(details.progress_percent)))
-      : latestRun?.status === 'completed'
-        ? 100
-        : 0;
   const currentVariable = typeof details.current_variable === 'string' ? details.current_variable : null;
   const currentArchive = typeof details.current_archive === 'number' ? details.current_archive : null;
   const totalArchives = typeof details.archives_total === 'number' ? details.archives_total : null;
@@ -445,8 +526,8 @@ function SourceStep({
               }`}
             >
               <Database className="w-8 h-8 mb-3 text-[#509EE3]" />
-              <h3 className="font-semibold mb-1">Database Init</h3>
-              <p className="text-xs text-muted-foreground">Inicialización desde código</p>
+              <h3 className="font-semibold mb-1">Data Manager</h3>
+              <p className="text-xs text-muted-foreground">Consulta lectora por variable, estación y fecha</p>
             </button>
           </div>
 
@@ -486,16 +567,15 @@ function SourceStep({
 
               {latestRun?.status === 'running' && latestRun.trigger_type === 'manual' && (
                 <div className="p-3 bg-white rounded-lg border border-border">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-medium">Progreso carga manual</p>
-                    <p className="text-sm font-semibold text-[#509EE3]">{progressPercent}%</p>
+                  <div className="flex items-start gap-3">
+                    <Loader2 className="w-4 h-4 mt-0.5 text-[#509EE3] animate-spin" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">Procesando carga manual</p>
+                      <p className="text-xs text-muted-foreground">
+                        Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
+                      </p>
+                    </div>
                   </div>
-                  <div className="h-2 rounded-full bg-[#E7EEF7] overflow-hidden">
-                    <div className="h-full bg-[#509EE3] transition-all duration-500" style={{ width: `${progressPercent}%` }} />
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
-                  </p>
                 </div>
               )}
             </div>
@@ -628,21 +708,26 @@ function SourceStep({
               </div>
 
               <div className="p-3 bg-white rounded-lg border border-border">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-medium">Progreso ETL por etapa</p>
-                  <p className="text-sm font-semibold text-[#509EE3]">{progressPercent}%</p>
-                </div>
-                <div className="h-2 rounded-full bg-[#E7EEF7] overflow-hidden">
-                  <div
-                    className="h-full bg-[#509EE3] transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
-                  {currentVariable ? ` · Variable: ${currentVariable}` : ''}
-                  {currentArchive && totalArchives ? ` · Archivo ${currentArchive}/${totalArchives}` : ''}
-                </p>
+                {latestRun?.status === 'running' ? (
+                  <div className="flex items-start gap-3">
+                    <Loader2 className="w-4 h-4 mt-0.5 text-[#509EE3] animate-spin" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">REMMAQ sync en progreso</p>
+                      <p className="text-xs text-muted-foreground">
+                        Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
+                        {currentVariable ? ` · Variable: ${currentVariable}` : ''}
+                        {currentArchive && totalArchives ? ` · Archivo ${currentArchive}/${totalArchives}` : ''}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">Estado ETL</p>
+                    <p className="text-xs text-muted-foreground">
+                      Última etapa conocida: <span className="font-medium text-foreground">{stageLabel}</span>
+                    </p>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -673,24 +758,219 @@ function SourceStep({
           )}
 
           {sourceType === 'database' && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Inicializa el esquema completo (`stations`, `variables`, `measurements`, `etl_runs`, `source_files`) desde código.
-              </p>
-              <div className="flex justify-end">
-                <Button
-                  className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
-                  onClick={() => void onInitializeDb()}
-                  disabled={processingAction === 'db'}
-                >
-                  <Database className="w-4 h-4 mr-2" />
-                  {processingAction === 'db' ? 'Initializing...' : 'Initialize Database'}
-                </Button>
-              </div>
-            </div>
+            <DataManagerPanel
+              filters={managerFilters}
+              rows={managerRows}
+              loading={managerLoading}
+              querying={managerQuerying}
+              error={managerError}
+              selectedStations={managerSelectedStations}
+              selectedVariables={managerSelectedVariables}
+              dateFrom={managerDateFrom}
+              dateTo={managerDateTo}
+              limit={managerLimit}
+              onDateFromChange={onManagerDateFromChange}
+              onDateToChange={onManagerDateToChange}
+              onLimitChange={onManagerLimitChange}
+              onToggleStation={onManagerToggleStation}
+              onToggleVariable={onManagerToggleVariable}
+              onRunQuery={onRunManagerQuery}
+            />
           )}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+interface DataManagerPanelProps {
+  filters: AnalyticsFilterOptionsResponse | null;
+  rows: AnalyticsDataRow[];
+  loading: boolean;
+  querying: boolean;
+  error: string | null;
+  selectedStations: string[];
+  selectedVariables: string[];
+  dateFrom: string;
+  dateTo: string;
+  limit: number;
+  onDateFromChange: (value: string) => void;
+  onDateToChange: (value: string) => void;
+  onLimitChange: (value: number) => void;
+  onToggleStation: (stationCode: string) => void;
+  onToggleVariable: (variableCode: string) => void;
+  onRunQuery: () => Promise<void>;
+}
+
+function DataManagerPanel({
+  filters,
+  rows,
+  loading,
+  querying,
+  error,
+  selectedStations,
+  selectedVariables,
+  dateFrom,
+  dateTo,
+  limit,
+  onDateFromChange,
+  onDateToChange,
+  onLimitChange,
+  onToggleStation,
+  onToggleVariable,
+  onRunQuery,
+}: DataManagerPanelProps) {
+  if (loading) {
+    return (
+      <div className="rounded-lg border bg-[#f8fbff] px-4 py-6">
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin text-[#509EE3]" />
+          Cargando filtros del Data Manager...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Consulta lectora de `measurements` usando solo variable, estación y rango de fechas.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="space-y-1">
+          <Label htmlFor="manager-date-from" className="text-xs text-muted-foreground">
+            Fecha desde
+          </Label>
+          <Input
+            id="manager-date-from"
+            type="date"
+            value={dateFrom}
+            onChange={(event) => onDateFromChange(event.target.value)}
+            className="h-9"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="manager-date-to" className="text-xs text-muted-foreground">
+            Fecha hasta
+          </Label>
+          <Input
+            id="manager-date-to"
+            type="date"
+            value={dateTo}
+            onChange={(event) => onDateToChange(event.target.value)}
+            className="h-9"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="manager-limit" className="text-xs text-muted-foreground">
+            Límite de filas
+          </Label>
+          <Input
+            id="manager-limit"
+            type="number"
+            min={100}
+            max={5000}
+            step={100}
+            value={limit}
+            onChange={(event) => onLimitChange(Math.max(100, Math.min(5000, Number(event.target.value || 100))))}
+            className="h-9"
+          />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Variables</Label>
+        <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[112px] overflow-auto">
+          {(filters?.variables ?? []).map((variable) => {
+            const active = selectedVariables.includes(variable.code);
+            return (
+              <button
+                key={variable.code}
+                type="button"
+                onClick={() => onToggleVariable(variable.code)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                  active
+                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                }`}
+                title={variable.name}
+              >
+                {variable.name}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Estaciones</Label>
+        <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[112px] overflow-auto">
+          {(filters?.stations ?? []).map((station) => {
+            const active = selectedStations.includes(station.code);
+            return (
+              <button
+                key={station.code}
+                type="button"
+                onClick={() => onToggleStation(station.code)}
+                className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                  active
+                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                }`}
+                title={station.name}
+              >
+                {station.code}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/25 hover:bg-[#e9f3fd]">
+          {rows.length.toLocaleString()} filas en la vista actual
+        </Badge>
+        <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={() => void onRunQuery()} disabled={querying}>
+          {querying ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
+          Consultar
+        </Button>
+      </div>
+
+      {error && <p className="text-sm text-[#1F5A8A]">{error}</p>}
+
+      <div className="max-h-[360px] overflow-auto border rounded-md">
+        <table className="w-full text-sm">
+          <thead className="sticky top-0 bg-[#f8fbff] border-b">
+            <tr>
+              <th className="px-3 py-2 text-left">Fecha</th>
+              <th className="px-3 py-2 text-left">Estación</th>
+              <th className="px-3 py-2 text-left">Variable</th>
+              <th className="px-3 py-2 text-left">Valor</th>
+              <th className="px-3 py-2 text-left">Unidad</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  Ejecuta una consulta para revisar datos.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, index) => (
+                <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b last:border-0">
+                  <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
+                  <td className="px-3 py-2">{row.station_code}</td>
+                  <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
+                  <td className="px-3 py-2">{row.value}</td>
+                  <td className="px-3 py-2">{row.unit ?? '-'}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1299,89 +1579,6 @@ function MappingStep({
                 No hay datos disponibles para previsualización. Ejecuta una corrida ETL primero.
               </p>
             )}
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-function CommitStep({
-  metrics,
-  latestRun,
-  refreshing,
-  onRefresh,
-}: {
-  metrics: { total_measurements: number; total_stations: number; total_variables: number; latest_run_status: string } | null;
-  latestRun: {
-    status: string;
-    started_at: string;
-    records_inserted: number;
-    records_updated: number;
-    records_skipped: number;
-  } | null;
-  refreshing: boolean;
-  onRefresh: () => Promise<void>;
-}) {
-  return (
-    <div className="space-y-6">
-      <Card className="bg-white">
-        <CardHeader>
-          <CardTitle>Review & Commit</CardTitle>
-          <CardDescription>Estado operativo del ETL en producción</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="grid grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Total Measurements</Label>
-                <p className="font-medium">{metrics ? metrics.total_measurements.toLocaleString() : '--'}</p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Stations</Label>
-                <p className="font-medium">{metrics ? metrics.total_stations : '--'}</p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Variables</Label>
-                <p className="font-medium">{metrics ? metrics.total_variables : '--'}</p>
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Latest Run</Label>
-                <p className="font-medium">{latestRun ? new Date(latestRun.started_at).toLocaleString() : 'No runs yet'}</p>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Latest Status</Label>
-                <Badge variant={latestRun?.status === 'completed' ? 'outline' : 'destructive'}>
-                  {latestRun?.status ?? 'unknown'}
-                </Badge>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1 block">Last Delta</Label>
-                <p className="font-medium">
-                  +{latestRun?.records_inserted ?? 0} / ~{latestRun?.records_updated ?? 0} / ={latestRun?.records_skipped ?? 0}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="flex items-center justify-between bg-[#F9FBFC] p-4 rounded-lg">
-            <div className="flex items-center gap-3">
-              <FileText className="w-5 h-5 text-muted-foreground" />
-              <div>
-                <p className="text-sm font-medium">Pipeline listo</p>
-                <p className="text-xs text-muted-foreground">
-                  ETL consolidado para REMMAQ (archivos estáticos) y cargas manuales.
-                </p>
-              </div>
-            </div>
-            <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={() => void onRefresh()}>
-              <Download className="w-4 h-4 mr-2" />
-              {refreshing ? 'Refreshing...' : 'Refresh Status'}
-            </Button>
           </div>
         </CardContent>
       </Card>

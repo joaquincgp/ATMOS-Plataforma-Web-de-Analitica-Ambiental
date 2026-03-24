@@ -28,6 +28,7 @@ from app.services.etl.helpers import (
     compute_record_hash,
     compute_sha256,
     guess_unit,
+    normalize_station_code,
     normalize_text,
     normalize_variable_code,
     parse_datetime,
@@ -1004,7 +1005,7 @@ class EtlService:
                 if pd.isna(value):
                     continue
 
-                station_code = normalize_variable_code(str(value_col))
+                station_code = normalize_station_code(str(value_col))
                 variable_code = wide_variable_code
                 unit = guess_unit(variable_code, wide_units_by_column.get(value_col))
                 yield NormalizedMeasurementRow(
@@ -1025,7 +1026,7 @@ class EtlService:
         raw_station = row.get(station_column)
         if raw_station is None or str(raw_station).strip() == "" or str(raw_station).lower() == "nan":
             return "UNKNOWN_STATION"
-        return normalize_variable_code(str(raw_station))
+        return normalize_station_code(str(raw_station))
 
     def _extract_observed_at(
         self,
@@ -1184,7 +1185,7 @@ class EtlService:
                 continue
             observed_at = row.observed_at.astimezone(UTC).replace(tzinfo=None)
             key = (
-                normalize_variable_code(row.station_code),
+                normalize_station_code(row.station_code),
                 normalize_variable_code(row.variable_code),
                 observed_at,
             )
@@ -1274,6 +1275,7 @@ class EtlService:
         return existing_map
 
     def _get_or_create_station(self, station_code: str) -> Station:
+        station_code = normalize_station_code(station_code)
         cached = self._station_cache.get(station_code)
         if cached is not None:
             return cached
@@ -1290,6 +1292,7 @@ class EtlService:
         return station
 
     def _get_or_create_variable(self, variable_code: str, unit: str | None) -> Variable:
+        variable_code = normalize_variable_code(variable_code)
         cached = self._variable_cache.get(variable_code)
         if cached is not None:
             if cached.default_unit is None and unit:

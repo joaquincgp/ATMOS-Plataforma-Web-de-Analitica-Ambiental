@@ -30,6 +30,7 @@ from app.services.station_reference import (
     resolve_station_reference,
     sync_station_reference_metadata,
 )
+from app.services.etl.helpers import normalize_variable_code
 
 FORBIDDEN_SQL_PATTERN = re.compile(
     r"\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|comment|copy|call|do|merge)\b",
@@ -37,6 +38,25 @@ FORBIDDEN_SQL_PATTERN = re.compile(
 )
 
 DEFAULT_ANALYTICS_LIMIT = 5000
+
+
+def _canonicalize_variable_code(code: str | None) -> str:
+    if not code:
+        return ""
+    return normalize_variable_code(code)
+
+
+def _display_variable_name(code: str, fallback: str | None = None) -> str:
+    return fallback or code
+
+
+def _normalized_variable_sql_expr(column: Any) -> Any:
+    expression = func.upper(column)
+    for token in (" ", ".", "-", "_", "/", "(", ")", "[", "]", "{", "}"):
+        expression = func.replace(expression, token, "")
+    expression = func.replace(expression, "μ", "U")
+    expression = func.replace(expression, "µ", "U")
+    return expression
 
 
 def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
@@ -70,10 +90,30 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         select(Station.code, Station.name, Station.latitude, Station.longitude).order_by(Station.code.asc())
     ).all()
     variable_rows = db.execute(select(Variable.code, Variable.display_name).order_by(Variable.code.asc())).all()
+    source_variable_rows = db.execute(
+        select(Measurement.source_file_id, Variable.code)
+        .join(Variable, Variable.id == Measurement.variable_id)
+        .join(SourceFile, SourceFile.id == Measurement.source_file_id)
+        .where(SourceFile.status == "completed")
+        .group_by(Measurement.source_file_id, Variable.code)
+        .order_by(Measurement.source_file_id.asc(), Variable.code.asc())
+    ).all()
 
     min_observed_at, max_observed_at = db.execute(
         select(func.min(Measurement.observed_at), func.max(Measurement.observed_at))
     ).one()
+
+    source_variable_codes: dict[int, set[str]] = {}
+    for row in source_variable_rows:
+        canonical_code = _canonicalize_variable_code(row.code)
+        if canonical_code:
+            source_variable_codes.setdefault(row.source_file_id, set()).add(canonical_code)
+
+    canonical_variables: dict[str, str] = {}
+    for row in variable_rows:
+        canonical_code = _canonicalize_variable_code(row.code)
+        if canonical_code:
+            canonical_variables[canonical_code] = _display_variable_name(canonical_code, row.display_name)
 
     return AnalyticsFilterOptionsResponse(
         sources=[
@@ -84,6 +124,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 etl_run_id=row.etl_run_id,
                 downloaded_at=row.downloaded_at,
                 row_count=int(row.measurement_count),
+                variable_codes=sorted(source_variable_codes.get(row.id, set())),
             )
             for row in source_rows
         ],
@@ -97,7 +138,10 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
             )
             for row in station_rows
         ],
-        variables=[AnalyticsVariableOption(code=row.code, name=row.display_name) for row in variable_rows],
+        variables=[
+            AnalyticsVariableOption(code=code, name=name)
+            for code, name in sorted(canonical_variables.items(), key=lambda item: item[0])
+        ],
         min_observed_at=min_observed_at,
         max_observed_at=max_observed_at,
     )
@@ -127,7 +171,15 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
     if payload.station_codes:
         statement = statement.where(Station.code.in_(payload.station_codes))
     if payload.variable_codes:
-        statement = statement.where(Variable.code.in_(payload.variable_codes))
+        normalized_codes = sorted(
+            {
+                canonical
+                for canonical in (_canonicalize_variable_code(code) for code in payload.variable_codes)
+                if canonical
+            }
+        )
+        if normalized_codes:
+            statement = statement.where(_normalized_variable_sql_expr(Variable.code).in_(normalized_codes))
     if payload.date_from is not None:
         start_dt = datetime.combine(payload.date_from, time.min)
         statement = statement.where(Measurement.observed_at >= start_dt)
@@ -150,8 +202,11 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
                 observed_at=row.observed_at,
                 station_code=row.station_code,
                 station_name=row.station_name,
-                variable_code=row.variable_code,
-                variable_name=row.variable_name,
+                variable_code=_canonicalize_variable_code(row.variable_code),
+                variable_name=_display_variable_name(
+                    _canonicalize_variable_code(row.variable_code),
+                    row.variable_name,
+                ),
                 value=float(row.value),
                 unit=row.unit,
                 source_file_id=row.source_file_id,
@@ -212,11 +267,13 @@ def get_station_live_snapshot(
     rows = db.execute(statement.order_by(Station.code.asc(), Variable.code.asc())).all()
 
     grouped: dict[str, StationLiveSnapshotResponseItem] = {}
+    grouped_variables: dict[str, dict[str, StationLatestVariableResponse]] = {}
     global_latest: datetime | None = None
 
     for row in rows:
         reference = resolve_station_reference(row.station_code, row.station_name)
         station_item = grouped.get(row.station_code)
+        canonical_code = _canonicalize_variable_code(row.variable_code)
 
         if station_item is None:
             station_item = StationLiveSnapshotResponseItem(
@@ -229,16 +286,18 @@ def get_station_live_snapshot(
                 latest_observed_at=row.observed_at,
             )
             grouped[row.station_code] = station_item
+            grouped_variables[row.station_code] = {}
 
-        station_item.variables.append(
-            StationLatestVariableResponse(
-                variable_code=row.variable_code,
-                variable_name=row.variable_name,
-                value=float(row.value),
-                unit=row.unit,
-                observed_at=row.observed_at,
-            )
+        next_variable = StationLatestVariableResponse(
+            variable_code=canonical_code,
+            variable_name=_display_variable_name(canonical_code, row.variable_name),
+            value=float(row.value),
+            unit=row.unit,
+            observed_at=row.observed_at,
         )
+        current_variable = grouped_variables[row.station_code].get(canonical_code)
+        if current_variable is None or row.observed_at >= current_variable.observed_at:
+            grouped_variables[row.station_code][canonical_code] = next_variable
 
         if row.observed_at > station_item.latest_observed_at:
             station_item.latest_observed_at = row.observed_at
@@ -247,6 +306,11 @@ def get_station_live_snapshot(
             global_latest = row.observed_at
 
     stations = list(grouped.values())
+    for station in stations:
+        station.variables = sorted(
+            grouped_variables.get(station.station_code, {}).values(),
+            key=lambda item: item.variable_code,
+        )
     stations.sort(key=lambda item: item.station_code)
 
     return StationLiveSnapshotResponse(

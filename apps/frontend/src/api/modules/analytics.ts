@@ -7,6 +7,7 @@ export interface AnalyticsSourceOption {
   etl_run_id: string;
   downloaded_at: string | null;
   row_count: number;
+  variable_codes: string[];
 }
 
 export interface AnalyticsStationOption {

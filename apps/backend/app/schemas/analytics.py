@@ -13,6 +13,7 @@ class AnalyticsSourceOption(BaseModel):
     etl_run_id: str
     downloaded_at: datetime | None
     row_count: int
+    variable_codes: list[str] = Field(default_factory=list)
 
 
 class AnalyticsStationOption(BaseModel):

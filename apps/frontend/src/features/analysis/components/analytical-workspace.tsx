@@ -36,11 +36,9 @@ import {
   getAnalyticsFilters,
   getStationLiveSnapshot,
   runAnalyticsQuery,
-  runSqlPreview,
   type AnalyticsDataRow,
   type AnalyticsFilterOptionsResponse,
   type AnalyticsQueryRequest,
-  type SqlPreviewResponse,
   type StationLiveSnapshotResponse,
 } from '@/api/modules/analytics';
 import { Badge } from '@/components/ui/badge';
@@ -198,14 +196,6 @@ const RANGE_PRESETS: {
 ];
 
 const CHART_COLORS = ['#509EE3', '#1F5A8A', '#0EA5E9', '#0B7285', '#16A34A', '#E9730C', '#D946EF', '#A16207'];
-
-const SQL_SOURCE_TABLES: { value: string; label: string; sql: string }[] = [
-  { value: 'measurements', label: 'measurements', sql: 'SELECT * FROM measurements ORDER BY observed_at DESC' },
-  { value: 'stations', label: 'stations', sql: 'SELECT * FROM stations ORDER BY code ASC' },
-  { value: 'variables', label: 'variables', sql: 'SELECT * FROM variables ORDER BY code ASC' },
-  { value: 'source_files', label: 'source_files', sql: 'SELECT * FROM source_files ORDER BY downloaded_at DESC' },
-  { value: 'etl_runs', label: 'etl_runs', sql: 'SELECT * FROM etl_runs ORDER BY started_at DESC' },
-];
 
 const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -1278,7 +1268,7 @@ function correlationColor(value: number): string {
 export function AnalyticalWorkspace() {
   const [filters, setFilters] = useState<AnalyticsFilterOptionsResponse | null>(null);
   const [rows, setRows] = useState<AnalyticsDataRow[]>([]);
-  const [selectedSourceId, setSelectedSourceId] = useState<number | null>(null);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<number[]>([]);
   const [selectedStations, setSelectedStations] = useState<string[]>([]);
   const [selectedVariables, setSelectedVariables] = useState<string[]>([]);
   const [chartType, setChartType] = useState<ChartType>('line');
@@ -1312,12 +1302,6 @@ export function AnalyticalWorkspace() {
   const [liveSnapshot, setLiveSnapshot] = useState<StationLiveSnapshotResponse | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
 
-  const [selectedSqlTable, setSelectedSqlTable] = useState('');
-  const [sqlLimit, setSqlLimit] = useState(120);
-  const [sqlLoading, setSqlLoading] = useState(false);
-  const [sqlError, setSqlError] = useState<string | null>(null);
-  const [sqlPreview, setSqlPreview] = useState<SqlPreviewResponse | null>(null);
-
   const requestIdRef = useRef(0);
   const liveRequestIdRef = useRef(0);
 
@@ -1337,15 +1321,34 @@ export function AnalyticalWorkspace() {
     });
   }, [filters, sourceSearch]);
 
-  const selectedSource = useMemo(() => {
-    if (!filters || selectedSourceId === null) {
-      return null;
+  const selectedSources = useMemo(() => {
+    if (!filters || selectedSourceIds.length === 0) {
+      return [];
     }
-    return filters.sources.find((source) => source.id === selectedSourceId) ?? null;
-  }, [filters, selectedSourceId]);
+    const selectedSet = new Set(selectedSourceIds);
+    return filters.sources.filter((source) => selectedSet.has(source.id));
+  }, [filters, selectedSourceIds]);
+  const availableVariables = useMemo(() => {
+    if (!filters) {
+      return [];
+    }
+    if (selectedSources.length === 0) {
+      return filters.variables;
+    }
+    const allowedCodes = new Set(selectedSources.flatMap((source) => source.variable_codes));
+    return filters.variables.filter((variable) => allowedCodes.has(variable.code));
+  }, [filters, selectedSources]);
+  const availableVariableCodes = useMemo(
+    () => availableVariables.map((variable) => variable.code),
+    [availableVariables],
+  );
   const sourceMaxRows = useMemo(
-    () => Math.max(100, selectedSource?.row_count ?? 5000),
-    [selectedSource],
+    () =>
+      Math.max(
+        100,
+        selectedSources.reduce((total, source) => total + source.row_count, 0) || 5000,
+      ),
+    [selectedSources],
   );
 
   const splitLineByStation = selectedVariables.length <= 1 && selectedStations.length > 1;
@@ -1407,10 +1410,6 @@ export function AnalyticalWorkspace() {
     () => applyExploreRange(dateFrom, dateTo, exploreRange),
     [dateFrom, dateTo, exploreRange],
   );
-  const selectedSqlSource = useMemo(
-    () => SQL_SOURCE_TABLES.find((item) => item.value === selectedSqlTable) ?? null,
-    [selectedSqlTable],
-  );
   const heatmapView = useMemo(() => {
     const totalDays = heatmap.days.length;
     const clampedWindow = Math.max(7, Math.min(60, heatmapWindowDays));
@@ -1429,7 +1428,7 @@ export function AnalyticalWorkspace() {
 
   const runAnalysis = useCallback(
     async ({
-      sourceId,
+      sourceIds,
       stationCodes,
       variableCodes,
       fromDate,
@@ -1437,7 +1436,7 @@ export function AnalyticalWorkspace() {
       requestedLimit,
       rangePercent,
     }: {
-      sourceId: number | null;
+      sourceIds: number[];
       stationCodes: string[];
       variableCodes: string[];
       fromDate: string;
@@ -1445,19 +1444,24 @@ export function AnalyticalWorkspace() {
       requestedLimit: number;
       rangePercent: [number, number];
     }) => {
-      if (sourceId === null) {
+      if (sourceIds.length === 0) {
         setRows([]);
-        setError('Select a source file to visualize data.');
+        setError('Select at least one source file to visualize data.');
         return;
       }
 
-      const sourceForLimit = filters?.sources.find((source) => source.id === sourceId);
-      const datasetMaxRows = Math.max(100, sourceForLimit?.row_count ?? requestedLimit);
+      const selectedSet = new Set(sourceIds);
+      const datasetMaxRows = Math.max(
+        100,
+        filters?.sources
+          .filter((source) => selectedSet.has(source.id))
+          .reduce((total, source) => total + source.row_count, 0) ?? requestedLimit,
+      );
       const effectiveLimit = Math.max(100, Math.min(requestedLimit, datasetMaxRows));
       const exploredRange = applyExploreRange(fromDate, toDate, rangePercent);
       const normalizedRange = normalizeDateRange(exploredRange.from, exploredRange.to);
       const payload: AnalyticsQueryRequest = {
-        source_file_ids: [sourceId],
+        source_file_ids: sourceIds,
         station_codes: stationCodes.length > 0 ? stationCodes : undefined,
         variable_codes: variableCodes.length > 0 ? variableCodes : undefined,
         date_from: normalizedRange.from,
@@ -1478,7 +1482,7 @@ export function AnalyticalWorkspace() {
 
         setRows(response.rows);
         if (response.rows.length === 0) {
-          setError('No data for the selected source and filters.');
+          setError('No data for the selected source selection and filters.');
         }
       } catch (err) {
         if (requestId !== requestIdRef.current) {
@@ -1532,10 +1536,14 @@ export function AnalyticalWorkspace() {
 
         setDateFrom(from);
         setDateTo(to);
-        setSelectedSourceId(firstSource?.id ?? null);
-        setSelectedVariables(nextFilters.variables.slice(0, 2).map((item) => item.code));
-        setPairVariableX(nextFilters.variables[0]?.code ?? '');
-        setPairVariableY(nextFilters.variables[1]?.code ?? nextFilters.variables[0]?.code ?? '');
+        setSelectedSourceIds(firstSource ? [firstSource.id] : []);
+        const initialVariables =
+          firstSource && firstSource.variable_codes.length > 0
+            ? firstSource.variable_codes.slice(0, 2)
+            : nextFilters.variables.slice(0, 2).map((item) => item.code);
+        setSelectedVariables(initialVariables);
+        setPairVariableX(initialVariables[0] ?? nextFilters.variables[0]?.code ?? '');
+        setPairVariableY(initialVariables[1] ?? initialVariables[0] ?? nextFilters.variables[1]?.code ?? '');
         setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
         setExploreRange([0, 100]);
         setRangePreset('all');
@@ -1557,7 +1565,7 @@ export function AnalyticalWorkspace() {
 
     const timeout = setTimeout(() => {
       void runAnalysis({
-        sourceId: selectedSourceId,
+        sourceIds: selectedSourceIds,
         stationCodes: selectedStations,
         variableCodes: selectedVariables,
         fromDate: dateFrom,
@@ -1570,7 +1578,7 @@ export function AnalyticalWorkspace() {
     return () => clearTimeout(timeout);
   }, [
     bootstrapReady,
-    selectedSourceId,
+    selectedSourceIds,
     selectedStations,
     selectedVariables,
     dateFrom,
@@ -1583,6 +1591,21 @@ export function AnalyticalWorkspace() {
   useEffect(() => {
     setRowLimit((current) => Math.min(Math.max(100, current), sourceMaxRows));
   }, [sourceMaxRows]);
+
+  useEffect(() => {
+    if (!bootstrapReady) {
+      return;
+    }
+    setSelectedVariables((current) => {
+      const next = current.filter((code) => availableVariableCodes.includes(code));
+      const fallback = availableVariableCodes.slice(0, Math.min(2, availableVariableCodes.length));
+      const target = next.length > 0 ? next : fallback;
+      if (target.length === current.length && target.every((code, index) => code === current[index])) {
+        return current;
+      }
+      return target;
+    });
+  }, [availableVariableCodes, bootstrapReady]);
 
   useEffect(() => {
     setHeatmapOffset((current) => Math.min(current, heatmapView.maxOffset));
@@ -1646,7 +1669,7 @@ export function AnalyticalWorkspace() {
 
   const handleRunClick = () => {
     void runAnalysis({
-      sourceId: selectedSourceId,
+      sourceIds: selectedSourceIds,
       stationCodes: selectedStations,
       variableCodes: selectedVariables,
       fromDate: dateFrom,
@@ -1673,28 +1696,13 @@ export function AnalyticalWorkspace() {
       return [...current, variableCode];
     });
   };
-
-  const handleRunSqlPreview = async () => {
-    if (!selectedSqlSource) {
-      setSqlError('Select a source table.');
-      setSqlPreview(null);
-      return;
-    }
-
-    setSqlLoading(true);
-    setSqlError(null);
-    try {
-      const response = await runSqlPreview({ sql: selectedSqlSource.sql, limit: sqlLimit });
-      setSqlPreview(response);
-      if (response.truncated) {
-        setSqlError(`SQL preview truncated to ${response.row_count} rows.`);
+  const handleToggleSource = (sourceId: number) => {
+    setSelectedSourceIds((current) => {
+      if (current.includes(sourceId)) {
+        return current.filter((item) => item !== sourceId);
       }
-    } catch (err) {
-      setSqlPreview(null);
-      setSqlError(err instanceof Error ? err.message : 'SQL preview failed.');
-    } finally {
-      setSqlLoading(false);
-    }
+      return [...current, sourceId];
+    });
   };
 
   const heatValues = Array.from(heatmap.values.values());
@@ -1725,7 +1733,7 @@ export function AnalyticalWorkspace() {
           <CardHeader className="pb-3">
             <CardTitle className="text-lg">Data Logic</CardTitle>
             <CardDescription>
-              Select loaded file, define time range and detail level, filter stations and render chart instantly.
+              Select one or more loaded files, define time range and detail level, filter stations and render chart instantly.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1746,12 +1754,12 @@ export function AnalyticalWorkspace() {
                 </div>
                 <div className="max-h-32 overflow-y-auto rounded-md border bg-[#f8fbff] p-1.5 space-y-1">
                   {filteredSources.map((source) => {
-                    const active = selectedSourceId === source.id;
+                    const active = selectedSourceIds.includes(source.id);
                     return (
                       <button
                         key={source.id}
                         type="button"
-                        onClick={() => setSelectedSourceId(source.id)}
+                        onClick={() => handleToggleSource(source.id)}
                         className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
                           active
                             ? 'border-[#509EE3] bg-[#e9f3fd]'
@@ -1900,7 +1908,7 @@ export function AnalyticalWorkspace() {
 
                 <Label>Variables</Label>
                 <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[96px] overflow-auto">
-                  {(filters?.variables ?? []).map((variable) => {
+                  {availableVariables.map((variable) => {
                     const active = selectedVariables.includes(variable.code);
                     return (
                       <button
@@ -1914,7 +1922,7 @@ export function AnalyticalWorkspace() {
                         }`}
                         title={variable.name}
                       >
-                        {variable.code}
+                        {variable.name}
                       </button>
                     );
                   })}
@@ -1946,7 +1954,7 @@ export function AnalyticalWorkspace() {
                 />
               </div>
               <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/30">
-                Max for dataset: {sourceMaxRows.toLocaleString()}
+                Max for selection: {sourceMaxRows.toLocaleString()}
               </Badge>
               <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={handleRunClick} disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
@@ -1959,7 +1967,12 @@ export function AnalyticalWorkspace() {
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
           <div className="xl:col-span-9 space-y-6">
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <KpiCard label="Source" value={selectedSource?.name ?? '--'} icon={Database} small />
+              <KpiCard
+                label="Sources"
+                value={selectedSources.length > 0 ? `${selectedSources.length} selected` : '--'}
+                icon={Database}
+                small
+              />
               <KpiCard label="Samples" value={summary.samples.toLocaleString()} icon={Table2} />
               <KpiCard label="Mean" value={round(summary.mean).toString()} icon={TrendingUp} />
               <KpiCard label="Min / Max" value={`${round(summary.min)} / ${round(summary.max)}`} icon={BarChart3} />
@@ -2760,7 +2773,7 @@ export function AnalyticalWorkspace() {
                           <tr key={`${row.observed_at}-${row.station_code}-${index}`} className="border-b last:border-0">
                             <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
                             <td className="px-3 py-2">{row.station_code}</td>
-                            <td className="px-3 py-2">{row.variable_code}</td>
+                            <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
                             <td className="px-3 py-2">{round(row.value)}</td>
                             <td className="px-3 py-2">{row.unit ?? '-'}</td>
                           </tr>
@@ -2807,7 +2820,7 @@ export function AnalyticalWorkspace() {
                         <div className="mt-2 space-y-1">
                           {station.variables.map((item) => (
                             <div key={`${station.station_code}-${item.variable_code}`} className="flex items-center justify-between text-[11px]">
-                              <span className="font-medium text-foreground">{item.variable_code}</span>
+                              <span className="font-medium text-foreground">{item.variable_name || item.variable_code}</span>
                               <span className="text-muted-foreground">
                                 {round(item.value)} {item.unit ?? ''}
                               </span>
@@ -2821,98 +2834,6 @@ export function AnalyticalWorkspace() {
               </CardContent>
             </Card>
 
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">SQL Quick Preview</CardTitle>
-                <CardDescription>Select source table for read-only sample query.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-1">
-                  <Label htmlFor="source-table-select">Source Table</Label>
-                  <Select
-                    value={selectedSqlTable}
-                    onValueChange={(value) => {
-                      setSelectedSqlTable(value);
-                      setSqlPreview(null);
-                      setSqlError(null);
-                    }}
-                  >
-                    <SelectTrigger id="source-table-select">
-                      <SelectValue placeholder="Select table..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SQL_SOURCE_TABLES.map((table) => (
-                        <SelectItem key={table.value} value={table.value}>
-                          {table.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="rounded-md border bg-[#f8fbff] px-3 py-2">
-                  <p className="text-[11px] text-muted-foreground mb-1">Generated query (read-only)</p>
-                  <code className="text-xs">
-                    {selectedSqlSource?.sql ?? '--'}
-                  </code>
-                </div>
-
-                <div className="flex items-end gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="sql-limit">Limit</Label>
-                    <Input
-                      id="sql-limit"
-                      type="number"
-                      min={1}
-                      max={500}
-                      value={sqlLimit}
-                      onChange={(event) =>
-                        setSqlLimit(Math.min(500, Math.max(1, Number(event.target.value || 1))))
-                      }
-                      className="w-24"
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
-                    onClick={() => void handleRunSqlPreview()}
-                    disabled={sqlLoading}
-                  >
-                    {sqlLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Table2 className="w-4 h-4 mr-2" />}
-                    Preview
-                  </Button>
-                </div>
-
-                {sqlError && <p className="text-sm text-[#1F5A8A]">{sqlError}</p>}
-
-                {sqlPreview && sqlPreview.columns.length > 0 && (
-                  <div className="max-h-[280px] overflow-auto border rounded-md">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-[#f8fbff] border-b">
-                        <tr>
-                          {sqlPreview.columns.map((column) => (
-                            <th key={column} className="px-2 py-2 text-left whitespace-nowrap">
-                              {column}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sqlPreview.rows.map((row, rowIndex) => (
-                          <tr key={`sql-${rowIndex}`} className="border-b last:border-0">
-                            {sqlPreview.columns.map((column) => (
-                              <td key={`${rowIndex}-${column}`} className="px-2 py-2 whitespace-nowrap">
-                                {String(row[column] ?? '')}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>
