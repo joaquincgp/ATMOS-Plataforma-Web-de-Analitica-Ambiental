@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart } from 'recharts';
+import { getStationLiveSnapshot, type StationLiveSnapshotResponse } from '@/api/modules/analytics';
 import L from 'leaflet';
 
 // Fix Leaflet default marker icon issue
@@ -152,6 +153,26 @@ export function AdvancedHomeDashboard() {
   const [showTempHeatmap, setShowTempHeatmap] = useState(true);
   const [showAtmosphericEffects, setShowAtmosphericEffects] = useState(true);
   const [selectedStation, setSelectedStation] = useState<StationData | null>(null);
+  const [liveSnapshot, setLiveSnapshot] = useState<StationLiveSnapshotResponse | null>(null);
+  const [liveSnapshotLoading, setLiveSnapshotLoading] = useState(false);
+  const [liveSnapshotError, setLiveSnapshotError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const loadLiveSnapshot = async () => {
+      setLiveSnapshotLoading(true);
+      setLiveSnapshotError(null);
+      try {
+        const response = await getStationLiveSnapshot();
+        setLiveSnapshot(response);
+      } catch (err) {
+        setLiveSnapshotError(err instanceof Error ? err.message : 'No se pudo cargar el estado actual por estación.');
+      } finally {
+        setLiveSnapshotLoading(false);
+      }
+    };
+
+    void loadLiveSnapshot();
+  }, []);
 
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
@@ -664,6 +685,55 @@ export function AdvancedHomeDashboard() {
             </CardContent>
           </Card>
         </div>
+      </div>
+
+      <div className="px-6 py-6">
+        <Card className="bg-white">
+          <CardHeader>
+            <CardTitle>Station Live Snapshot</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {liveSnapshotLoading ? (
+              <div className="py-6 text-sm text-muted-foreground">Loading latest station data...</div>
+            ) : liveSnapshotError ? (
+              <p className="text-sm text-[#1F5A8A]">{liveSnapshotError}</p>
+            ) : !liveSnapshot || liveSnapshot.stations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No latest station records available.</p>
+            ) : (
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                {liveSnapshot.stations.slice(0, 6).map((station) => (
+                  <div key={station.station_code} className="border rounded-md p-3 bg-[#f8fbff]">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{station.station_name}</p>
+                        <p className="text-[11px] text-muted-foreground">{station.station_code}</p>
+                      </div>
+                      <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/25">
+                        {station.region ?? 'Region N/A'}
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Last update: {new Date(station.latest_observed_at).toLocaleString()}
+                    </p>
+                    <div className="mt-2 space-y-1">
+                      {station.variables.slice(0, 4).map((item) => (
+                        <div
+                          key={`${station.station_code}-${item.variable_code}`}
+                          className="flex items-center justify-between text-[11px]"
+                        >
+                          <span className="font-medium text-foreground">{item.variable_name || item.variable_code}</span>
+                          <span className="text-muted-foreground">
+                            {item.value} {item.unit ?? ''}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Tabbed Charts Section */}

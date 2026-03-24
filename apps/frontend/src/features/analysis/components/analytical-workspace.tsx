@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertCircle,
   BarChart3,
   Calendar,
-  ChevronRight,
   Clock3,
   Database,
   FileSpreadsheet,
@@ -10,10 +10,10 @@ import {
   Loader2,
   MapPin,
   Orbit,
-  Play,
   Search,
   Table2,
   TrendingUp,
+  Upload,
 } from 'lucide-react';
 import {
   Bar,
@@ -34,18 +34,17 @@ import {
 
 import {
   getAnalyticsFilters,
-  getStationLiveSnapshot,
   runAnalyticsQuery,
   type AnalyticsDataRow,
   type AnalyticsFilterOptionsResponse,
   type AnalyticsQueryRequest,
-  type StationLiveSnapshotResponse,
 } from '@/api/modules/analytics';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -92,6 +91,7 @@ type AggregationMode = 'mean' | 'median' | 'sum' | 'min' | 'max' | 'std';
 type ProfileMode = 'hour' | 'weekday' | 'month' | 'quarter' | 'year';
 type HeatmapProfileMode = 'month' | 'hour' | 'weekday' | 'week';
 type LabSection =
+  | 'load-data'
   | 'rolling'
   | 'seasonality'
   | 'autocorr'
@@ -102,7 +102,8 @@ type LabSection =
   | 'forecast'
   | 'changepoints'
   | 'trend'
-  | 'correlation';
+  | 'correlation'
+  | 'summary';
 
 interface ForecastPoint {
   bucket: string;
@@ -159,18 +160,20 @@ const CHART_OPTIONS: {
   { id: 'heatmap', label: 'Heatmap', icon: Table2 },
 ];
 
-const LAB_SECTION_OPTIONS: { value: LabSection; label: string }[] = [
-  { value: 'rolling', label: 'Time Series Visualization' },
-  { value: 'decomposition', label: 'Decomposition' },
-  { value: 'autocorr', label: 'ACF' },
-  { value: 'pacf', label: 'PACF' },
-  { value: 'anomaly', label: 'Anomaly Detection' },
-  { value: 'profiles', label: 'Temporal Profiles' },
-  { value: 'seasonality', label: 'Calendar Heatmap' },
-  { value: 'forecast', label: 'Forecasting' },
-  { value: 'changepoints', label: 'Changepoint Analysis' },
-  { value: 'trend', label: 'Trend Analysis' },
-  { value: 'correlation', label: 'Correlation Matrix' },
+const ANALYSIS_SECTIONS: { value: LabSection; label: string; icon: typeof Database; color: string }[] = [
+  { value: 'load-data', label: 'Load Data', icon: Upload, color: '#509EE3' },
+  { value: 'rolling', label: 'Time Series', icon: LineChartIcon, color: '#509EE3' },
+  { value: 'anomaly', label: 'Anomaly Detection', icon: AlertCircle, color: '#EF4444' },
+  { value: 'profiles', label: 'Temporal Profiles', icon: Clock3, color: '#8B5CF6' },
+  { value: 'summary', label: 'Statistical Summary', icon: BarChart3, color: '#14B8A6' },
+  { value: 'seasonality', label: 'Calendar Heatmap', icon: Calendar, color: '#0B7285' },
+  { value: 'decomposition', label: 'Decomposition', icon: TrendingUp, color: '#1F5A8A' },
+  { value: 'autocorr', label: 'ACF', icon: Orbit, color: '#A16207' },
+  { value: 'pacf', label: 'PACF', icon: Orbit, color: '#64748B' },
+  { value: 'forecast', label: 'Forecasting', icon: TrendingUp, color: '#16A34A' },
+  { value: 'changepoints', label: 'Changepoints', icon: AlertCircle, color: '#DC2626' },
+  { value: 'trend', label: 'Trend Analysis', icon: TrendingUp, color: '#0EA5E9' },
+  { value: 'correlation', label: 'Correlation Matrix', icon: Table2, color: '#7C3AED' },
 ];
 
 const GRANULARITY_OPTIONS: {
@@ -1281,7 +1284,7 @@ export function AnalyticalWorkspace() {
   const [exploreRange, setExploreRange] = useState<[number, number]>([0, 100]);
   const [heatmapWindowDays, setHeatmapWindowDays] = useState(14);
   const [heatmapOffset, setHeatmapOffset] = useState(0);
-  const [labSection, setLabSection] = useState<LabSection>('rolling');
+  const [labSection, setLabSection] = useState<LabSection>('load-data');
   const [rollingWindow, setRollingWindow] = useState(14);
   const [seasonalityMode, setSeasonalityMode] = useState<'weekday' | 'month' | 'hour'>('weekday');
   const [decompositionWindow, setDecompositionWindow] = useState(21);
@@ -1299,11 +1302,7 @@ export function AnalyticalWorkspace() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [liveSnapshot, setLiveSnapshot] = useState<StationLiveSnapshotResponse | null>(null);
-  const [liveLoading, setLiveLoading] = useState(false);
-
   const requestIdRef = useRef(0);
-  const liveRequestIdRef = useRef(0);
 
   const filteredSources = useMemo(() => {
     if (!filters) {
@@ -1361,7 +1360,32 @@ export function AnalyticalWorkspace() {
   const histogram = useMemo(() => computeHistogram(rows), [rows]);
   const heatmap = useMemo(() => computeHeatmap(rows), [rows]);
   const summary = useMemo(() => buildSummary(rows, temporalSeries.points), [rows, temporalSeries.points]);
-  const sampleRows = useMemo(() => rows.slice(0, 180), [rows]);
+  const variableSummary = useMemo(() => {
+    const grouped = new Map<string, number[]>();
+    const labels = new Map<string, string>();
+
+    for (const row of rows) {
+      const code = row.variable_code;
+      const bucket = grouped.get(code) ?? [];
+      bucket.push(row.value);
+      grouped.set(code, bucket);
+      labels.set(code, row.variable_name || row.variable_code);
+    }
+
+    return Array.from(grouped.entries()).map(([code, values]) => {
+      const ordered = [...values].sort((left, right) => left - right);
+      return {
+        code,
+        label: labels.get(code) ?? code,
+        count: values.length,
+        mean: safeMean(values),
+        std: safeStd(values),
+        min: ordered[0] ?? 0,
+        median: ordered[Math.floor(ordered.length / 2)] ?? 0,
+        max: ordered[ordered.length - 1] ?? 0,
+      };
+    });
+  }, [rows]);
   const rollingSeries = useMemo(
     () => computeRollingStats(temporalSeries.points, rollingWindow),
     [temporalSeries.points, rollingWindow],
@@ -1499,29 +1523,6 @@ export function AnalyticalWorkspace() {
     [filters],
   );
 
-  const refreshLiveSnapshot = useCallback(async (stationCodes: string[]) => {
-    const requestId = liveRequestIdRef.current + 1;
-    liveRequestIdRef.current = requestId;
-
-    setLiveLoading(true);
-    try {
-      const response = await getStationLiveSnapshot(stationCodes);
-      if (requestId !== liveRequestIdRef.current) {
-        return;
-      }
-      setLiveSnapshot(response);
-    } catch {
-      if (requestId !== liveRequestIdRef.current) {
-        return;
-      }
-      setLiveSnapshot(null);
-    } finally {
-      if (requestId === liveRequestIdRef.current) {
-        setLiveLoading(false);
-      }
-    }
-  }, []);
-
   useEffect(() => {
     const bootstrap = async () => {
       setLoading(true);
@@ -1610,13 +1611,6 @@ export function AnalyticalWorkspace() {
   useEffect(() => {
     setHeatmapOffset((current) => Math.min(current, heatmapView.maxOffset));
   }, [heatmapView.maxOffset]);
-
-  useEffect(() => {
-    if (!bootstrapReady) {
-      return;
-    }
-    void refreshLiveSnapshot(selectedStations);
-  }, [bootstrapReady, selectedStations, refreshLiveSnapshot]);
 
   useEffect(() => {
     const availableVariables = correlationMatrix.variables;
@@ -1720,1124 +1714,1277 @@ export function AnalyticalWorkspace() {
   );
 
   const scatterEntries = Object.entries(scatterByStation);
+  const activeSection = ANALYSIS_SECTIONS.find((section) => section.value === labSection) ?? ANALYSIS_SECTIONS[0];
+  const ActiveSectionIcon = activeSection.icon;
+  const selectedVariableLabels = selectedVariables.map(
+    (code) => availableVariables.find((variable) => variable.code === code)?.name ?? code,
+  );
+  const summaryChartData = variableSummary.map((item) => ({
+    variable: item.label,
+    mean: round(item.mean),
+    max: round(item.max),
+  }));
+  const renderGranularityControl = (label = 'Time Detail') => (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <ToggleGroup
+        type="single"
+        value={granularity}
+        onValueChange={(value) => value && setGranularity(value as TimeGranularity)}
+        variant="outline"
+        className="w-full grid grid-cols-4"
+      >
+        {GRANULARITY_OPTIONS.map((option) => (
+          <ToggleGroupItem key={option.id} value={option.id} className="h-8 text-[10px]">
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+    </div>
+  );
 
-  return (
-    <div className="h-full overflow-y-auto bg-[linear-gradient(180deg,#f7fafc_0%,#f2f6fb_100%)]">
-      <div className="px-6 lg:px-8 py-6 space-y-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground mb-1">Analytical Workspace</h1>
-          <p className="text-muted-foreground">Explore atmospheric datasets with temporal detail levels and station-aware charts.</p>
-        </div>
-
-        <Card className="bg-white border-[#dce5f1]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-lg">Data Logic</CardTitle>
-            <CardDescription>
-              Select one or more loaded files, define time range and detail level, filter stations and render chart instantly.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 xl:grid-cols-12 gap-3">
-              <div className="xl:col-span-5 space-y-2">
-                <Label>Source File Name</Label>
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={sourceSearch}
-                      onChange={(event) => setSourceSearch(event.target.value)}
-                      placeholder="Search loaded file..."
-                      className="pl-9"
-                    />
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground hidden sm:block" />
-                </div>
-                <div className="max-h-32 overflow-y-auto rounded-md border bg-[#f8fbff] p-1.5 space-y-1">
-                  {filteredSources.map((source) => {
-                    const active = selectedSourceIds.includes(source.id);
-                    return (
-                      <button
-                        key={source.id}
-                        type="button"
-                        onClick={() => handleToggleSource(source.id)}
-                        className={`w-full rounded-md border px-2.5 py-2 text-left transition-colors ${
-                          active
-                            ? 'border-[#509EE3] bg-[#e9f3fd]'
-                            : 'border-transparent bg-white hover:border-[#509EE3]/35'
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <FileSpreadsheet className="w-4 h-4 text-[#509EE3]" />
-                          <div className="min-w-0">
-                            <p className="text-xs font-medium truncate">{source.name}</p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {source.source_type} · {source.row_count.toLocaleString()} rows
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                  {filteredSources.length === 0 && (
-                    <p className="text-xs text-muted-foreground px-1 py-2">No matching loaded files.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="xl:col-span-3 space-y-2">
-                <Label htmlFor="date-from">Date Window</Label>
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Input
-                      id="date-from"
-                      type="date"
-                      value={dateFrom}
-                      onChange={(event) => {
-                        setDateFrom(event.target.value);
-                        setExploreRange([0, 100]);
-                        setRangePreset('custom');
-                      }}
-                      className="pr-8"
-                    />
-                    <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </div>
-                  <div className="relative">
-                    <Input
-                      id="date-to"
-                      type="date"
-                      value={dateTo}
-                      onChange={(event) => {
-                        setDateTo(event.target.value);
-                        setExploreRange([0, 100]);
-                        setRangePreset('custom');
-                      }}
-                      className="pr-8"
-                    />
-                    <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {RANGE_PRESETS.map((preset) => {
-                    const active = rangePreset === preset.id;
-                    return (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        onClick={() => applyRangePreset(preset.id)}
-                        className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
-                          active
-                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                            : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                        }`}
-                      >
-                        {preset.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="xl:col-span-4 space-y-2">
-                <Label>Chart Type</Label>
-                <ToggleGroup
-                  type="single"
-                  value={chartType}
-                  onValueChange={(value) => {
-                    if (value) {
-                      setChartType(value as ChartType);
-                    }
-                  }}
-                  variant="outline"
-                  className="w-full grid grid-cols-2"
-                >
-                  {CHART_OPTIONS.map((option) => {
-                    const Icon = option.icon;
-                    return (
-                      <ToggleGroupItem key={option.id} value={option.id} className="h-11 gap-2 text-xs">
-                        <Icon className="w-4 h-4" />
-                        {option.label}
-                      </ToggleGroupItem>
-                    );
-                  })}
-                </ToggleGroup>
-
-                <Label className="flex items-center gap-1.5">
-                  <Clock3 className="w-3.5 h-3.5" />
-                  Time Detail Level
-                </Label>
-                <ToggleGroup
-                  type="single"
-                  value={granularity}
-                  onValueChange={(value) => {
-                    if (value) {
-                      setGranularity(value as TimeGranularity);
-                    }
-                  }}
-                  variant="outline"
-                  className="w-full grid grid-cols-4"
-                >
-                  {GRANULARITY_OPTIONS.map((option) => (
-                    <ToggleGroupItem key={option.id} value={option.id} className="h-9 text-xs">
-                      {option.label}
-                    </ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-
-                <Label>Stations</Label>
-                <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[96px] overflow-auto">
-                  {(filters?.stations ?? []).map((station) => {
-                    const active = selectedStations.includes(station.code);
-                    return (
-                      <button
-                        key={station.code}
-                        type="button"
-                        onClick={() => handleToggleStation(station.code)}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] border transition-colors ${
-                          active
-                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                            : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                        }`}
-                        title={station.name}
-                      >
-                        <MapPin className="w-3.5 h-3.5" />
-                        {station.code}
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <Label>Variables</Label>
-                <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[96px] overflow-auto">
-                  {availableVariables.map((variable) => {
-                    const active = selectedVariables.includes(variable.code);
-                    return (
-                      <button
-                        key={variable.code}
-                        type="button"
-                        onClick={() => handleToggleVariable(variable.code)}
-                        className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] border transition-colors ${
-                          active
-                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                            : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                        }`}
-                        title={variable.name}
-                      >
-                        {variable.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="row-limit" className="text-xs text-muted-foreground">
-                  Rows to load
-                </Label>
-                <Input
-                  id="row-limit"
-                  type="number"
-                  min={100}
-                  max={sourceMaxRows}
-                  step={100}
-                  value={rowLimit}
-                  onChange={(event) =>
-                    setRowLimit(
-                      Math.min(
-                        sourceMaxRows,
-                        Math.max(100, Number(event.target.value || 100)),
-                      ),
-                    )
-                  }
-                  className="h-8 w-32"
-                />
-              </div>
-              <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/30">
-                Max for selection: {sourceMaxRows.toLocaleString()}
-              </Badge>
-              <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={handleRunClick} disabled={loading}>
-                {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-                Refresh
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-          <div className="xl:col-span-9 space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-              <KpiCard
-                label="Sources"
-                value={selectedSources.length > 0 ? `${selectedSources.length} selected` : '--'}
-                icon={Database}
-                small
-              />
-              <KpiCard label="Samples" value={summary.samples.toLocaleString()} icon={Table2} />
-              <KpiCard label="Mean" value={round(summary.mean).toString()} icon={TrendingUp} />
-              <KpiCard label="Min / Max" value={`${round(summary.min)} / ${round(summary.max)}`} icon={BarChart3} />
-              <KpiCard
-                label="Trend"
-                value={summary.trend}
-                icon={LineChartIcon}
-                badgeTone={summary.trend === 'Rising' ? 'green' : summary.trend === 'Falling' ? 'amber' : 'blue'}
-              />
-            </div>
-
-            {error && (
-              <Card className="bg-white border-l-4 border-l-[#509EE3]">
-                <CardContent className="py-3">
-                  <p className="text-sm text-[#1F5A8A]">{error}</p>
-                </CardContent>
-              </Card>
-            )}
-
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">Visualization Preview</CardTitle>
-                <CardDescription>
-                  {chartType === 'line' &&
-                    (selectedVariables.length > 1
-                      ? 'Color-coded lines by variable for multivariable comparison'
-                      : splitLineByStation
-                      ? 'Color-coded lines by station for multi-station comparison'
-                      : `Temporal trends grouped by ${granularity}`)}
-                  {chartType === 'bar' && 'Average concentration by station'}
-                  {chartType === 'scatter' && 'Hourly dispersion with station-based colors'}
-                  {chartType === 'heatmap' && 'Day-hour intensity matrix'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="mb-4 rounded-md border border-gray-200 bg-white px-3 py-2">
-                  <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-                    <span>
-                      Explore window: {exploredDateRange.from || '--'} to {exploredDateRange.to || '--'}
-                    </span>
-                    <span>
-                      {Math.round(exploreRange[0])}% - {Math.round(exploreRange[1])}%
-                    </span>
-                  </div>
-                  <Slider
-                    value={exploreRange}
-                    min={0}
-                    max={100}
-                    step={1}
-                    minStepsBetweenThumbs={2}
-                    onValueChange={(value) => {
-                      if (value.length === 2) {
-                        setExploreRange([value[0] ?? 0, value[1] ?? 100]);
-                      }
-                    }}
-                    className="mt-2 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-slate-200 [&_[data-slot=slider-range]]:bg-slate-400 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-slate-500 [&_[data-slot=slider-thumb]]:bg-white"
-                  />
-                </div>
-                <div className="h-[520px] w-full">
-                  {rows.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                      Pick a loaded file with rows to render charts.
-                    </div>
-                  ) : chartType === 'line' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={temporalSeries.points} margin={{ top: 8, right: 20, left: 10, bottom: 12 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        {temporalSeries.keys.map((key, index) => (
-                          <Line
-                            key={key}
-                            type="monotone"
-                            dataKey={key}
-                            name={key}
-                            stroke={CHART_COLORS[index % CHART_COLORS.length]}
-                            strokeWidth={2.6}
-                            dot={false}
-                          />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : chartType === 'bar' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stationBars} margin={{ top: 8, right: 16, left: 10, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="station" />
-                        <YAxis />
-                        <Tooltip />
-                        <Bar dataKey="avg" radius={[6, 6, 0, 0]}>
-                          {stationBars.map((item, index) => (
-                            <Cell key={`station-bar-${item.station}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : chartType === 'scatter' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ScatterChart margin={{ top: 8, right: 16, left: 12, bottom: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis
-                          type="number"
-                          dataKey="hour"
-                          name="Hour"
-                          label={{ value: 'Hour of Day (UTC)', position: 'insideBottom', offset: -5 }}
-                        />
-                        <YAxis
-                          type="number"
-                          dataKey="value"
-                          name="Value"
-                          label={{ value: 'Measured Value', angle: -90, position: 'insideLeft' }}
-                        />
-                        <Tooltip cursor={{ strokeDasharray: '4 4' }} />
-                        <Legend />
-                        {scatterEntries.map(([stationCode, points], index) => (
-                          <Scatter
-                            key={stationCode}
-                            name={stationCode}
-                            data={points}
-                            fill={CHART_COLORS[index % CHART_COLORS.length]}
-                          />
-                        ))}
-                      </ScatterChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="h-full overflow-auto border rounded-md p-3 bg-[#f8fbff]">
-                      <div className="flex items-center justify-between gap-2 mb-3">
-                        <div className="flex items-center gap-2">
-                          <Label htmlFor="heatmap-window" className="text-xs text-muted-foreground">
-                            Window (days)
-                          </Label>
-                          <Input
-                            id="heatmap-window"
-                            type="number"
-                            min={7}
-                            max={60}
-                            value={heatmapWindowDays}
-                            onChange={(event) =>
-                              setHeatmapWindowDays(
-                                Math.max(7, Math.min(60, Number(event.target.value || 14))),
-                              )
-                            }
-                            className="h-7 w-20"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setHeatmapOffset((current) =>
-                                Math.min(heatmapView.maxOffset, current + heatmapWindowDays),
-                              )
-                            }
-                            disabled={heatmapView.safeOffset >= heatmapView.maxOffset}
-                          >
-                            Older
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setHeatmapOffset((current) =>
-                                Math.max(0, current - heatmapWindowDays),
-                              )
-                            }
-                            disabled={heatmapView.safeOffset <= 0}
-                          >
-                            Newer
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="min-w-[780px]">
-                        <div className="grid grid-cols-[84px_repeat(24,minmax(26px,1fr))] gap-1">
-                          <div />
-                          {heatmap.hours.map((hour) => (
-                            <div key={`hour-${hour}`} className="text-[10px] text-center text-muted-foreground">
-                              {hour}
-                            </div>
-                          ))}
-                          {heatmapView.days.map((day) => (
-                            <Fragment key={`heat-row-${day}`}>
-                              <div className="text-[10px] text-muted-foreground pr-1">{day.slice(5)}</div>
-                              {heatmap.hours.map((hour) => {
-                                const key = `${day}|${hour}`;
-                                const value = heatmap.values.get(key);
-                                return (
-                                  <div
-                                    key={key}
-                                    title={value !== undefined ? `${day} ${hour}:00 - ${round(value)}` : `${day} ${hour}:00`}
-                                    className="h-5 rounded-sm"
-                                    style={{
-                                      background:
-                                        value === undefined
-                                          ? 'hsl(210, 30%, 95%)'
-                                          : intensityColor(value, heatMin, heatMax),
-                                    }}
-                                  />
-                                );
-                              })}
-                            </Fragment>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">Distribution Snapshot</CardTitle>
-                <CardDescription>Histogram of measured values using all filtered records.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="h-[300px] w-full">
-                  {histogram.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                      No values available for histogram.
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={histogram} margin={{ top: 8, right: 16, left: 10, bottom: 18 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="range" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
-                        <YAxis />
-                        <Tooltip />
-                        <Bar dataKey="count" fill="#1F5A8A" radius={[4, 4, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">Advanced Time-Series Lab</CardTitle>
-                <CardDescription>
-                  Decomposition, autocorrelation, forecasting, changepoints, trends and multivariable profiles.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="space-y-1">
-                  <Label htmlFor="analysis-section">Analysis Section</Label>
-                  <Select
-                    value={labSection}
-                    onValueChange={(value) => {
-                      setLabSection(value as LabSection);
-                    }}
-                  >
-                    <SelectTrigger id="analysis-section">
-                      <SelectValue placeholder="Select section..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {LAB_SECTION_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {labSection === 'rolling' && (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="rolling-window" className="text-xs text-muted-foreground">
-                      Rolling window
-                    </Label>
-                    <Input
-                      id="rolling-window"
-                      type="number"
-                      min={2}
-                      max={90}
-                      value={rollingWindow}
-                      onChange={(event) =>
-                        setRollingWindow(Math.max(2, Math.min(90, Number(event.target.value || 14))))
-                      }
-                      className="h-8 w-24"
-                    />
-                  </div>
-                )}
-
-                {labSection === 'seasonality' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <Select
-                      value={seasonalityMode}
-                      onValueChange={(value) => setSeasonalityMode(value as 'weekday' | 'month' | 'hour')}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Calendar profile" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="weekday">Weekday</SelectItem>
-                        <SelectItem value="month">Month</SelectItem>
-                        <SelectItem value="hour">Hour</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={profileAggregation}
-                      onValueChange={(value) => setProfileAggregation(value as AggregationMode)}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Aggregation" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="mean">Mean</SelectItem>
-                        <SelectItem value="median">Median</SelectItem>
-                        <SelectItem value="sum">Sum</SelectItem>
-                        <SelectItem value="min">Min</SelectItem>
-                        <SelectItem value="max">Max</SelectItem>
-                        <SelectItem value="std">Std</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {labSection === 'decomposition' && (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="decomposition-window" className="text-xs text-muted-foreground">
-                      Trend window
-                    </Label>
-                    <Input
-                      id="decomposition-window"
-                      type="number"
-                      min={2}
-                      max={90}
-                      value={decompositionWindow}
-                      onChange={(event) =>
-                        setDecompositionWindow(Math.max(2, Math.min(90, Number(event.target.value || 21))))
-                      }
-                      className="h-8 w-24"
-                    />
-                  </div>
-                )}
-
-                {labSection === 'profiles' && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                    <Select value={profileMode} onValueChange={(value) => setProfileMode(value as ProfileMode)}>
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Profile by" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="hour">Hour of day</SelectItem>
-                        <SelectItem value="weekday">Day of week</SelectItem>
-                        <SelectItem value="month">Month</SelectItem>
-                        <SelectItem value="quarter">Quarter</SelectItem>
-                        <SelectItem value="year">Year</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={profileAggregation}
-                      onValueChange={(value) => setProfileAggregation(value as AggregationMode)}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Aggregation" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="mean">Mean</SelectItem>
-                        <SelectItem value="median">Median</SelectItem>
-                        <SelectItem value="sum">Sum</SelectItem>
-                        <SelectItem value="min">Min</SelectItem>
-                        <SelectItem value="max">Max</SelectItem>
-                        <SelectItem value="std">Std</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      value={profileHeatmapMode}
-                      onValueChange={(value) => setProfileHeatmapMode(value as HeatmapProfileMode)}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Heatmap profile" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="month">Year x month</SelectItem>
-                        <SelectItem value="hour">Year x hour</SelectItem>
-                        <SelectItem value="weekday">Year x weekday</SelectItem>
-                        <SelectItem value="week">Year x week</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {labSection === 'forecast' && (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="forecast-horizon" className="text-xs text-muted-foreground">
-                      Forecast horizon
-                    </Label>
-                    <Input
-                      id="forecast-horizon"
-                      type="number"
-                      min={1}
-                      max={365}
-                      value={forecastHorizon}
-                      onChange={(event) =>
-                        setForecastHorizon(Math.max(1, Math.min(365, Number(event.target.value || 30))))
-                      }
-                      className="h-8 w-24"
-                    />
-                  </div>
-                )}
-
-                {labSection === 'changepoints' && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Label htmlFor="changepoint-window" className="text-xs text-muted-foreground">
-                      Smoothing window
-                    </Label>
-                    <Input
-                      id="changepoint-window"
-                      type="number"
-                      min={2}
-                      max={30}
-                      value={changepointWindow}
-                      onChange={(event) =>
-                        setChangepointWindow(Math.max(2, Math.min(30, Number(event.target.value || 7))))
-                      }
-                      className="h-8 w-20"
-                    />
-                    <Label htmlFor="changepoint-sensitivity" className="text-xs text-muted-foreground">
-                      Sensitivity
-                    </Label>
-                    <Input
-                      id="changepoint-sensitivity"
-                      type="number"
-                      min={0.5}
-                      max={6}
-                      step={0.1}
-                      value={changepointSensitivity}
-                      onChange={(event) =>
-                        setChangepointSensitivity(
-                          Math.max(0.5, Math.min(6, Number(event.target.value || 2))),
-                        )
-                      }
-                      className="h-8 w-20"
-                    />
-                  </div>
-                )}
-
-                {labSection === 'trend' && (
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setTrendDeseasonalized((current) => !current)}
-                      className={`text-xs rounded-md border px-2 py-1.5 transition-colors ${
-                        trendDeseasonalized
-                          ? 'bg-[#509EE3] text-white border-[#509EE3]'
-                          : 'bg-white text-foreground border-gray-300'
-                      }`}
-                    >
-                      {trendDeseasonalized ? 'Deseasonalized: on' : 'Deseasonalized: off'}
-                    </button>
-                  </div>
-                )}
-
-                {labSection === 'correlation' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    <Select value={pairVariableX} onValueChange={setPairVariableX}>
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Variable X" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {correlationMatrix.variables.map((variable) => (
-                          <SelectItem key={`pair-x-${variable}`} value={variable}>
-                            {variable}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select value={pairVariableY} onValueChange={setPairVariableY}>
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Variable Y" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {correlationMatrix.variables.map((variable) => (
-                          <SelectItem key={`pair-y-${variable}`} value={variable}>
-                            {variable}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <div className="h-[340px] w-full">
-                  {labSection === 'rolling' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={rollingSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
-                        <Line type="monotone" dataKey="mean" name="Rolling Mean" stroke="#509EE3" dot={false} />
-                        <Line type="monotone" dataKey="upper" name="Upper Band" stroke="#94A3B8" dot={false} />
-                        <Line type="monotone" dataKey="lower" name="Lower Band" stroke="#94A3B8" dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'seasonality' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={seasonalitySeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Bar dataKey="overall" name={profileAggregation.toUpperCase()} fill="#509EE3" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'autocorr' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={autocorrSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis domain={[-1, 1]} />
-                        <Tooltip />
-                        <ReferenceLine y={0} stroke="#64748B" />
-                        <Bar dataKey="overall" name="Autocorrelation" fill="#1F5A8A" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'pacf' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={pacfSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis domain={[-1, 1]} />
-                        <Tooltip />
-                        <ReferenceLine y={0} stroke="#64748B" />
-                        <Bar dataKey="overall" name="Partial Autocorrelation" fill="#0B7285" />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'decomposition' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={decompositionSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
-                        <Line type="monotone" dataKey="trend" name="Trend" stroke="#509EE3" dot={false} />
-                        <Line type="monotone" dataKey="seasonal" name="Seasonal" stroke="#0B7285" dot={false} />
-                        <Line type="monotone" dataKey="residual" name="Residual" stroke="#A16207" dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'profiles' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={profileSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Bar dataKey="overall" name={profileAggregation.toUpperCase()} fill="#509EE3" radius={[6, 6, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'forecast' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={forecastSeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="observed" name="Observed" stroke="#1F5A8A" dot={false} />
-                        <Line type="monotone" dataKey="forecast" name="Forecast" stroke="#509EE3" dot={false} />
-                        <Line type="monotone" dataKey="upper" name="Upper band" stroke="#94A3B8" dot={false} />
-                        <Line type="monotone" dataKey="lower" name="Lower band" stroke="#94A3B8" dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'changepoints' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={temporalSeries.points}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
-                        {changepointResult.markers.slice(0, 40).map((marker) => (
-                          <ReferenceLine
-                            key={`cp-${marker.bucket}`}
-                            x={marker.bucket}
-                            stroke="#DC2626"
-                            strokeDasharray="4 4"
-                          />
-                        ))}
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'trend' ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={trendResult.series}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
-                        <Line type="monotone" dataKey="linear" name="Linear trend" stroke="#509EE3" dot={false} />
-                        <Line type="monotone" dataKey="quadratic" name="Quadratic trend" stroke="#0B7285" dot={false} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : labSection === 'correlation' ? (
-                    <div className="h-full overflow-auto border rounded-md p-3 bg-[#f8fbff]">
-                      {correlationMatrix.variables.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                          Correlation requires at least one variable with rows.
-                        </div>
-                      ) : (
-                        <div className="min-w-[460px]">
-                          <div
-                            className="grid gap-1"
-                            style={{
-                              gridTemplateColumns: `110px repeat(${correlationMatrix.variables.length}, minmax(56px, 1fr))`,
-                            }}
-                          >
-                            <div />
-                            {correlationMatrix.variables.map((column) => (
-                              <div key={`corr-col-${column}`} className="text-[10px] text-center text-muted-foreground">
-                                {column}
-                              </div>
-                            ))}
-                            {correlationMatrix.variables.map((rowVariable) => (
-                              <Fragment key={`corr-row-${rowVariable}`}>
-                                <div className="text-[10px] text-muted-foreground pr-1">{rowVariable}</div>
-                                {correlationMatrix.variables.map((columnVariable) => {
-                                  const value = correlationByCell.get(`${rowVariable}|${columnVariable}`) ?? 0;
-                                  return (
-                                    <div
-                                      key={`corr-cell-${rowVariable}-${columnVariable}`}
-                                      title={`${rowVariable} vs ${columnVariable}: ${round(value, 3)}`}
-                                      className="h-8 rounded-sm border border-white/50 flex items-center justify-center text-[10px]"
-                                      style={{ background: correlationColor(value) }}
-                                    >
-                                      {round(value, 2)}
-                                    </div>
-                                  );
-                                })}
-                              </Fragment>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={anomalySeries}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                        <XAxis dataKey="bucket" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
-                        <Line type="monotone" dataKey="upper" name="Upper IQR" stroke="#94A3B8" dot={false} />
-                        <Line type="monotone" dataKey="lower" name="Lower IQR" stroke="#94A3B8" dot={false} />
-                        <Line
-                          type="monotone"
-                          dataKey="anomaly_value"
-                          name="Anomaly"
-                          stroke="#DC2626"
-                          dot={{ r: 3, fill: '#DC2626' }}
-                          connectNulls={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  )}
-                </div>
-
-                {labSection === 'profiles' && (
-                  <div className="overflow-auto border rounded-md p-3 bg-[#f8fbff]">
-                    <div className="text-xs text-muted-foreground mb-2">
-                      Profile heatmap ({profileHeatmapMode}) using {profileAggregation.toUpperCase()} aggregation
-                    </div>
-                    <div className="min-w-[620px]">
-                      <div
-                        className="grid gap-1"
-                        style={{
-                          gridTemplateColumns: `96px repeat(${profileHeatmap.xLabels.length}, minmax(28px, 1fr))`,
-                        }}
-                      >
-                        <div />
-                        {profileHeatmap.xLabels.map((xLabel) => (
-                          <div key={`profile-col-${xLabel}`} className="text-[10px] text-center text-muted-foreground">
-                            {xLabel}
-                          </div>
-                        ))}
-                        {profileHeatmap.yLabels.map((yLabel) => (
-                          <Fragment key={`profile-row-${yLabel}`}>
-                            <div className="text-[10px] text-muted-foreground pr-1">{yLabel}</div>
-                            {profileHeatmap.xLabels.map((xLabel) => {
-                              const key = `${yLabel}|${xLabel}`;
-                              const value = profileHeatmap.values.get(key);
-                              return (
-                                <div
-                                  key={`profile-cell-${key}`}
-                                  title={value !== undefined ? `${yLabel} ${xLabel}: ${round(value)}` : `${yLabel} ${xLabel}`}
-                                  className="h-6 rounded-sm"
-                                  style={{
-                                    background:
-                                      value === undefined
-                                        ? 'hsl(210, 30%, 95%)'
-                                        : intensityColor(value, profileHeatMin, profileHeatMax),
-                                  }}
-                                />
-                              );
-                            })}
-                          </Fragment>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {labSection === 'changepoints' && (
-                  <div className="rounded-md border bg-[#f8fbff] px-3 py-2 text-xs text-muted-foreground">
-                    Threshold: {round(changepointResult.threshold, 4)} · Detected changepoints:{' '}
-                    {changepointResult.markers.length}
-                  </div>
-                )}
-
-                {labSection === 'trend' && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-                    <div className="rounded-md border bg-[#f8fbff] px-3 py-2">
-                      Slope: <span className="font-semibold">{round(trendResult.diagnostics.linearSlope, 6)}</span>
-                    </div>
-                    <div className="rounded-md border bg-[#f8fbff] px-3 py-2">
-                      R2: <span className="font-semibold">{round(trendResult.diagnostics.linearR2, 4)}</span>
-                    </div>
-                    <div className="rounded-md border bg-[#f8fbff] px-3 py-2">
-                      Direction: <span className="font-semibold">{trendResult.diagnostics.trendDirection}</span>
-                    </div>
-                  </div>
-                )}
-
-                {labSection === 'correlation' && (
-                  <div className="space-y-2">
-                    <div className="rounded-md border bg-[#f8fbff] px-3 py-2 text-xs">
-                      Pair correlation ({pairVariableX} vs {pairVariableY}):{' '}
-                      <span className="font-semibold">{round(pairCorrelation, 4)}</span>
-                    </div>
-                    <div className="h-[280px] w-full">
-                      {pairPoints.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-sm text-muted-foreground border rounded-md bg-[#f8fbff]">
-                          Not enough shared points to render variable pair comparison.
-                        </div>
-                      ) : (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ScatterChart>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                            <XAxis
-                              type="number"
-                              dataKey="x"
-                              name={pairVariableX}
-                              label={{ value: pairVariableX, position: 'insideBottom', offset: -4 }}
-                            />
-                            <YAxis
-                              type="number"
-                              dataKey="y"
-                              name={pairVariableY}
-                              label={{ value: pairVariableY, angle: -90, position: 'insideLeft' }}
-                            />
-                            <Tooltip cursor={{ strokeDasharray: '4 4' }} />
-                            <Scatter data={pairPoints} fill="#509EE3" />
-                          </ScatterChart>
-                        </ResponsiveContainer>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">Data Sample</CardTitle>
-                <CardDescription>Quick sample to understand data nature.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {sampleRows.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No sample rows available.</p>
-                ) : (
-                  <div className="max-h-[300px] overflow-auto border rounded-md">
-                    <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-[#f8fbff] border-b">
-                        <tr>
-                          <th className="px-3 py-2 text-left">Observed At</th>
-                          <th className="px-3 py-2 text-left">Station</th>
-                          <th className="px-3 py-2 text-left">Variable</th>
-                          <th className="px-3 py-2 text-left">Value</th>
-                          <th className="px-3 py-2 text-left">Unit</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sampleRows.map((row, index) => (
-                          <tr key={`${row.observed_at}-${row.station_code}-${index}`} className="border-b last:border-0">
-                            <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
-                            <td className="px-3 py-2">{row.station_code}</td>
-                            <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
-                            <td className="px-3 py-2">{round(row.value)}</td>
-                            <td className="px-3 py-2">{row.unit ?? '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+  const renderSectionControls = () => {
+    if (labSection === 'rolling') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr_auto] gap-3 items-end mb-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Chart Type</Label>
+            <ToggleGroup
+              type="single"
+              value={chartType}
+              onValueChange={(value) => value && setChartType(value as ChartType)}
+              variant="outline"
+              className="w-full grid grid-cols-2 xl:grid-cols-4"
+            >
+              {CHART_OPTIONS.map((option) => {
+                const Icon = option.icon;
+                return (
+                  <ToggleGroupItem key={option.id} value={option.id} className="h-9 gap-1.5 text-[11px]">
+                    <Icon className="w-3.5 h-3.5" />
+                    {option.label}
+                  </ToggleGroupItem>
+                );
+              })}
+            </ToggleGroup>
           </div>
+          {renderGranularityControl()}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="rolling-window" className="text-xs text-muted-foreground">
+              Rolling window
+            </Label>
+            <Input
+              id="rolling-window"
+              type="number"
+              min={2}
+              max={90}
+              value={rollingWindow}
+              onChange={(event) => setRollingWindow(Math.max(2, Math.min(90, Number(event.target.value || 14))))}
+              className="h-8 w-24"
+            />
+          </div>
+        </div>
+      );
+    }
+    if (labSection === 'anomaly') {
+      return <div className="mb-4">{renderGranularityControl()}</div>;
+    }
+    if (labSection === 'seasonality') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+          <Select value={seasonalityMode} onValueChange={(value) => setSeasonalityMode(value as 'weekday' | 'month' | 'hour')}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Calendar profile" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="weekday">Weekday</SelectItem>
+              <SelectItem value="month">Month</SelectItem>
+              <SelectItem value="hour">Hour</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={profileAggregation} onValueChange={(value) => setProfileAggregation(value as AggregationMode)}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Aggregation" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mean">Mean</SelectItem>
+              <SelectItem value="median">Median</SelectItem>
+              <SelectItem value="sum">Sum</SelectItem>
+              <SelectItem value="min">Min</SelectItem>
+              <SelectItem value="max">Max</SelectItem>
+              <SelectItem value="std">Std</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    if (labSection === 'profiles') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+          <Select value={profileMode} onValueChange={(value) => setProfileMode(value as ProfileMode)}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Profile by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hour">Hour of day</SelectItem>
+              <SelectItem value="weekday">Day of week</SelectItem>
+              <SelectItem value="month">Month</SelectItem>
+              <SelectItem value="quarter">Quarter</SelectItem>
+              <SelectItem value="year">Year</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={profileAggregation} onValueChange={(value) => setProfileAggregation(value as AggregationMode)}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Aggregation" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mean">Mean</SelectItem>
+              <SelectItem value="median">Median</SelectItem>
+              <SelectItem value="sum">Sum</SelectItem>
+              <SelectItem value="min">Min</SelectItem>
+              <SelectItem value="max">Max</SelectItem>
+              <SelectItem value="std">Std</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={profileHeatmapMode} onValueChange={(value) => setProfileHeatmapMode(value as HeatmapProfileMode)}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Heatmap profile" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="month">Year x month</SelectItem>
+              <SelectItem value="hour">Year x hour</SelectItem>
+              <SelectItem value="weekday">Year x weekday</SelectItem>
+              <SelectItem value="week">Year x week</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    if (labSection === 'decomposition') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+          {renderGranularityControl()}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="decomposition-window" className="text-xs text-muted-foreground">
+              Trend window
+            </Label>
+            <Input
+              id="decomposition-window"
+              type="number"
+              min={2}
+              max={90}
+              value={decompositionWindow}
+              onChange={(event) => setDecompositionWindow(Math.max(2, Math.min(90, Number(event.target.value || 21))))}
+              className="h-8 w-24"
+            />
+          </div>
+        </div>
+      );
+    }
+    if (labSection === 'autocorr' || labSection === 'pacf') {
+      return <div className="mb-4">{renderGranularityControl()}</div>;
+    }
+    if (labSection === 'forecast') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+          {renderGranularityControl()}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="forecast-horizon" className="text-xs text-muted-foreground">
+              Forecast horizon
+            </Label>
+            <Input
+              id="forecast-horizon"
+              type="number"
+              min={1}
+              max={365}
+              value={forecastHorizon}
+              onChange={(event) => setForecastHorizon(Math.max(1, Math.min(365, Number(event.target.value || 30))))}
+              className="h-8 w-24"
+            />
+          </div>
+        </div>
+      );
+    }
+    if (labSection === 'changepoints') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto_auto] gap-3 items-end mb-4">
+          {renderGranularityControl()}
+          <div className="flex items-center gap-2">
+            <Label htmlFor="changepoint-window" className="text-xs text-muted-foreground">
+              Smoothing
+            </Label>
+            <Input
+              id="changepoint-window"
+              type="number"
+              min={2}
+              max={30}
+              value={changepointWindow}
+              onChange={(event) => setChangepointWindow(Math.max(2, Math.min(30, Number(event.target.value || 7))))}
+              className="h-8 w-20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="changepoint-sensitivity" className="text-xs text-muted-foreground">
+              Sensitivity
+            </Label>
+            <Input
+              id="changepoint-sensitivity"
+              type="number"
+              min={0.5}
+              max={6}
+              step={0.1}
+              value={changepointSensitivity}
+              onChange={(event) =>
+                setChangepointSensitivity(Math.max(0.5, Math.min(6, Number(event.target.value || 2))))
+              }
+              className="h-8 w-20"
+            />
+          </div>
+        </div>
+      );
+    }
+    if (labSection === 'trend') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+          {renderGranularityControl()}
+          <div>
+            <button
+              type="button"
+              onClick={() => setTrendDeseasonalized((current) => !current)}
+              className={`text-xs rounded-md border px-2 py-1.5 transition-colors ${
+                trendDeseasonalized
+                  ? 'bg-[#509EE3] text-white border-[#509EE3]'
+                  : 'bg-white text-foreground border-gray-300'
+              }`}
+            >
+              {trendDeseasonalized ? 'Deseasonalized: on' : 'Deseasonalized: off'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+    if (labSection === 'correlation') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mb-4">
+          {renderGranularityControl('Bucketing')}
+          <Select value={pairVariableX} onValueChange={setPairVariableX}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Variable X" />
+            </SelectTrigger>
+            <SelectContent>
+              {correlationMatrix.variables.map((variable) => (
+                <SelectItem key={`pair-x-${variable}`} value={variable}>
+                  {variable}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={pairVariableY} onValueChange={setPairVariableY}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Variable Y" />
+            </SelectTrigger>
+            <SelectContent>
+              {correlationMatrix.variables.map((variable) => (
+                <SelectItem key={`pair-y-${variable}`} value={variable}>
+                  {variable}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      );
+    }
+    return null;
+  };
 
-          <div className="xl:col-span-3 space-y-6">
-            <Card className="bg-white border-[#dce5f1]">
-              <CardHeader>
-                <CardTitle className="text-lg">Station Live Snapshot</CardTitle>
-                <CardDescription>Latest value per variable by station (simulated real-time).</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {liveLoading ? (
-                  <div className="py-6 flex items-center justify-center text-muted-foreground text-sm">
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Loading latest station data...
-                  </div>
-                ) : !liveSnapshot || liveSnapshot.stations.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No latest station records available.</p>
-                ) : (
-                  <div className="space-y-3 max-h-[420px] overflow-auto pr-1">
-                    {liveSnapshot.stations.map((station) => (
-                      <div key={station.station_code} className="border rounded-md p-2.5 bg-[#f8fbff]">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <p className="text-sm font-semibold text-foreground">{station.station_name}</p>
-                            <p className="text-[11px] text-muted-foreground">{station.station_code}</p>
-                          </div>
-                          <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/25">{station.region ?? 'Region N/A'}</Badge>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          {station.latitude ?? '--'}, {station.longitude ?? '--'}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground mt-1">
-                          Last update: {new Date(station.latest_observed_at).toLocaleString()}
-                        </p>
-                        <div className="mt-2 space-y-1">
-                          {station.variables.map((item) => (
-                            <div key={`${station.station_code}-${item.variable_code}`} className="flex items-center justify-between text-[11px]">
-                              <span className="font-medium text-foreground">{item.variable_name || item.variable_code}</span>
-                              <span className="text-muted-foreground">
-                                {round(item.value)} {item.unit ?? ''}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+  const renderTimeSeriesChart = () => {
+    if (rows.length === 0) {
+      return (
+        <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+          Pick a loaded source selection to render charts.
+        </div>
+      );
+    }
 
+    if (chartType === 'line') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={temporalSeries.points} margin={{ top: 8, right: 20, left: 10, bottom: 12 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            {temporalSeries.keys.map((key, index) => (
+              <Line
+                key={key}
+                type="monotone"
+                dataKey={key}
+                name={key}
+                stroke={CHART_COLORS[index % CHART_COLORS.length]}
+                strokeWidth={2.6}
+                dot={false}
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (chartType === 'bar') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={stationBars} margin={{ top: 8, right: 16, left: 10, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="station" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="avg" radius={[6, 6, 0, 0]}>
+              {stationBars.map((item, index) => (
+                <Cell key={`station-bar-${item.station}`} fill={CHART_COLORS[index % CHART_COLORS.length]} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    if (chartType === 'scatter') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={{ top: 8, right: 16, left: 12, bottom: 8 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis
+              type="number"
+              dataKey="hour"
+              name="Hour"
+              label={{ value: 'Hour of Day (UTC)', position: 'insideBottom', offset: -5 }}
+            />
+            <YAxis
+              type="number"
+              dataKey="value"
+              name="Value"
+              label={{ value: 'Measured Value', angle: -90, position: 'insideLeft' }}
+            />
+            <Tooltip cursor={{ strokeDasharray: '4 4' }} />
+            <Legend />
+            {scatterEntries.map(([stationCode, points], index) => (
+              <Scatter
+                key={stationCode}
+                name={stationCode}
+                data={points}
+                fill={CHART_COLORS[index % CHART_COLORS.length]}
+              />
+            ))}
+          </ScatterChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    return (
+      <div className="h-full overflow-auto border rounded-md p-3 bg-[#f8fbff]">
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="heatmap-window" className="text-xs text-muted-foreground">
+              Window (days)
+            </Label>
+            <Input
+              id="heatmap-window"
+              type="number"
+              min={7}
+              max={60}
+              value={heatmapWindowDays}
+              onChange={(event) =>
+                setHeatmapWindowDays(Math.max(7, Math.min(60, Number(event.target.value || 14))))
+              }
+              className="h-7 w-20"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                setHeatmapOffset((current) => Math.min(heatmapView.maxOffset, current + heatmapWindowDays))
+              }
+              disabled={heatmapView.safeOffset >= heatmapView.maxOffset}
+            >
+              Older
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setHeatmapOffset((current) => Math.max(0, current - heatmapWindowDays))}
+              disabled={heatmapView.safeOffset <= 0}
+            >
+              Newer
+            </Button>
+          </div>
+        </div>
+        <div className="min-w-[780px]">
+          <div className="grid grid-cols-[84px_repeat(24,minmax(26px,1fr))] gap-1">
+            <div />
+            {heatmap.hours.map((hour) => (
+              <div key={`hour-${hour}`} className="text-[10px] text-center text-muted-foreground">
+                {hour}
+              </div>
+            ))}
+            {heatmapView.days.map((day) => (
+              <Fragment key={`heat-row-${day}`}>
+                <div className="text-[10px] text-muted-foreground pr-1">{day.slice(5)}</div>
+                {heatmap.hours.map((hour) => {
+                  const key = `${day}|${hour}`;
+                  const value = heatmap.values.get(key);
+                  return (
+                    <div
+                      key={key}
+                      title={value !== undefined ? `${day} ${hour}:00 - ${round(value)}` : `${day} ${hour}:00`}
+                      className="h-5 rounded-sm"
+                      style={{
+                        background:
+                          value === undefined
+                            ? 'hsl(210, 30%, 95%)'
+                            : intensityColor(value, heatMin, heatMax),
+                      }}
+                    />
+                  );
+                })}
+              </Fragment>
+            ))}
           </div>
         </div>
       </div>
-    </div>
+    );
+  };
+
+  const renderAnalysisChart = () => {
+    if (rows.length === 0) {
+      return (
+        <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+          Load data from the source section before opening this analysis.
+        </div>
+      );
+    }
+    if (labSection === 'rolling') {
+      return renderTimeSeriesChart();
+    }
+    if (labSection === 'anomaly') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={anomalySeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+            <Line type="monotone" dataKey="upper" name="Upper IQR" stroke="#94A3B8" dot={false} />
+            <Line type="monotone" dataKey="lower" name="Lower IQR" stroke="#94A3B8" dot={false} />
+            <Line
+              type="monotone"
+              dataKey="anomaly_value"
+              name="Anomaly"
+              stroke="#DC2626"
+              dot={{ r: 3, fill: '#DC2626' }}
+              connectNulls={false}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'profiles') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={profileSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="overall" name={profileAggregation.toUpperCase()} fill="#509EE3" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'seasonality') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={seasonalitySeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Bar dataKey="overall" name={profileAggregation.toUpperCase()} fill="#509EE3" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'decomposition') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={decompositionSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+            <Line type="monotone" dataKey="trend" name="Trend" stroke="#509EE3" dot={false} />
+            <Line type="monotone" dataKey="seasonal" name="Seasonal" stroke="#0B7285" dot={false} />
+            <Line type="monotone" dataKey="residual" name="Residual" stroke="#A16207" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'autocorr') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={autocorrSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis domain={[-1, 1]} />
+            <Tooltip />
+            <ReferenceLine y={0} stroke="#64748B" />
+            <Bar dataKey="overall" name="Autocorrelation" fill="#1F5A8A" />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'pacf') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={pacfSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis domain={[-1, 1]} />
+            <Tooltip />
+            <ReferenceLine y={0} stroke="#64748B" />
+            <Bar dataKey="overall" name="Partial Autocorrelation" fill="#0B7285" />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'forecast') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={forecastSeries}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="observed" name="Observed" stroke="#1F5A8A" dot={false} />
+            <Line type="monotone" dataKey="forecast" name="Forecast" stroke="#509EE3" dot={false} />
+            <Line type="monotone" dataKey="upper" name="Upper band" stroke="#94A3B8" dot={false} />
+            <Line type="monotone" dataKey="lower" name="Lower band" stroke="#94A3B8" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'changepoints') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={temporalSeries.points}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+            {changepointResult.markers.slice(0, 40).map((marker) => (
+              <ReferenceLine key={`cp-${marker.bucket}`} x={marker.bucket} stroke="#DC2626" strokeDasharray="4 4" />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'trend') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={trendResult.series}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="bucket" />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+            <Line type="monotone" dataKey="linear" name="Linear trend" stroke="#509EE3" dot={false} />
+            <Line type="monotone" dataKey="quadratic" name="Quadratic trend" stroke="#0B7285" dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    if (labSection === 'correlation') {
+      return (
+        <div className="h-full overflow-auto border rounded-md p-3 bg-[#f8fbff]">
+          {correlationMatrix.variables.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+              Correlation requires at least one variable with rows.
+            </div>
+          ) : (
+            <div className="min-w-[460px]">
+              <div
+                className="grid gap-1"
+                style={{
+                  gridTemplateColumns: `110px repeat(${correlationMatrix.variables.length}, minmax(56px, 1fr))`,
+                }}
+              >
+                <div />
+                {correlationMatrix.variables.map((column) => (
+                  <div key={`corr-col-${column}`} className="text-[10px] text-center text-muted-foreground">
+                    {column}
+                  </div>
+                ))}
+                {correlationMatrix.variables.map((rowVariable) => (
+                  <Fragment key={`corr-row-${rowVariable}`}>
+                    <div className="text-[10px] text-muted-foreground pr-1">{rowVariable}</div>
+                    {correlationMatrix.variables.map((columnVariable) => {
+                      const value = correlationByCell.get(`${rowVariable}|${columnVariable}`) ?? 0;
+                      return (
+                        <div
+                          key={`corr-cell-${rowVariable}-${columnVariable}`}
+                          title={`${rowVariable} vs ${columnVariable}: ${round(value, 3)}`}
+                          className="h-8 rounded-sm border border-white/50 flex items-center justify-center text-[10px]"
+                          style={{ background: correlationColor(value) }}
+                        >
+                          {round(value, 2)}
+                        </div>
+                      );
+                    })}
+                  </Fragment>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+    if (labSection === 'summary') {
+      return (
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={summaryChartData} margin={{ top: 8, right: 16, left: 10, bottom: 18 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis dataKey="variable" tick={{ fontSize: 11 }} interval={0} angle={-12} textAnchor="end" height={56} />
+            <YAxis />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="mean" fill="#509EE3" name="Mean" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="max" fill="#EF4444" name="Max" radius={[4, 4, 0, 0]} opacity={0.6} />
+          </BarChart>
+        </ResponsiveContainer>
+      );
+    }
+
+    return null;
+  };
+
+  const renderSecondaryContent = () => {
+    if (labSection === 'rolling') {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-[1.05fr_0.95fr] gap-4">
+          <Card className="bg-white border-[#dce5f1]">
+            <CardHeader>
+              <CardTitle className="text-lg">Distribution Snapshot</CardTitle>
+              <CardDescription>Histogram of the currently loaded values.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={histogram} margin={{ top: 8, right: 8, left: 8, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="range" tick={{ fontSize: 10 }} interval={Math.max(0, Math.floor(histogram.length / 6))} />
+                    <YAxis />
+                    <Tooltip />
+                    <Bar dataKey="count" name="Count" fill="#509EE3" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="bg-white border-[#dce5f1]">
+            <CardHeader>
+              <CardTitle className="text-lg">Rolling Envelope</CardTitle>
+              <CardDescription>Observed values against the rolling baseline for the last {rollingWindow} buckets.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {rollingSeries.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No rolling window series available.</p>
+              ) : (
+                <div className="h-[280px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={rollingSeries} margin={{ top: 8, right: 12, left: 4, bottom: 10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="bucket" tick={{ fontSize: 10 }} />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="overall" name="Observed" stroke="#1F5A8A" dot={false} />
+                      <Line type="monotone" dataKey="mean" name="Rolling mean" stroke="#509EE3" dot={false} />
+                      <Line type="monotone" dataKey="upper" name="Upper band" stroke="#94A3B8" dot={false} />
+                      <Line type="monotone" dataKey="lower" name="Lower band" stroke="#94A3B8" dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      );
+    }
+
+    if (labSection === 'summary') {
+      return (
+        <Card className="bg-white border-[#dce5f1]">
+          <CardHeader>
+            <CardTitle className="text-lg">Statistical Summary</CardTitle>
+            <CardDescription>Descriptive statistics for the filtered variables.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-xs">
+                <thead>
+                  <tr className="bg-[#F9FBFC]">
+                    <th className="border border-gray-200 p-2 text-left font-medium">Variable</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Count</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Mean</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Std</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Min</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Median</th>
+                    <th className="border border-gray-200 p-2 text-right font-medium">Max</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variableSummary.map((item) => (
+                    <tr key={item.code} className="hover:bg-[#F9FBFC]">
+                      <td className="border border-gray-200 p-2 font-medium">{item.label}</td>
+                      <td className="border border-gray-200 p-2 text-right">{item.count}</td>
+                      <td className="border border-gray-200 p-2 text-right">{round(item.mean)}</td>
+                      <td className="border border-gray-200 p-2 text-right">{round(item.std)}</td>
+                      <td className="border border-gray-200 p-2 text-right">{round(item.min)}</td>
+                      <td className="border border-gray-200 p-2 text-right">{round(item.median)}</td>
+                      <td className="border border-gray-200 p-2 text-right">{round(item.max)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (labSection === 'profiles') {
+      return (
+        <Card className="bg-white border-[#dce5f1]">
+          <CardHeader>
+            <CardTitle className="text-lg">Profile Heatmap</CardTitle>
+            <CardDescription>{profileHeatmapMode} aggregation matrix</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-auto border rounded-md p-3 bg-[#f8fbff]">
+              <div className="min-w-[620px]">
+                <div
+                  className="grid gap-1"
+                  style={{
+                    gridTemplateColumns: `96px repeat(${profileHeatmap.xLabels.length}, minmax(28px, 1fr))`,
+                  }}
+                >
+                  <div />
+                  {profileHeatmap.xLabels.map((xLabel) => (
+                    <div key={`profile-col-${xLabel}`} className="text-[10px] text-center text-muted-foreground">
+                      {xLabel}
+                    </div>
+                  ))}
+                  {profileHeatmap.yLabels.map((yLabel) => (
+                    <Fragment key={`profile-row-${yLabel}`}>
+                      <div className="text-[10px] text-muted-foreground pr-1">{yLabel}</div>
+                      {profileHeatmap.xLabels.map((xLabel) => {
+                        const key = `${yLabel}|${xLabel}`;
+                        const value = profileHeatmap.values.get(key);
+                        return (
+                          <div
+                            key={`profile-cell-${key}`}
+                            title={value !== undefined ? `${yLabel} ${xLabel}: ${round(value)}` : `${yLabel} ${xLabel}`}
+                            className="h-6 rounded-sm"
+                            style={{
+                              background:
+                                value === undefined
+                                  ? 'hsl(210, 30%, 95%)'
+                                  : intensityColor(value, profileHeatMin, profileHeatMax),
+                            }}
+                          />
+                        );
+                      })}
+                    </Fragment>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (labSection === 'correlation') {
+      return (
+        <Card className="bg-white border-[#dce5f1]">
+          <CardHeader>
+            <CardTitle className="text-lg">Pair Comparison</CardTitle>
+            <CardDescription>
+              Pearson correlation between {pairVariableX || 'X'} and {pairVariableY || 'Y'}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="rounded-md border bg-[#f8fbff] px-3 py-2 text-xs">
+              Pair correlation: <span className="font-semibold">{round(pairCorrelation, 4)}</span>
+            </div>
+            <div className="h-[280px] w-full">
+              {pairPoints.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground border rounded-md bg-[#f8fbff]">
+                  Not enough shared points to render variable pair comparison.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis
+                      type="number"
+                      dataKey="x"
+                      name={pairVariableX}
+                      label={{ value: pairVariableX, position: 'insideBottom', offset: -4 }}
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="y"
+                      name={pairVariableY}
+                      label={{ value: pairVariableY, angle: -90, position: 'insideLeft' }}
+                    />
+                    <Tooltip cursor={{ strokeDasharray: '4 4' }} />
+                    <Scatter data={pairPoints} fill="#509EE3" />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (labSection === 'trend') {
+      return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <KpiCard label="Slope" value={round(trendResult.diagnostics.linearSlope, 6).toString()} icon={TrendingUp} />
+          <KpiCard label="R2" value={round(trendResult.diagnostics.linearR2, 4).toString()} icon={BarChart3} />
+          <KpiCard
+            label="Direction"
+            value={trendResult.diagnostics.trendDirection}
+            icon={LineChartIcon}
+            badgeTone={
+              trendResult.diagnostics.trendDirection === 'Rising'
+                ? 'green'
+                : trendResult.diagnostics.trendDirection === 'Falling'
+                ? 'amber'
+                : 'blue'
+            }
+          />
+        </div>
+      );
+    }
+
+    if (labSection === 'changepoints') {
+      return (
+        <div className="rounded-md border bg-[#f8fbff] px-3 py-2 text-xs text-muted-foreground">
+          Threshold: {round(changepointResult.threshold, 4)} · Detected changepoints: {changepointResult.markers.length}
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="h-full flex bg-[#F9FBFC]">
+      <aside className="w-72 shrink-0 border-r border-gray-200 bg-white flex flex-col">
+        <div className="border-b border-gray-200 px-4 py-4">
+          <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
+          <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
+        </div>
+
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {ANALYSIS_SECTIONS.map((section) => {
+              const Icon = section.icon;
+              const isActive = labSection === section.value;
+              const locked = section.value !== 'load-data' && selectedSourceIds.length === 0;
+
+              return (
+                <button
+                  key={section.value}
+                  type="button"
+                  onClick={() => setLabSection(section.value)}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                    isActive ? 'bg-[#509EE3] text-white shadow-md' : 'hover:bg-gray-100 text-foreground'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" style={{ color: isActive ? 'white' : section.color }} />
+                  <span className="flex-1 text-left">{section.label}</span>
+                  {locked && <div className="w-2 h-2 rounded-full bg-orange-400" />}
+                </button>
+              );
+            })}
+          </div>
+        </ScrollArea>
+
+        {labSection !== 'load-data' && (
+          <div className="border-t border-gray-200 p-4 space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Variables</Label>
+              <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[136px] overflow-auto">
+                {availableVariables.map((variable) => {
+                  const active = selectedVariables.includes(variable.code);
+                  return (
+                    <button
+                      key={variable.code}
+                      type="button"
+                      onClick={() => handleToggleVariable(variable.code)}
+                      className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                        active
+                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                      }`}
+                    >
+                      {variable.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">Current Selection</Label>
+              <div className="rounded-lg border bg-[#F9FBFC] p-3 space-y-2 text-xs text-muted-foreground">
+                <div className="flex items-center justify-between">
+                  <span>Sources</span>
+                  <span className="font-medium text-foreground">{selectedSourceIds.length}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Stations</span>
+                  <span className="font-medium text-foreground">{selectedStations.length || 'All'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Rows</span>
+                  <span className="font-medium text-foreground">{rows.length.toLocaleString()}</span>
+                </div>
+              </div>
+            </div>
+
+            <Button size="sm" variant="outline" className="w-full text-xs" onClick={() => setLabSection('load-data')}>
+              <Database className="w-3 h-3 mr-1.5" />
+              Adjust Data Selection
+            </Button>
+          </div>
+        )}
+      </aside>
+
+      <main className="flex-1 overflow-y-auto">
+        <div className="p-6 space-y-6">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground mb-1">Analytical Workspace</h1>
+              <p className="text-muted-foreground">Comprehensive time series analysis for atmospheric data.</p>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/30">
+                {selectedSourceIds.length > 0 ? `${selectedSourceIds.length} sources selected` : 'No sources selected'}
+              </Badge>
+              <Badge variant="outline">{selectedVariableLabels.join(', ') || 'Select variables'}</Badge>
+            </div>
+          </div>
+
+          {error && (
+            <Card className="bg-white border-l-4 border-l-[#509EE3]">
+              <CardContent className="py-3">
+                <p className="text-sm text-[#1F5A8A]">{error}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {labSection === 'load-data' ? (
+            <Card className="bg-white border-[#dce5f1]">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Upload className="w-5 h-5 text-[#509EE3]" />
+                  Load Data
+                </CardTitle>
+                <CardDescription>
+                  Select one or more source files and configure the analysis window before rendering charts.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.9fr] gap-4">
+                  <div className="rounded-xl border bg-[#fbfdff] p-4">
+                    <Label className="text-xs text-muted-foreground">Source Files</Label>
+                    <div className="relative mt-2">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={sourceSearch}
+                        onChange={(event) => setSourceSearch(event.target.value)}
+                        placeholder="Search loaded file..."
+                        className="pl-9"
+                      />
+                    </div>
+                    <ScrollArea className="mt-3 h-[360px]">
+                      <div className="space-y-2 pr-3">
+                        {filteredSources.map((source) => {
+                          const active = selectedSourceIds.includes(source.id);
+                          return (
+                            <button
+                              key={source.id}
+                              type="button"
+                              onClick={() => handleToggleSource(source.id)}
+                              className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${
+                                active
+                                  ? 'border-[#509EE3] bg-[#e9f3fd]'
+                                  : 'border-gray-200 bg-white hover:border-[#509EE3]/35'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#509EE3]/10">
+                                  <FileSpreadsheet className="w-4 h-4 text-[#509EE3]" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">{source.name}</p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {source.source_type} · {source.row_count.toLocaleString()} rows
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                        {filteredSources.length === 0 && (
+                          <p className="text-xs text-muted-foreground py-6 text-center">No matching loaded files.</p>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
+                      <Label className="text-xs text-muted-foreground">Date Range</Label>
+                      <div className="relative">
+                        <Input
+                          type="date"
+                          value={dateFrom}
+                          onChange={(event) => {
+                            setDateFrom(event.target.value);
+                            setExploreRange([0, 100]);
+                            setRangePreset('custom');
+                          }}
+                          className="pr-8"
+                        />
+                        <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <div className="relative">
+                        <Input
+                          type="date"
+                          value={dateTo}
+                          onChange={(event) => {
+                            setDateTo(event.target.value);
+                            setExploreRange([0, 100]);
+                            setRangePreset('custom');
+                          }}
+                          className="pr-8"
+                        />
+                        <Calendar className="w-4 h-4 text-muted-foreground absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {RANGE_PRESETS.map((preset) => {
+                          const active = rangePreset === preset.id;
+                          return (
+                            <button
+                              key={preset.id}
+                              type="button"
+                              onClick={() => applyRangePreset(preset.id)}
+                              className={`px-2.5 py-1 rounded-full text-[11px] border transition-colors ${
+                                active
+                                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                              }`}
+                            >
+                              {preset.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-muted-foreground">Stations</Label>
+                        <Badge variant="outline">{selectedStations.length || 'All'}</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-[184px] overflow-auto">
+                        {(filters?.stations ?? []).map((station) => {
+                          const active = selectedStations.includes(station.code);
+                          return (
+                            <button
+                              key={station.code}
+                              type="button"
+                              onClick={() => handleToggleStation(station.code)}
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] border transition-colors ${
+                                active
+                                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                              }`}
+                              title={station.name}
+                            >
+                              <MapPin className="w-3.5 h-3.5" />
+                              {station.code}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs text-muted-foreground">Variables</Label>
+                        <Badge variant="outline">{selectedVariables.length || 0}</Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 max-h-[210px] overflow-auto">
+                        {availableVariables.map((variable) => {
+                          const active = selectedVariables.includes(variable.code);
+                          return (
+                            <button
+                              key={variable.code}
+                              type="button"
+                              onClick={() => handleToggleVariable(variable.code)}
+                              className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                                active
+                                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                              }`}
+                            >
+                              {variable.name}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="row-limit" className="text-xs text-muted-foreground">
+                          Rows to load
+                        </Label>
+                        <Input
+                          id="row-limit"
+                          type="number"
+                          min={100}
+                          max={sourceMaxRows}
+                          step={100}
+                          value={rowLimit}
+                          onChange={(event) =>
+                            setRowLimit(Math.min(sourceMaxRows, Math.max(100, Number(event.target.value || 100))))
+                          }
+                        />
+                      </div>
+                      <Button className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={handleRunClick} disabled={loading}>
+                        {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
+                        Load Analysis Data
+                      </Button>
+                      <div className="rounded-lg border bg-white p-3 text-xs text-muted-foreground space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span>Selection</span>
+                          <span className="font-medium text-foreground">{selectedSourceIds.length} files</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span>Dataset cap</span>
+                          <span className="font-medium text-foreground">{sourceMaxRows.toLocaleString()}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span>Time window</span>
+                          <span className="font-medium text-foreground">{dateFrom || '--'} to {dateTo || '--'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <KpiCard label="Sources" value={selectedSources.length.toString()} icon={Database} />
+                <KpiCard label="Samples" value={summary.samples.toLocaleString()} icon={Table2} />
+                <KpiCard label="Mean" value={round(summary.mean).toString()} icon={TrendingUp} />
+                <KpiCard
+                  label="Trend"
+                  value={summary.trend}
+                  icon={LineChartIcon}
+                  badgeTone={summary.trend === 'Rising' ? 'green' : summary.trend === 'Falling' ? 'amber' : 'blue'}
+                />
+              </div>
+
+              <Card className="bg-white border-[#dce5f1]">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <ActiveSectionIcon className="w-5 h-5" style={{ color: activeSection.color }} />
+                    {activeSection.label}
+                  </CardTitle>
+                  <CardDescription>
+                    {labSection === 'rolling' && 'Visualize temporal behavior with line, bar, scatter or heatmap views.'}
+                    {labSection === 'anomaly' && 'Detect abnormal behavior using rolling spread and anomaly markers.'}
+                    {labSection === 'profiles' && 'Inspect recurring hourly, weekly or seasonal profiles.'}
+                    {labSection === 'summary' && 'Review descriptive statistics for the current data selection.'}
+                    {labSection === 'seasonality' && 'Compare calendar patterns across the selected date range.'}
+                    {labSection === 'decomposition' && 'Separate trend, seasonal and residual components.'}
+                    {labSection === 'autocorr' && 'Inspect lag dependency structure over time.'}
+                    {labSection === 'pacf' && 'Inspect partial lag dependency structure.'}
+                    {labSection === 'forecast' && 'Project near-future values using the current series behavior.'}
+                    {labSection === 'changepoints' && 'Highlight abrupt changes in slope and local structure.'}
+                    {labSection === 'trend' && 'Compare observed data against linear and quadratic trend lines.'}
+                    {labSection === 'correlation' && 'Compare variables through correlation heatmaps and pair plots.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {renderSectionControls()}
+                  <div className="mb-4 rounded-md border border-gray-200 bg-white px-3 py-2">
+                    <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                      <span>
+                        Explore window: {exploredDateRange.from || '--'} to {exploredDateRange.to || '--'}
+                      </span>
+                      <span>
+                        {Math.round(exploreRange[0])}% - {Math.round(exploreRange[1])}%
+                      </span>
+                    </div>
+                    <Slider
+                      value={exploreRange}
+                      min={0}
+                      max={100}
+                      step={1}
+                      minStepsBetweenThumbs={2}
+                      onValueChange={(value) => {
+                        if (value.length === 2) {
+                          setExploreRange([value[0] ?? 0, value[1] ?? 100]);
+                        }
+                      }}
+                      className="mt-2 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-slate-200 [&_[data-slot=slider-range]]:bg-slate-400 [&_[data-slot=slider-thumb]]:size-3 [&_[data-slot=slider-thumb]]:border-slate-500 [&_[data-slot=slider-thumb]]:bg-white"
+                    />
+                  </div>
+                  <div className="h-[560px] w-full">{renderAnalysisChart()}</div>
+                </CardContent>
+              </Card>
+
+              {renderSecondaryContent()}
+            </div>
+          )}
+        </div>
+    </main>
+  </div>
   );
 }
 

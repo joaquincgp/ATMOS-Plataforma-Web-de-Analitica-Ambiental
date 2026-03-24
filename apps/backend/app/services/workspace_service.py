@@ -132,9 +132,7 @@ def _assert_workspace_access(user: User, workspace: Workspace) -> None:
 
 
 def _get_workspace_entity(db: Session, workspace_id: str) -> Workspace:
-    workspace = db.scalar(
-        select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True))
-    )
+    workspace = db.scalar(select(Workspace).where(Workspace.id == workspace_id, Workspace.is_active.is_(True)))
     if workspace is None:
         raise WorkspaceError("Workspace not found.")
     return workspace
@@ -272,9 +270,10 @@ def save_dashboard(db: Session, user: User, workspace_id: str, payload: Dashboar
     now = datetime.utcnow()
     quoted_schema = _quote_identifier(workspace.schema_name)
 
-    row = db.execute(
-        text(
-            f"""
+    row = (
+        db.execute(
+            text(
+                f"""
             INSERT INTO {quoted_schema}.dashboards (
                 id,
                 name,
@@ -304,18 +303,21 @@ def save_dashboard(db: Session, user: User, workspace_id: str, payload: Dashboar
                 updated_at = EXCLUDED.updated_at
             RETURNING id, name, description, blocks, filters, created_by, created_at, updated_at
             """
-        ),
-        {
-            "id": dashboard_id,
-            "name": payload.name,
-            "description": payload.description,
-            "blocks": json.dumps(payload.blocks),
-            "filters": json.dumps(payload.filters),
-            "created_by": user.id,
-            "created_at": now,
-            "updated_at": now,
-        },
-    ).mappings().one()
+            ),
+            {
+                "id": dashboard_id,
+                "name": payload.name,
+                "description": payload.description,
+                "blocks": json.dumps(payload.blocks),
+                "filters": json.dumps(payload.filters),
+                "created_by": user.id,
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+        .mappings()
+        .one()
+    )
     db.commit()
 
     return DashboardResponse(
@@ -341,17 +343,21 @@ def list_dashboards(
     _assert_workspace_access(user, workspace)
 
     quoted_schema = _quote_identifier(workspace.schema_name)
-    rows = db.execute(
-        text(
-            f"""
+    rows = (
+        db.execute(
+            text(
+                f"""
             SELECT id, name, description, blocks, filters, created_by, created_at, updated_at
             FROM {quoted_schema}.dashboards
             ORDER BY updated_at DESC
             LIMIT :limit
             """
-        ),
-        {"limit": max(1, min(500, limit))},
-    ).mappings().all()
+            ),
+            {"limit": max(1, min(500, limit))},
+        )
+        .mappings()
+        .all()
+    )
 
     return [
         DashboardResponse(
