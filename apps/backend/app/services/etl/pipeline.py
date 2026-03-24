@@ -882,9 +882,7 @@ class EtlService:
 
     def _extract_rows_from_directory(self, extracted_path: Path) -> Iterator[NormalizedMeasurementRow]:
         workbook_paths = [
-            path
-            for path in extracted_path.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".xlsx", ".xls"}
+            path for path in extracted_path.rglob("*") if path.is_file() and path.suffix.lower() in {".xlsx", ".xls"}
         ]
         delimited_paths = [
             path for path in extracted_path.rglob("*") if path.is_file() and path.suffix.lower() in {".csv", ".txt"}
@@ -958,7 +956,15 @@ class EtlService:
 
         metadata_columns = {
             column
-            for column in [station_column, datetime_column, date_column, time_column, variable_column, value_column, unit_column]  # noqa: E501
+            for column in [
+                station_column,
+                datetime_column,
+                date_column,
+                time_column,
+                variable_column,
+                value_column,
+                unit_column,
+            ]  # noqa: E501
             if column is not None
         }
 

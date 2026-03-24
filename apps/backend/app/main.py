@@ -33,9 +33,7 @@ if settings.auto_init_db_on_startup:
     try:
         init_db()
     except OperationalError:
-        logger.warning(
-            "Database auto-initialization skipped because PostgreSQL is unavailable at startup."
-        )
+        logger.warning("Database auto-initialization skipped because PostgreSQL is unavailable at startup.")
 
 
 @app.exception_handler(OperationalError)

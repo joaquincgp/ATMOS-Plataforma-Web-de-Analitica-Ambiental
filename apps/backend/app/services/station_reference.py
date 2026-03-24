@@ -92,11 +92,7 @@ def _normalize_station_token(value: str | None) -> str:
 
 
 def resolve_station_reference(code: str | None, name: str | None) -> StationReference | None:
-    normalized_tokens = {
-        token
-        for token in (_normalize_station_token(code), _normalize_station_token(name))
-        if token
-    }
+    normalized_tokens = {token for token in (_normalize_station_token(code), _normalize_station_token(name)) if token}
     if not normalized_tokens:
         return None
 

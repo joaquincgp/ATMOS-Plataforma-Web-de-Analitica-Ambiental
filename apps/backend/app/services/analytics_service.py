@@ -26,11 +26,11 @@ from app.schemas.analytics import (
     StationLiveSnapshotResponse,
     StationLiveSnapshotResponseItem,
 )
+from app.services.etl.helpers import normalize_variable_code
 from app.services.station_reference import (
     resolve_station_reference,
     sync_station_reference_metadata,
 )
-from app.services.etl.helpers import normalize_variable_code
 
 FORBIDDEN_SQL_PATTERN = re.compile(
     r"\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|comment|copy|call|do|merge)\b",
@@ -134,7 +134,9 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 name=row.name,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                region=resolve_station_reference(row.code, row.name).region if resolve_station_reference(row.code, row.name) else None,  # noqa: E501
+                region=resolve_station_reference(row.code, row.name).region
+                if resolve_station_reference(row.code, row.name)
+                else None,  # noqa: E501
             )
             for row in station_rows
         ],
@@ -227,22 +229,19 @@ def get_station_live_snapshot(
 ) -> StationLiveSnapshotResponse:
     sync_station_reference_metadata(db)
 
-    latest_ranked = (
-        select(
-            Measurement.station_id.label("station_id"),
-            Measurement.variable_id.label("variable_id"),
-            Measurement.observed_at.label("observed_at"),
-            Measurement.value.label("value"),
-            Measurement.unit.label("unit"),
-            func.row_number()
-            .over(
-                partition_by=(Measurement.station_id, Measurement.variable_id),
-                order_by=Measurement.observed_at.desc(),
-            )
-            .label("row_num"),
+    latest_ranked = select(
+        Measurement.station_id.label("station_id"),
+        Measurement.variable_id.label("variable_id"),
+        Measurement.observed_at.label("observed_at"),
+        Measurement.value.label("value"),
+        Measurement.unit.label("unit"),
+        func.row_number()
+        .over(
+            partition_by=(Measurement.station_id, Measurement.variable_id),
+            order_by=Measurement.observed_at.desc(),
         )
-        .subquery()
-    )
+        .label("row_num"),
+    ).subquery()
 
     statement = (
         select(
