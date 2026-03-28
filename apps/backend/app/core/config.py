@@ -8,7 +8,14 @@ class Settings(BaseSettings):
     app_name: str = "ATMOS API"
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
-    cors_origins: list[str] = ["http://localhost:5173"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
 
     database_url: str = "postgresql+psycopg://atmos:atmos_dev_password@localhost:5432/atmos"
 

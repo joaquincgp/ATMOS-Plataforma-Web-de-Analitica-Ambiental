@@ -9,9 +9,22 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db_session, require_roles
 from app.db.session import SessionLocal
 from app.models.etl_run import EtlRun
+from app.models.user import User
+from app.schemas.analytics import AnalyticsQueryResponse
 from app.schemas.auth import UserRole
-from app.schemas.etl import DbInitResponse, EtlMetricsResponse, EtlPreviewResponse, EtlRunResponse
+from app.schemas.etl import (
+    DbInitResponse,
+    EtlMetricsResponse,
+    EtlPreviewResponse,
+    EtlRunResponse,
+    ManualDatasetCreateFromRemmaqRequest,
+    ManualDatasetCreateFromUrlRequest,
+    ManualDatasetFinalizeRequest,
+    ManualDatasetResponse,
+    ManualDatasetUpdateRequest,
+)
 from app.services.etl import EtlService
+from app.services.manual_dataset_service import ManualDatasetError, ManualDatasetService
 
 router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
 
@@ -226,3 +239,157 @@ def get_preview(
     service = EtlService(db)
     payload = service.get_preview(run_id=run_id, limit=limit)
     return EtlPreviewResponse(**payload)
+
+
+@router.get("/manual-datasets", response_model=list[ManualDatasetResponse])
+def list_manual_datasets(
+    workspace_id: str = Query(...),
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> list[ManualDatasetResponse]:
+    service = ManualDatasetService(db)
+    try:
+        return service.list_datasets(workspace_id=workspace_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/upload", response_model=ManualDatasetResponse)
+async def upload_manual_dataset(
+    workspace_id: str = Query(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".csv", ".xlsx", ".xls", ".txt"}:
+        raise HTTPException(status_code=400, detail="Carga manual solo soporta archivos CSV, XLSX, XLS o TXT.")
+
+    content = await file.read()
+    service = ManualDatasetService(db)
+    try:
+        return service.create_from_upload(
+            workspace_id=workspace_id,
+            user=user,
+            filename=file.filename or "manual-upload",
+            content=content,
+        )
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/from-url", response_model=ManualDatasetResponse)
+def create_manual_dataset_from_url(
+    payload: ManualDatasetCreateFromUrlRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.create_from_url(
+            workspace_id=payload.workspace_id,
+            user=user,
+            source_url=payload.source_url,
+        )
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/from-remmaq", response_model=ManualDatasetResponse)
+def create_manual_dataset_from_remmaq(
+    payload: ManualDatasetCreateFromRemmaqRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.create_from_remmaq(
+            workspace_id=payload.workspace_id,
+            user=user,
+            variable_codes=payload.variable_codes,
+            max_archives=payload.max_archives,
+            observed_from=payload.observed_from,
+            observed_to=payload.observed_to,
+        )
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/manual-datasets/{dataset_id}", response_model=ManualDatasetResponse)
+def get_manual_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.get_dataset(dataset_id=dataset_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/manual-datasets/{dataset_id}/analytics-preview", response_model=AnalyticsQueryResponse)
+def get_manual_dataset_analytics_preview(
+    dataset_id: str,
+    limit: int = Query(default=5000, ge=100, le=5000),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    station_codes: list[str] | None = Query(default=None),
+    variable_codes: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> AnalyticsQueryResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.get_analytics_rows(
+            dataset_id=dataset_id,
+            user=user,
+            limit=limit,
+            date_from=date_from,
+            date_to=date_to,
+            station_codes=station_codes,
+            variable_codes=variable_codes,
+        )
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/{dataset_id}/preview", response_model=ManualDatasetResponse)
+def preview_manual_dataset(
+    dataset_id: str,
+    payload: ManualDatasetUpdateRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.update_dataset(dataset_id=dataset_id, user=user, payload=payload)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/{dataset_id}/finalize", response_model=ManualDatasetResponse)
+def finalize_manual_dataset(
+    dataset_id: str,
+    payload: ManualDatasetFinalizeRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.finalize_dataset(dataset_id=dataset_id, user=user, payload=payload)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/manual-datasets/{dataset_id}", status_code=204)
+def delete_manual_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> None:
+    service = ManualDatasetService(db)
+    try:
+        service.delete_dataset(dataset_id=dataset_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

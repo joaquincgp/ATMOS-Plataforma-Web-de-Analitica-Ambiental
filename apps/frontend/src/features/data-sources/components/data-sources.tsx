@@ -1,35 +1,58 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   Check,
   CheckCircle2,
   Database,
-  Download,
+  FolderOpen,
   Loader2,
   RefreshCw,
   Server,
-  Settings,
-  TrendingUp,
+  Trash2,
   Upload,
 } from 'lucide-react';
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   getAnalyticsFilters,
   runAnalyticsQuery,
   type AnalyticsDataRow,
   type AnalyticsFilterOptionsResponse,
 } from '@/api/modules/analytics';
+import {
+  deleteManualDataset,
+  listManualDatasets,
+  REMMAQ_VARIABLE_OPTIONS,
+  type EtlPreviewRowResponse,
+  type EtlRunResponse,
+  type ManualDatasetResponse,
+} from '@/api/modules/etl';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { useWorkspace } from '@/contexts/workspace-context';
+import { ManualDataIngestionWizard } from '@/features/data-sources/components/manual-data-ingestion-wizard';
 import { useEtl } from '@/hooks/use-etl';
-import { REMMAQ_VARIABLE_OPTIONS } from '@/api/modules/etl';
 
 const MAX_REMMAQ_VARIABLES = 3;
+
+type SourceMode = 'manual' | 'sync' | 'existing';
+
+interface StepMessage {
+  type: 'success' | 'error' | 'info';
+  text: string;
+}
+
+interface PreviewMeasurementRow {
+  observed_at: string;
+  station_code: string;
+  variable_code: string;
+  value: number;
+  unit: string | null;
+  source_file_name: string;
+}
 
 interface StepperProps {
   currentStep: number;
@@ -38,22 +61,22 @@ interface StepperProps {
 
 function Stepper({ currentStep, onStepClick }: StepperProps) {
   const steps = [
-    { number: 1, label: 'Source', description: 'Select data source' },
-    { number: 2, label: 'Validation', description: 'Validate ETL results' },
-    { number: 3, label: 'Mapping', description: 'Contract mapping' },
+    { number: 1, label: 'Source', description: 'Choose data' },
+    { number: 2, label: 'Mapping', description: 'Review fields' },
+    { number: 3, label: 'Summary', description: 'Check result' },
   ];
 
   return (
     <div className="w-full py-6">
-      <div className="flex items-center justify-between max-w-4xl mx-auto">
+      <div className="mx-auto flex max-w-4xl items-center justify-between">
         {steps.map((step, index) => (
-          <div key={step.number} className="flex items-center flex-1">
-            <div className="flex flex-col items-center flex-1">
+          <div key={step.number} className="flex flex-1 items-center">
+            <div className="flex flex-1 flex-col items-center">
               <button
+                type="button"
                 onClick={() => onStepClick(step.number)}
                 className={`
-                  w-12 h-12 rounded-full flex items-center justify-center font-semibold text-sm
-                  transition-all duration-200 cursor-pointer
+                  flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold transition-all duration-200
                   ${
                     currentStep > step.number
                       ? 'bg-[#509EE3] text-white'
@@ -63,25 +86,17 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
                   }
                 `}
               >
-                {currentStep > step.number ? <Check className="w-6 h-6" /> : step.number}
+                {currentStep > step.number ? <Check className="h-6 w-6" /> : step.number}
               </button>
               <div className="mt-2 text-center">
-                <p
-                  className={`text-sm font-medium ${
-                    currentStep >= step.number ? 'text-foreground' : 'text-muted-foreground'
-                  }`}
-                >
+                <p className={`text-sm font-medium ${currentStep >= step.number ? 'text-foreground' : 'text-muted-foreground'}`}>
                   {step.label}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">{step.description}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
               </div>
             </div>
             {index < steps.length - 1 && (
-              <div
-                className={`h-0.5 flex-1 mx-4 mt-[-40px] ${
-                  currentStep > step.number ? 'bg-[#509EE3]' : 'bg-gray-200'
-                }`}
-              />
+              <div className={`mx-4 mt-[-40px] h-0.5 flex-1 ${currentStep > step.number ? 'bg-[#509EE3]' : 'bg-gray-200'}`} />
             )}
           </div>
         ))}
@@ -90,68 +105,156 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
   );
 }
 
-interface StepMessage {
-  type: 'success' | 'error' | 'info';
-  text: string;
-}
-
 export function DataSources() {
   const [currentStep, setCurrentStep] = useState(1);
-  const [sourceType, setSourceType] = useState('file');
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [sourceType, setSourceType] = useState<SourceMode>('manual');
   const [selectedVariables, setSelectedVariables] = useState<string[]>(['PM25']);
   const [remmaqDateFrom, setRemmaqDateFrom] = useState('');
   const [remmaqDateTo, setRemmaqDateTo] = useState('');
   const [remmaqForceReprocess, setRemmaqForceReprocess] = useState(false);
   const [actionMessage, setActionMessage] = useState<StepMessage | null>(null);
-  const [processingAction, setProcessingAction] = useState<'sync' | 'upload' | null>(null);
+  const [processingAction, setProcessingAction] = useState<'sync' | null>(null);
   const [managerFilters, setManagerFilters] = useState<AnalyticsFilterOptionsResponse | null>(null);
   const [managerRows, setManagerRows] = useState<AnalyticsDataRow[]>([]);
   const [managerLoading, setManagerLoading] = useState(false);
   const [managerQuerying, setManagerQuerying] = useState(false);
   const [managerError, setManagerError] = useState<string | null>(null);
+  const [managerSelectedSourceFiles, setManagerSelectedSourceFiles] = useState<number[]>([]);
   const [managerSelectedStations, setManagerSelectedStations] = useState<string[]>([]);
   const [managerSelectedVariables, setManagerSelectedVariables] = useState<string[]>([]);
   const [managerDateFrom, setManagerDateFrom] = useState('');
   const [managerDateTo, setManagerDateTo] = useState('');
   const [managerLimit, setManagerLimit] = useState(500);
+  const [manualDataset, setManualDataset] = useState<ManualDatasetResponse | null>(null);
+  const [manualDatasets, setManualDatasets] = useState<ManualDatasetResponse[]>([]);
+  const [manualDatasetsLoading, setManualDatasetsLoading] = useState(false);
+  const [manualDatasetsError, setManualDatasetsError] = useState<string | null>(null);
+  const [selectedExistingDatasetId, setSelectedExistingDatasetId] = useState<string | null>(null);
+  const [deletingDatasetId, setDeletingDatasetId] = useState<string | null>(null);
 
-  const {
-    runs,
-    currentRun,
-    metrics,
-    previewRows,
-    loading,
-    refreshing,
-    error,
-    triggerRemmaqSync,
-    uploadManualFile,
-  } = useEtl();
+  const { runs, currentRun, metrics, previewRows, loading, refreshing, error, triggerRemmaqSync } = useEtl();
+  const { activeWorkspaceId } = useWorkspace();
 
   const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
+  const finalizedManualDatasets = useMemo(
+    () =>
+      manualDatasets.filter(
+        (dataset) => dataset.status.startsWith('finalized') && dataset.source_kind !== 'remmaq',
+      ),
+    [manualDatasets],
+  );
+  const selectedExistingDataset = useMemo(
+    () => finalizedManualDatasets.find((dataset) => dataset.id === selectedExistingDatasetId) ?? null,
+    [finalizedManualDatasets, selectedExistingDatasetId],
+  );
+  const existingQueryPreviewRows = useMemo<PreviewMeasurementRow[]>(
+    () =>
+      managerRows.map((row) => ({
+        observed_at: row.observed_at,
+        station_code: row.station_code,
+        variable_code: row.variable_code,
+        value: row.value,
+        unit: row.unit,
+        source_file_name: row.source_file_name,
+      })),
+    [managerRows],
+  );
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextFile = event.target.files?.[0] ?? null;
-    if (nextFile) {
-      const suffix = `.${nextFile.name.split('.').pop()?.toLowerCase() ?? ''}`;
-      if (!['.csv', '.xlsx', '.txt'].includes(suffix)) {
-        setUploadedFile(null);
-        setActionMessage({
-          type: 'error',
-          text: 'Formato no permitido. La carga manual solo soporta CSV, XLSX o TXT.',
-        });
+  const upsertManualDataset = useCallback((nextDataset: ManualDatasetResponse) => {
+    setManualDatasets((current) => {
+      const withoutCurrent = current.filter((dataset) => dataset.id !== nextDataset.id);
+      return [nextDataset, ...withoutCurrent].sort(
+        (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+      );
+    });
+  }, []);
+
+  const handleManualDatasetChange = useCallback(
+    (nextDataset: ManualDatasetResponse | null) => {
+      setManualDataset(nextDataset);
+      if (nextDataset) {
+        upsertManualDataset(nextDataset);
+      }
+    },
+    [upsertManualDataset],
+  );
+
+  const handleExistingDatasetChange = useCallback(
+    (nextDataset: ManualDatasetResponse | null) => {
+      if (!nextDataset) {
         return;
       }
+      upsertManualDataset(nextDataset);
+      setSelectedExistingDatasetId(nextDataset.id);
+    },
+    [upsertManualDataset],
+  );
+
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setManualDatasets([]);
+      setManualDatasetsError(null);
+      return;
     }
-    setUploadedFile(nextFile);
-    if (nextFile) {
-      setActionMessage({ type: 'info', text: `Archivo seleccionado: ${nextFile.name}` });
+
+    let cancelled = false;
+
+    const loadManualDatasets = async () => {
+      setManualDatasetsLoading(true);
+      setManualDatasetsError(null);
+      try {
+        const nextDatasets = await listManualDatasets(activeWorkspaceId);
+        if (!cancelled) {
+          setManualDatasets(nextDatasets);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setManualDatasetsError(err instanceof Error ? err.message : 'Could not load saved datasets.');
+        }
+      } finally {
+        if (!cancelled) {
+          setManualDatasetsLoading(false);
+        }
+      }
+    };
+
+    void loadManualDatasets();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
+    if (sourceType !== 'existing' || managerLoading || managerFilters) {
+      return;
     }
-  };
+
+    const loadManagerFilters = async () => {
+      setManagerLoading(true);
+      setManagerError(null);
+      try {
+        const nextFilters = await getAnalyticsFilters();
+        setManagerFilters(nextFilters);
+        setManagerDateFrom(nextFilters.min_observed_at?.slice(0, 10) ?? '');
+        setManagerDateTo(nextFilters.max_observed_at?.slice(0, 10) ?? '');
+      } catch (err) {
+        setManagerError(err instanceof Error ? err.message : 'Could not load filters.');
+      } finally {
+        setManagerLoading(false);
+      }
+    };
+
+    void loadManagerFilters();
+  }, [managerFilters, managerLoading, sourceType]);
 
   const handleSyncRemmaq = async () => {
+    if (!activeWorkspaceId) {
+      setActionMessage({ type: 'error', text: 'Select a workspace first.' });
+      return;
+    }
     if (selectedVariables.length === 0) {
-      setActionMessage({ type: 'error', text: 'Selecciona al menos una variable REMMAQ.' });
+      setActionMessage({ type: 'error', text: 'Select at least one variable.' });
       return;
     }
 
@@ -160,63 +263,123 @@ export function DataSources() {
 
     try {
       const run = await triggerRemmaqSync({
-        variableCodes: selectedVariables,
         forceReprocess: remmaqForceReprocess,
+        variableCodes: selectedVariables,
         observedFrom: remmaqDateFrom || undefined,
         observedTo: remmaqDateTo || undefined,
       });
       setActionMessage({
         type: 'success',
-        text: `Sync REMMAQ completado: ${run.records_inserted} insertados, ${run.records_updated} actualizados, ${run.records_skipped} omitidos.`,
+        text: run.status === 'completed' ? 'REMMAQ sync completed.' : `REMMAQ sync ended with status: ${run.status}.`,
       });
-      setCurrentStep(2);
+      setCurrentStep(3);
     } catch (err) {
       setActionMessage({
         type: 'error',
-        text: err instanceof Error ? err.message : 'Falló la sincronización REMMAQ.',
+        text: err instanceof Error ? err.message : 'Sync failed.',
       });
     } finally {
       setProcessingAction(null);
     }
   };
 
-  const handleManualUpload = async () => {
-    if (!uploadedFile) {
-      setActionMessage({ type: 'error', text: 'Selecciona un archivo primero.' });
+  const handleRunManagerQuery = async () => {
+    setManagerQuerying(true);
+    setManagerError(null);
+    setSelectedExistingDatasetId(null);
+    try {
+      const response = await runAnalyticsQuery({
+        source_file_ids: managerSelectedSourceFiles.length > 0 ? managerSelectedSourceFiles : undefined,
+        station_codes: managerSelectedStations.length > 0 ? managerSelectedStations : undefined,
+        variable_codes: managerSelectedVariables.length > 0 ? managerSelectedVariables : undefined,
+        date_from: managerDateFrom || undefined,
+        date_to: managerDateTo || undefined,
+        limit: Math.max(100, Math.min(5000, managerLimit)),
+      });
+      setManagerRows(response.rows);
+      if (response.rows.length === 0) {
+        setManagerError('No rows found for the current filters.');
+      }
+    } catch (err) {
+      setManagerRows([]);
+      setManagerError(err instanceof Error ? err.message : 'Query failed.');
+    } finally {
+      setManagerQuerying(false);
+    }
+  };
+
+  const handleSourceTypeChange = (nextSourceType: SourceMode) => {
+    setSourceType(nextSourceType);
+    setCurrentStep(1);
+    setActionMessage(null);
+  };
+
+  const handleStepClick = (step: number) => {
+    if ((sourceType === 'existing' || sourceType === 'sync') && step === 2) {
+      setCurrentStep(3);
+      return;
+    }
+    setCurrentStep(step);
+  };
+
+  const sourceReady =
+    sourceType === 'manual'
+      ? manualDataset !== null
+      : sourceType === 'sync'
+        ? latestRun !== null
+        : selectedExistingDataset !== null || managerRows.length > 0;
+
+  const summaryReady =
+    sourceType === 'manual'
+      ? manualDataset !== null
+      : sourceType === 'sync'
+        ? latestRun !== null
+        : selectedExistingDataset !== null || managerRows.length > 0;
+
+  const handleNext = () => {
+    if (currentStep === 1 && !sourceReady) {
+      setActionMessage({
+        type: 'info',
+        text:
+          sourceType === 'manual'
+            ? 'Load a dataset first.'
+            : sourceType === 'sync'
+              ? 'Run a REMMAQ sync first.'
+              : 'Open a saved dataset or run a query first.',
+      });
       return;
     }
 
-    setProcessingAction('upload');
-    setActionMessage(null);
-
-    try {
-      const run = await uploadManualFile(uploadedFile);
-      setActionMessage({
-        type: 'success',
-        text: `Carga manual completada: ${run.records_inserted} insertados, ${run.records_updated} actualizados.`,
-      });
-      setCurrentStep(2);
-    } catch (err) {
-      setActionMessage({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Falló la carga manual.',
-      });
-    } finally {
-      setProcessingAction(null);
+    if (currentStep === 1 && (sourceType === 'existing' || sourceType === 'sync')) {
+      setCurrentStep(3);
+      return;
     }
-  };
 
-  const handleNext = () => {
+    if (currentStep === 2 && !summaryReady) {
+      setActionMessage({ type: 'info', text: 'There is no data to summarize yet.' });
+      return;
+    }
+
     if (currentStep < 3) {
       setCurrentStep((previous) => previous + 1);
     }
   };
 
   const handlePrevious = () => {
+    if ((sourceType === 'existing' || sourceType === 'sync') && currentStep === 3) {
+      setCurrentStep(1);
+      return;
+    }
     if (currentStep > 1) {
       setCurrentStep((previous) => previous - 1);
     }
   };
+
+  useEffect(() => {
+    if ((sourceType === 'existing' || sourceType === 'sync') && currentStep === 2) {
+      setCurrentStep(3);
+    }
+  }, [currentStep, sourceType]);
 
   const toggleVariable = (code: string) => {
     setSelectedVariables((current) => {
@@ -224,14 +387,19 @@ export function DataSources() {
         return current.filter((item) => item !== code);
       }
       if (current.length >= MAX_REMMAQ_VARIABLES) {
-        setActionMessage({
-          type: 'info',
-          text: `Máximo ${MAX_REMMAQ_VARIABLES} variables por corrida.`,
-        });
+        setActionMessage({ type: 'info', text: `Maximum ${MAX_REMMAQ_VARIABLES} variables per run.` });
         return current;
       }
       return [...current, code];
     });
+  };
+
+  const toggleManagerSourceFile = (sourceFileId: number) => {
+    setManagerSelectedSourceFiles((current) =>
+      current.includes(sourceFileId)
+        ? current.filter((item) => item !== sourceFileId)
+        : [...current, sourceFileId],
+    );
   };
 
   const toggleManagerStation = (stationCode: string) => {
@@ -246,72 +414,59 @@ export function DataSources() {
     );
   };
 
-  useEffect(() => {
-    if (sourceType !== 'database' || managerLoading || managerFilters) {
+  const handleDeleteExistingDataset = async (datasetId: string) => {
+    const dataset = manualDatasets.find((item) => item.id === datasetId);
+    if (!dataset) {
+      return;
+    }
+    const confirmed = window.confirm(`Delete "${dataset.name}"?`);
+    if (!confirmed) {
       return;
     }
 
-    const loadManagerFilters = async () => {
-      setManagerLoading(true);
-      setManagerError(null);
-      try {
-        const nextFilters = await getAnalyticsFilters();
-        setManagerFilters(nextFilters);
-        setManagerDateFrom(nextFilters.min_observed_at?.slice(0, 10) ?? '');
-        setManagerDateTo(nextFilters.max_observed_at?.slice(0, 10) ?? '');
-      } catch (err) {
-        setManagerError(err instanceof Error ? err.message : 'No se pudieron cargar los filtros del Data Manager.');
-      } finally {
-        setManagerLoading(false);
-      }
-    };
-
-    void loadManagerFilters();
-  }, [managerFilters, managerLoading, sourceType]);
-
-  const handleRunManagerQuery = async () => {
-    setManagerQuerying(true);
-    setManagerError(null);
+    setDeletingDatasetId(datasetId);
+    setActionMessage(null);
     try {
-      const response = await runAnalyticsQuery({
-        station_codes: managerSelectedStations.length > 0 ? managerSelectedStations : undefined,
-        variable_codes: managerSelectedVariables.length > 0 ? managerSelectedVariables : undefined,
-        date_from: managerDateFrom || undefined,
-        date_to: managerDateTo || undefined,
-        limit: Math.max(100, Math.min(5000, managerLimit)),
-      });
-      setManagerRows(response.rows);
-      if (response.rows.length === 0) {
-        setManagerError('No se encontraron datos con esos filtros.');
+      await deleteManualDataset(datasetId);
+      setManualDatasets((current) => current.filter((item) => item.id !== datasetId));
+      if (manualDataset?.id === datasetId) {
+        setManualDataset(null);
       }
+      if (selectedExistingDatasetId === datasetId) {
+        setSelectedExistingDatasetId(null);
+        setManagerRows([]);
+      }
+      setManagerFilters(null);
+      setActionMessage({ type: 'success', text: 'Dataset deleted.' });
     } catch (err) {
-      setManagerRows([]);
-      setManagerError(err instanceof Error ? err.message : 'La consulta del Data Manager falló.');
+      setActionMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Could not delete the dataset.',
+      });
     } finally {
-      setManagerQuerying(false);
+      setDeletingDatasetId(null);
     }
   };
 
   return (
     <div className="h-full overflow-y-auto bg-[#F9FBFC]">
-      <div className="px-8 py-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-foreground mb-2">Data Sources</h1>
-          <p className="text-muted-foreground">
-            ETL operativo para REMMAQ y cargas manuales con trazabilidad completa
-          </p>
+      <div className="px-6 py-5">
+        <div className="mb-5">
+          <h1 className="mb-2 text-2xl font-semibold text-foreground">Data Manager</h1>
+          <p className="text-muted-foreground">Load, map, and review datasets.</p>
         </div>
 
-        <Card className="bg-white mb-6">
+        <Card className="mb-5 bg-white">
           <CardContent className="pt-6">
-            <Stepper currentStep={currentStep} onStepClick={setCurrentStep} />
+            <Stepper currentStep={currentStep} onStepClick={handleStepClick} />
           </CardContent>
         </Card>
 
-        {(error !== null || actionMessage !== null) && (
-          <Card className="bg-white mb-6 border-l-4 border-l-[#509EE3]">
+        {(error !== null || actionMessage !== null || manualDatasetsError !== null) && (
+          <Card className="mb-6 border-l-4 border-l-[#509EE3] bg-white">
             <CardContent className="py-4">
               {error && <p className="text-sm text-red-700">{error}</p>}
+              {manualDatasetsError && <p className="text-sm text-red-700">{manualDatasetsError}</p>}
               {actionMessage && (
                 <p
                   className={`text-sm ${
@@ -329,15 +484,16 @@ export function DataSources() {
           </Card>
         )}
 
-        <div className="max-w-7xl mx-auto">
+        <div className="mx-auto max-w-7xl">
           {currentStep === 1 && (
             <SourceStep
               sourceType={sourceType}
-              setSourceType={setSourceType}
-              uploadedFile={uploadedFile}
-              handleFileUpload={handleFileUpload}
-              metrics={metrics}
+              setSourceType={handleSourceTypeChange}
+              activeWorkspaceId={activeWorkspaceId}
+              manualDataset={manualDataset}
               latestRun={latestRun}
+              onManualDatasetChange={handleManualDatasetChange}
+              metrics={metrics}
               loading={loading || refreshing}
               processingAction={processingAction}
               selectedVariables={selectedVariables}
@@ -349,12 +505,12 @@ export function DataSources() {
               onRemmaqForceReprocessChange={setRemmaqForceReprocess}
               onToggleVariable={toggleVariable}
               onSyncRemmaq={handleSyncRemmaq}
-              onUploadManual={handleManualUpload}
               managerFilters={managerFilters}
               managerRows={managerRows}
               managerLoading={managerLoading}
               managerQuerying={managerQuerying}
               managerError={managerError}
+              managerSelectedSourceFiles={managerSelectedSourceFiles}
               managerSelectedStations={managerSelectedStations}
               managerSelectedVariables={managerSelectedVariables}
               managerDateFrom={managerDateFrom}
@@ -363,29 +519,55 @@ export function DataSources() {
               onManagerDateFromChange={setManagerDateFrom}
               onManagerDateToChange={setManagerDateTo}
               onManagerLimitChange={setManagerLimit}
+              onManagerToggleSourceFile={toggleManagerSourceFile}
               onManagerToggleStation={toggleManagerStation}
               onManagerToggleVariable={toggleManagerVariable}
               onRunManagerQuery={handleRunManagerQuery}
+              manualDatasets={finalizedManualDatasets}
+              manualDatasetsLoading={manualDatasetsLoading}
+              selectedExistingDatasetId={selectedExistingDatasetId}
+              deletingDatasetId={deletingDatasetId}
+              onSelectExistingDataset={(datasetId) => {
+                setSelectedExistingDatasetId(datasetId);
+                setManagerRows([]);
+                setManagerError(null);
+              }}
+              onDeleteDataset={handleDeleteExistingDataset}
             />
           )}
 
           {currentStep === 2 && (
-            <ValidationStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />
+            <MappingContent
+              sourceType={sourceType}
+              workspaceId={activeWorkspaceId}
+              manualDataset={manualDataset}
+              onManualDatasetChange={handleManualDatasetChange}
+              existingDataset={selectedExistingDataset}
+              onExistingDatasetChange={handleExistingDatasetChange}
+              previewRows={sourceType === 'sync' ? previewRows : existingQueryPreviewRows}
+            />
           )}
 
-          {currentStep === 3 && <MappingStep previewRows={previewRows} />}
+          {currentStep === 3 && (
+            <SummaryContent
+              sourceType={sourceType}
+              manualDataset={manualDataset}
+              existingDataset={selectedExistingDataset}
+              runs={runs}
+              latestRun={latestRun}
+              loading={loading}
+              previewRows={previewRows}
+              existingRows={managerRows}
+            />
+          )}
         </div>
 
-        <div className="max-w-7xl mx-auto mt-6 flex justify-between">
+        <div className="mx-auto mt-6 flex max-w-7xl justify-between">
           <Button variant="outline" onClick={handlePrevious} disabled={currentStep === 1}>
-            Previous
+            Back
           </Button>
-          <Button
-            onClick={handleNext}
-            disabled={currentStep === 3}
-            className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
-          >
-            Next
+          <Button onClick={handleNext} disabled={currentStep === 3} className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
+            Continue
           </Button>
         </div>
       </div>
@@ -394,23 +576,15 @@ export function DataSources() {
 }
 
 interface SourceStepProps {
-  sourceType: string;
-  setSourceType: (value: string) => void;
-  uploadedFile: File | null;
-  handleFileUpload: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  sourceType: SourceMode;
+  setSourceType: (value: SourceMode) => void;
+  activeWorkspaceId: string | null;
+  manualDataset: ManualDatasetResponse | null;
+  latestRun: EtlRunResponse | null;
+  onManualDatasetChange: (dataset: ManualDatasetResponse | null) => void;
   metrics: { total_measurements: number; total_stations: number; total_variables: number; latest_run_status: string } | null;
-  latestRun: {
-    id: string;
-    trigger_type: string;
-    started_at: string;
-    records_inserted: number;
-    records_updated: number;
-    records_skipped: number;
-    status: string;
-    details?: Record<string, unknown>;
-  } | null;
   loading: boolean;
-  processingAction: 'sync' | 'upload' | null;
+  processingAction: 'sync' | null;
   selectedVariables: string[];
   remmaqDateFrom: string;
   remmaqDateTo: string;
@@ -420,12 +594,12 @@ interface SourceStepProps {
   onRemmaqForceReprocessChange: (value: boolean) => void;
   onToggleVariable: (code: string) => void;
   onSyncRemmaq: () => Promise<void>;
-  onUploadManual: () => Promise<void>;
   managerFilters: AnalyticsFilterOptionsResponse | null;
   managerRows: AnalyticsDataRow[];
   managerLoading: boolean;
   managerQuerying: boolean;
   managerError: string | null;
+  managerSelectedSourceFiles: number[];
   managerSelectedStations: string[];
   managerSelectedVariables: string[];
   managerDateFrom: string;
@@ -434,18 +608,26 @@ interface SourceStepProps {
   onManagerDateFromChange: (value: string) => void;
   onManagerDateToChange: (value: string) => void;
   onManagerLimitChange: (value: number) => void;
+  onManagerToggleSourceFile: (sourceFileId: number) => void;
   onManagerToggleStation: (stationCode: string) => void;
   onManagerToggleVariable: (variableCode: string) => void;
   onRunManagerQuery: () => Promise<void>;
+  manualDatasets: ManualDatasetResponse[];
+  manualDatasetsLoading: boolean;
+  selectedExistingDatasetId: string | null;
+  deletingDatasetId: string | null;
+  onSelectExistingDataset: (datasetId: string) => void;
+  onDeleteDataset: (datasetId: string) => Promise<void>;
 }
 
 function SourceStep({
   sourceType,
   setSourceType,
-  uploadedFile,
-  handleFileUpload,
-  metrics,
+  activeWorkspaceId,
+  manualDataset,
   latestRun,
+  onManualDatasetChange,
+  metrics,
   loading,
   processingAction,
   selectedVariables,
@@ -457,12 +639,12 @@ function SourceStep({
   onRemmaqForceReprocessChange,
   onToggleVariable,
   onSyncRemmaq,
-  onUploadManual,
   managerFilters,
   managerRows,
   managerLoading,
   managerQuerying,
   managerError,
+  managerSelectedSourceFiles,
   managerSelectedStations,
   managerSelectedVariables,
   managerDateFrom,
@@ -471,121 +653,67 @@ function SourceStep({
   onManagerDateFromChange,
   onManagerDateToChange,
   onManagerLimitChange,
+  onManagerToggleSourceFile,
   onManagerToggleStation,
   onManagerToggleVariable,
   onRunManagerQuery,
+  manualDatasets,
+  manualDatasetsLoading,
+  selectedExistingDatasetId,
+  deletingDatasetId,
+  onSelectExistingDataset,
+  onDeleteDataset,
 }: SourceStepProps) {
-  const details = latestRun?.details ?? {};
-  const stageLabel =
-    typeof details.stage_label === 'string' ? details.stage_label : latestRun?.status === 'running' ? 'Procesando' : 'Completado';
-  const currentVariable = typeof details.current_variable === 'string' ? details.current_variable : null;
-  const currentArchive = typeof details.current_archive === 'number' ? details.current_archive : null;
-  const totalArchives = typeof details.archives_total === 'number' ? details.archives_total : null;
-
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
-          <CardTitle>Select Data Source</CardTitle>
-          <CardDescription>Selecciona carga de archivos automática o manual</CardDescription>
+          <CardTitle>Source</CardTitle>
+          <CardDescription>Choose how you want to work with data.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <button
-              onClick={() => setSourceType('file')}
-              className={`p-6 border-2 rounded-lg text-left transition-all ${
-                sourceType === 'file'
-                  ? 'border-[#509EE3] bg-[#509EE3]/5'
-                  : 'border-border hover:border-[#509EE3]/50'
-              }`}
-            >
-              <Upload className="w-8 h-8 mb-3 text-[#509EE3]" />
-              <h3 className="font-semibold mb-1">File Upload</h3>
-              <p className="text-xs text-muted-foreground">XLSX, CSV o TXT</p>
-            </button>
-
-            <button
-              onClick={() => setSourceType('remmaq')}
-              className={`p-6 border-2 rounded-lg text-left transition-all ${
-                sourceType === 'remmaq'
-                  ? 'border-[#509EE3] bg-[#509EE3]/5'
-                  : 'border-border hover:border-[#509EE3]/50'
-              }`}
-            >
-              <Server className="w-8 h-8 mb-3 text-[#509EE3]" />
-              <h3 className="font-semibold mb-1">REMMAQ Auto-Sync</h3>
-              <p className="text-xs text-muted-foreground">Página oficial de la REMMAQ</p>
-            </button>
-
-            <button
-              onClick={() => setSourceType('database')}
-              className={`p-6 border-2 rounded-lg text-left transition-all ${
-                sourceType === 'database'
-                  ? 'border-[#509EE3] bg-[#509EE3]/5'
-                  : 'border-border hover:border-[#509EE3]/50'
-              }`}
-            >
-              <Database className="w-8 h-8 mb-3 text-[#509EE3]" />
-              <h3 className="font-semibold mb-1">Data Manager</h3>
-              <p className="text-xs text-muted-foreground">Consulta lectora por variable, estación y fecha</p>
-            </button>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <SourceCard
+              active={sourceType === 'manual'}
+              icon={Upload}
+              title="Manual"
+              description="Upload a file or use a raw link."
+              onClick={() => setSourceType('manual')}
+            />
+            <SourceCard
+              active={sourceType === 'sync'}
+              icon={Server}
+              title="Automatic"
+              description="Run REMMAQ sync."
+              onClick={() => setSourceType('sync')}
+            />
+            <SourceCard
+              active={sourceType === 'existing'}
+              icon={Database}
+              title="Existing data"
+              description="Open saved datasets or query stored measurements."
+              onClick={() => setSourceType('existing')}
+            />
           </div>
 
           <Separator />
 
-          {sourceType === 'file' && (
-            <div className="space-y-4">
-              <Label htmlFor="file-upload" className="text-sm font-medium block">
-                Upload File
-              </Label>
-              <div className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-[#509EE3]/50 transition-colors">
-                <input
-                  id="file-upload"
-                  type="file"
-                  accept=".csv,.xlsx,.txt"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-                <label htmlFor="file-upload" className="cursor-pointer">
-                  <Upload className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
-                  <p className="text-sm font-medium text-foreground mb-1">
-                    {uploadedFile ? uploadedFile.name : 'Selecciona archivo para ETL manual'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">CSV / XLSX / TXT</p>
-                </label>
-              </div>
-              <div className="flex justify-end">
-                <Button
-                  className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
-                  onClick={() => void onUploadManual()}
-                  disabled={!uploadedFile || processingAction === 'upload'}
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  {processingAction === 'upload' ? 'Uploading...' : 'Process Manual Upload'}
-                </Button>
-              </div>
-
-              {latestRun?.status === 'running' && latestRun.trigger_type === 'manual' && (
-                <div className="p-3 bg-white rounded-lg border border-border">
-                  <div className="flex items-start gap-3">
-                    <Loader2 className="w-4 h-4 mt-0.5 text-[#509EE3] animate-spin" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-foreground">Procesando carga manual</p>
-                      <p className="text-xs text-muted-foreground">
-                        Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+          {sourceType === 'manual' && (
+            <ManualDataIngestionWizard
+              workspaceId={activeWorkspaceId}
+              dataset={manualDataset}
+              onDatasetChange={onManualDatasetChange}
+              mode="load"
+              loadTitle="Manual input"
+              loadDescription="Upload a file or paste a raw CSV link."
+            />
           )}
 
-          {sourceType === 'remmaq' && (
-            <div className="space-y-6 border-2 border-[#509EE3]/20 rounded-lg p-6 bg-[#509EE3]/5">
+          {sourceType === 'sync' && (
+            <div className="space-y-5 rounded-lg border border-[#509EE3]/20 bg-[#509EE3]/5 p-5">
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <Label className="text-sm font-medium block">Variables REMMAQ</Label>
+                  <Label className="block text-sm font-medium">Variables</Label>
                   <Badge variant="outline">
                     {selectedVariables.length}/{MAX_REMMAQ_VARIABLES}
                   </Badge>
@@ -614,25 +742,12 @@ function SourceStep({
                     );
                   })}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  {selectedVariables.map((code) => {
-                    const option = REMMAQ_VARIABLE_OPTIONS.find((item) => item.code === code);
-                    return (
-                      <Badge key={code} className="bg-[#509EE3]/15 text-[#1F5A8A] border-[#509EE3]/20 hover:bg-[#509EE3]/15">
-                        {option?.label ?? code}
-                      </Badge>
-                    );
-                  })}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Máximo {MAX_REMMAQ_VARIABLES} variables por corrida. Al llegar al límite, no puedes seleccionar más.
-                </p>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <div className="space-y-1">
                   <Label htmlFor="remmaq-date-from" className="text-xs text-muted-foreground">
-                    Fecha desde
+                    Date from
                   </Label>
                   <Input
                     id="remmaq-date-from"
@@ -644,7 +759,7 @@ function SourceStep({
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="remmaq-date-to" className="text-xs text-muted-foreground">
-                    Fecha hasta
+                    Date to
                   </Label>
                   <Input
                     id="remmaq-date-to"
@@ -655,7 +770,7 @@ function SourceStep({
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">Reprocesamiento</Label>
+                  <Label className="text-xs text-muted-foreground">Reprocess</Label>
                   <button
                     type="button"
                     onClick={() => onRemmaqForceReprocessChange(!remmaqForceReprocess)}
@@ -665,105 +780,82 @@ function SourceStep({
                         : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
                     }`}
                   >
-                    {remmaqForceReprocess ? 'Force reprocess: on' : 'Force reprocess: off'}
+                    {remmaqForceReprocess ? 'On' : 'Off'}
                   </button>
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-[#509EE3]/20 flex items-center justify-center">
-                    <Database className="w-5 h-5 text-[#509EE3]" />
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-lg bg-white p-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <RefreshCw className="h-5 w-5 text-[#509EE3]" />
+                    REMMAQ dataset
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-foreground">REMMAQ Auto-Sync Status</h3>
-                    <p className="text-xs text-muted-foreground">https://datosambiente.quito.gob.ec/</p>
-                  </div>
-                </div>
-                <Badge className="bg-green-100 text-green-800 border-green-200 hover:bg-green-100 gap-1.5">
-                  <CheckCircle2 className="w-3 h-3" />
-                  Online
-                </Badge>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-white rounded-lg">
-                <div className="flex items-center gap-4 text-sm">
-                  <div className="flex items-center gap-2">
-                    <RefreshCw className="w-4 h-4 text-muted-foreground" />
-                    <span className="text-muted-foreground">Last Run:</span>
-                    <span className="font-medium">
-                      {latestRun ? new Date(latestRun.started_at).toLocaleString() : 'No runs yet'}
-                    </span>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Download, stage, map, then save.
+                  </p>
                 </div>
                 <Button
-                  size="sm"
-                  className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
+                  size="default"
+                  className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90"
                   onClick={() => void onSyncRemmaq()}
                   disabled={processingAction === 'sync'}
                 >
-                  <RefreshCw className="w-3 h-3 mr-1.5" />
-                  {processingAction === 'sync' ? 'Syncing...' : 'Sync Now'}
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {processingAction === 'sync' ? 'Running...' : 'Run sync'}
                 </Button>
               </div>
 
-              <div className="p-3 bg-white rounded-lg border border-border">
-                {latestRun?.status === 'running' ? (
+              <div className="rounded-lg border border-border bg-white p-3">
+                {processingAction === 'sync' ? (
                   <div className="flex items-start gap-3">
-                    <Loader2 className="w-4 h-4 mt-0.5 text-[#509EE3] animate-spin" />
+                    <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-[#509EE3]" />
                     <div className="space-y-1">
-                      <p className="text-sm font-medium text-foreground">REMMAQ sync en progreso</p>
+                      <p className="text-sm font-medium text-foreground">Running sync</p>
                       <p className="text-xs text-muted-foreground">
-                        Etapa: <span className="font-medium text-foreground">{stageLabel}</span>
-                        {currentVariable ? ` · Variable: ${currentVariable}` : ''}
-                        {currentArchive && totalArchives ? ` · Archivo ${currentArchive}/${totalArchives}` : ''}
+                        Loading REMMAQ data into the default ETL flow.
+                      </p>
+                    </div>
+                  </div>
+                ) : latestRun ? (
+                  <div className="flex items-start gap-3">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">
+                        {selectedVariables.join(', ')} · {latestRun.status}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Inserted {latestRun.records_inserted.toLocaleString()} · Updated {latestRun.records_updated.toLocaleString()}
                       </p>
                     </div>
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-foreground">Estado ETL</p>
-                    <p className="text-xs text-muted-foreground">
-                      Última etapa conocida: <span className="font-medium text-foreground">{stageLabel}</span>
-                    </p>
+                    <p className="text-sm font-medium text-foreground">Ready</p>
+                    <p className="text-xs text-muted-foreground">Choose variables and run a sync.</p>
                   </div>
                 )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <MetricCard
-                  label="Measurements"
-                  value={metrics ? metrics.total_measurements.toLocaleString() : '--'}
-                  hint="Total"
-                />
-                <MetricCard
-                  label="Stations"
-                  value={metrics ? String(metrics.total_stations) : '--'}
-                  hint="Catalog"
-                />
-                <MetricCard
-                  label="Variables"
-                  value={metrics ? String(metrics.total_variables) : '--'}
-                  hint="Detected"
-                />
-                <MetricCard
-                  label="Last Status"
-                  value={metrics ? metrics.latest_run_status : '--'}
-                  hint="Run"
-                />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                <MetricCard label="Measurements" value={metrics ? metrics.total_measurements.toLocaleString() : '--'} hint="Stored" />
+                <MetricCard label="Stations" value={metrics ? String(metrics.total_stations) : '--'} hint="Catalog" />
+                <MetricCard label="Variables" value={metrics ? String(metrics.total_variables) : '--'} hint="Available" />
+                <MetricCard label="Last status" value={metrics ? metrics.latest_run_status : '--'} hint="Run" />
               </div>
 
-              {loading && <p className="text-xs text-muted-foreground">Cargando estado ETL...</p>}
+              {loading && <p className="text-xs text-muted-foreground">Loading status...</p>}
             </div>
           )}
 
-          {sourceType === 'database' && (
-            <DataManagerPanel
+          {sourceType === 'existing' && (
+            <ExistingDataPanel
               filters={managerFilters}
               rows={managerRows}
               loading={managerLoading}
               querying={managerQuerying}
               error={managerError}
+              selectedSourceFiles={managerSelectedSourceFiles}
               selectedStations={managerSelectedStations}
               selectedVariables={managerSelectedVariables}
               dateFrom={managerDateFrom}
@@ -772,9 +864,16 @@ function SourceStep({
               onDateFromChange={onManagerDateFromChange}
               onDateToChange={onManagerDateToChange}
               onLimitChange={onManagerLimitChange}
+              onToggleSourceFile={onManagerToggleSourceFile}
               onToggleStation={onManagerToggleStation}
               onToggleVariable={onManagerToggleVariable}
               onRunQuery={onRunManagerQuery}
+              manualDatasets={manualDatasets}
+              manualDatasetsLoading={manualDatasetsLoading}
+              selectedExistingDatasetId={selectedExistingDatasetId}
+              deletingDatasetId={deletingDatasetId}
+              onSelectExistingDataset={onSelectExistingDataset}
+              onDeleteDataset={onDeleteDataset}
             />
           )}
         </CardContent>
@@ -783,12 +882,140 @@ function SourceStep({
   );
 }
 
-interface DataManagerPanelProps {
+function MappingContent({
+  sourceType,
+  workspaceId,
+  manualDataset,
+  onManualDatasetChange,
+  existingDataset,
+  onExistingDatasetChange,
+  previewRows,
+}: {
+  sourceType: SourceMode;
+  workspaceId: string | null;
+  manualDataset: ManualDatasetResponse | null;
+  onManualDatasetChange: (dataset: ManualDatasetResponse | null) => void;
+  existingDataset: ManualDatasetResponse | null;
+  onExistingDatasetChange: (dataset: ManualDatasetResponse | null) => void;
+  previewRows: PreviewMeasurementRow[];
+}) {
+  if (sourceType === 'manual') {
+    return manualDataset ? (
+      <ManualDataIngestionWizard
+        workspaceId={workspaceId}
+        dataset={manualDataset}
+        onDatasetChange={onManualDatasetChange}
+        mode="mapping"
+      />
+    ) : (
+      <EmptyState title="No dataset loaded" description="Go back to Source and load a file first." />
+    );
+  }
+
+  if (sourceType === 'sync') {
+    return <EmptyState title="Mapping not required" description="REMMAQ syncs keep the default ETL flow." />;
+  }
+
+  if (sourceType === 'existing' && existingDataset) {
+    return (
+      <ManualDataIngestionWizard
+        workspaceId={workspaceId}
+        dataset={existingDataset}
+        onDatasetChange={onExistingDatasetChange}
+        mode="mapping"
+      />
+    );
+  }
+
+  return (
+    <DatasetMappingStep
+      previewRows={previewRows}
+      title="Mapping"
+      description="Review the current fields and preview the result."
+      emptyMessage="Run a query or open a saved dataset first."
+    />
+  );
+}
+
+function SummaryContent({
+  sourceType,
+  manualDataset,
+  existingDataset,
+  runs,
+  latestRun,
+  loading,
+  previewRows,
+  existingRows,
+}: {
+  sourceType: SourceMode;
+  manualDataset: ManualDatasetResponse | null;
+  existingDataset: ManualDatasetResponse | null;
+  runs: EtlRunResponse[];
+  latestRun: EtlRunResponse | null;
+  loading: boolean;
+  previewRows: EtlPreviewRowResponse[];
+  existingRows: AnalyticsDataRow[];
+}) {
+  if (sourceType === 'manual') {
+    return manualDataset ? (
+      <ManualDatasetSummaryStep dataset={manualDataset} />
+    ) : (
+      <EmptyState title="No summary" description="Load and map a dataset first." />
+    );
+  }
+
+  if (sourceType === 'sync') {
+    return <RunSummaryStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />;
+  }
+
+  if (sourceType === 'existing' && existingDataset) {
+    return <ManualDatasetSummaryStep dataset={existingDataset} />;
+  }
+
+  if (sourceType === 'existing') {
+    return <ExistingQuerySummary rows={existingRows} />;
+  }
+
+  return <RunSummaryStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />;
+}
+
+function SourceCard({
+  active,
+  icon: Icon,
+  title,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof Upload;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-xl border p-4 text-left transition-all ${
+        active ? 'border-[#509EE3] bg-[#509EE3]/5' : 'border-border hover:border-[#509EE3]/50'
+      }`}
+    >
+      <div className="mb-3 inline-flex rounded-xl bg-[#509EE3]/10 p-2">
+        <Icon className="h-6 w-6 text-[#509EE3]" />
+      </div>
+      <h3 className="mb-1 text-sm font-semibold">{title}</h3>
+      <p className="text-xs text-muted-foreground">{description}</p>
+    </button>
+  );
+}
+
+interface ExistingDataPanelProps {
   filters: AnalyticsFilterOptionsResponse | null;
   rows: AnalyticsDataRow[];
   loading: boolean;
   querying: boolean;
   error: string | null;
+  selectedSourceFiles: number[];
   selectedStations: string[];
   selectedVariables: string[];
   dateFrom: string;
@@ -797,17 +1024,25 @@ interface DataManagerPanelProps {
   onDateFromChange: (value: string) => void;
   onDateToChange: (value: string) => void;
   onLimitChange: (value: number) => void;
+  onToggleSourceFile: (sourceFileId: number) => void;
   onToggleStation: (stationCode: string) => void;
   onToggleVariable: (variableCode: string) => void;
   onRunQuery: () => Promise<void>;
+  manualDatasets: ManualDatasetResponse[];
+  manualDatasetsLoading: boolean;
+  selectedExistingDatasetId: string | null;
+  deletingDatasetId: string | null;
+  onSelectExistingDataset: (datasetId: string) => void;
+  onDeleteDataset: (datasetId: string) => Promise<void>;
 }
 
-function DataManagerPanel({
+function ExistingDataPanel({
   filters,
   rows,
   loading,
   querying,
   error,
+  selectedSourceFiles,
   selectedStations,
   selectedVariables,
   dateFrom,
@@ -816,160 +1051,293 @@ function DataManagerPanel({
   onDateFromChange,
   onDateToChange,
   onLimitChange,
+  onToggleSourceFile,
   onToggleStation,
   onToggleVariable,
   onRunQuery,
-}: DataManagerPanelProps) {
+  manualDatasets,
+  manualDatasetsLoading,
+  selectedExistingDatasetId,
+  deletingDatasetId,
+  onSelectExistingDataset,
+  onDeleteDataset,
+}: ExistingDataPanelProps) {
+  const sourceCount = filters?.sources.length ?? 0;
+  const selectedSavedDataset =
+    manualDatasets.find((dataset) => dataset.id === selectedExistingDatasetId) ?? null;
+
   if (loading) {
     return (
       <div className="rounded-lg border bg-[#f8fbff] px-4 py-6">
         <div className="flex items-center gap-3 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin text-[#509EE3]" />
-          Cargando filtros del Data Manager...
+          <Loader2 className="h-4 w-4 animate-spin text-[#509EE3]" />
+          Loading sources...
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Consulta lectora de `measurements` usando solo variable, estación y rango de fechas.
-      </p>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <Label htmlFor="manager-date-from" className="text-xs text-muted-foreground">
-            Fecha desde
-          </Label>
-          <Input
-            id="manager-date-from"
-            type="date"
-            value={dateFrom}
-            onChange={(event) => onDateFromChange(event.target.value)}
-            className="h-9"
-          />
+    <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="min-w-0 space-y-6">
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label className="text-sm font-medium">Files</Label>
+            <Badge className="border border-[#509EE3]/25 bg-[#e9f3fd] text-[#1F5A8A] hover:bg-[#e9f3fd]">
+              {sourceCount} available
+            </Badge>
+          </div>
+          <div className="flex max-h-[180px] flex-wrap gap-2 overflow-auto rounded-md border bg-[#f8fbff] p-3">
+            {(filters?.sources ?? []).map((source) => {
+              const active = selectedSourceFiles.includes(source.id);
+              return (
+                <button
+                  key={source.id}
+                  type="button"
+                  onClick={() => onToggleSourceFile(source.id)}
+                  className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                    active
+                      ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                      : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                  }`}
+                  title={source.name}
+                >
+                  <div className="font-medium">{source.name}</div>
+                  <div className="mt-1 opacity-80">{source.row_count.toLocaleString()} rows</div>
+                </button>
+              );
+            })}
+            {sourceCount === 0 && <span className="text-sm text-muted-foreground">No files available.</span>}
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="manager-date-to" className="text-xs text-muted-foreground">
-            Fecha hasta
-          </Label>
-          <Input
-            id="manager-date-to"
-            type="date"
-            value={dateTo}
-            onChange={(event) => onDateToChange(event.target.value)}
-            className="h-9"
-          />
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="space-y-1">
+            <Label htmlFor="manager-date-from" className="text-xs text-muted-foreground">
+              Date from
+            </Label>
+            <Input
+              id="manager-date-from"
+              type="date"
+              value={dateFrom}
+              onChange={(event) => onDateFromChange(event.target.value)}
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="manager-date-to" className="text-xs text-muted-foreground">
+              Date to
+            </Label>
+            <Input
+              id="manager-date-to"
+              type="date"
+              value={dateTo}
+              onChange={(event) => onDateToChange(event.target.value)}
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="manager-limit" className="text-xs text-muted-foreground">
+              Row limit
+            </Label>
+            <Input
+              id="manager-limit"
+              type="number"
+              min={100}
+              max={5000}
+              step={100}
+              value={limit}
+              onChange={(event) => onLimitChange(Math.max(100, Math.min(5000, Number(event.target.value || 100))))}
+              className="h-9"
+            />
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="manager-limit" className="text-xs text-muted-foreground">
-            Límite de filas
-          </Label>
-          <Input
-            id="manager-limit"
-            type="number"
-            min={100}
-            max={5000}
-            step={100}
-            value={limit}
-            onChange={(event) => onLimitChange(Math.max(100, Math.min(5000, Number(event.target.value || 100))))}
-            className="h-9"
-          />
+
+        <div className="space-y-2">
+          <Label>Variables</Label>
+          <div className="flex max-h-[112px] flex-wrap gap-1.5 overflow-auto rounded-md border bg-[#f8fbff] p-2">
+            {(filters?.variables ?? []).map((variable) => {
+              const active = selectedVariables.includes(variable.code);
+              return (
+                <button
+                  key={variable.code}
+                  type="button"
+                  onClick={() => onToggleVariable(variable.code)}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                    active
+                      ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                      : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                  }`}
+                  title={variable.name}
+                >
+                  {variable.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      <div className="space-y-2">
-        <Label>Variables</Label>
-        <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[112px] overflow-auto">
-          {(filters?.variables ?? []).map((variable) => {
-            const active = selectedVariables.includes(variable.code);
-            return (
-              <button
-                key={variable.code}
-                type="button"
-                onClick={() => onToggleVariable(variable.code)}
-                className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
-                  active
-                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                }`}
-                title={variable.name}
-              >
-                {variable.name}
-              </button>
-            );
-          })}
+        <div className="space-y-2">
+          <Label>Stations</Label>
+          <div className="flex max-h-[112px] flex-wrap gap-1.5 overflow-auto rounded-md border bg-[#f8fbff] p-2">
+            {(filters?.stations ?? []).map((station) => {
+              const active = selectedStations.includes(station.code);
+              return (
+                <button
+                  key={station.code}
+                  type="button"
+                  onClick={() => onToggleStation(station.code)}
+                  className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                    active
+                      ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                      : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                  }`}
+                  title={station.name}
+                >
+                  {station.code}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
 
-      <div className="space-y-2">
-        <Label>Estaciones</Label>
-        <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[112px] overflow-auto">
-          {(filters?.stations ?? []).map((station) => {
-            const active = selectedStations.includes(station.code);
-            return (
-              <button
-                key={station.code}
-                type="button"
-                onClick={() => onToggleStation(station.code)}
-                className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
-                  active
-                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                }`}
-                title={station.name}
-              >
-                {station.code}
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Badge className="border border-[#509EE3]/25 bg-[#e9f3fd] text-[#1F5A8A] hover:bg-[#e9f3fd]">
+            {rows.length.toLocaleString()} rows in view
+          </Badge>
+          <Button className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90" onClick={() => void onRunQuery()} disabled={querying}>
+            {querying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+            Run query
+          </Button>
         </div>
-      </div>
 
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/25 hover:bg-[#e9f3fd]">
-          {rows.length.toLocaleString()} filas en la vista actual
-        </Badge>
-        <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={() => void onRunQuery()} disabled={querying}>
-          {querying ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
-          Consultar
-        </Button>
-      </div>
+        {error && <p className="text-sm text-[#1F5A8A]">{error}</p>}
 
-      {error && <p className="text-sm text-[#1F5A8A]">{error}</p>}
-
-      <div className="max-h-[360px] overflow-auto border rounded-md">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-[#f8fbff] border-b">
-            <tr>
-              <th className="px-3 py-2 text-left">Fecha</th>
-              <th className="px-3 py-2 text-left">Estación</th>
-              <th className="px-3 py-2 text-left">Variable</th>
-              <th className="px-3 py-2 text-left">Valor</th>
-              <th className="px-3 py-2 text-left">Unidad</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
+        <div className="max-h-[360px] overflow-auto rounded-md border">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 border-b bg-[#f8fbff]">
               <tr>
-                <td colSpan={5} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  Ejecuta una consulta para revisar datos.
-                </td>
+                <th className="px-3 py-2 text-left">Date</th>
+                <th className="px-3 py-2 text-left">Station</th>
+                <th className="px-3 py-2 text-left">Variable</th>
+                <th className="px-3 py-2 text-left">Value</th>
+                <th className="px-3 py-2 text-left">Unit</th>
+                <th className="px-3 py-2 text-left">File</th>
               </tr>
-            ) : (
-              rows.map((row, index) => (
-                <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b last:border-0">
-                  <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
-                  <td className="px-3 py-2">{row.station_code}</td>
-                  <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
-                  <td className="px-3 py-2">{row.value}</td>
-                  <td className="px-3 py-2">{row.unit ?? '-'}</td>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                    Run a query or open a saved dataset.
+                  </td>
                 </tr>
-              ))
+              ) : (
+                rows.map((row, index) => (
+                  <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b last:border-0">
+                    <td className="whitespace-nowrap px-3 py-2">{new Date(row.observed_at).toLocaleString()}</td>
+                    <td className="px-3 py-2">{row.station_code}</td>
+                    <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
+                    <td className="px-3 py-2">{row.value}</td>
+                    <td className="px-3 py-2">{row.unit ?? '-'}</td>
+                    <td className="px-3 py-2 text-xs">{row.source_file_name}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="min-w-0 space-y-4">
+        <Card className="bg-white">
+          <CardHeader>
+            <CardTitle className="text-base">Saved datasets</CardTitle>
+            <CardDescription>Datasets stored from manual ingestion.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {manualDatasetsLoading && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-[#509EE3]" />
+                Loading datasets...
+              </div>
             )}
-          </tbody>
-        </table>
+
+            {!manualDatasetsLoading && manualDatasets.length === 0 && (
+              <p className="text-sm text-muted-foreground">No saved datasets yet.</p>
+            )}
+
+            {manualDatasets.map((dataset) => (
+              <div
+                key={dataset.id}
+                className={`w-full rounded-lg border p-4 transition-colors ${
+                  selectedExistingDatasetId === dataset.id
+                    ? 'border-[#509EE3] bg-[#509EE3]/5'
+                    : 'border-border hover:border-[#509EE3]/50'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => onSelectExistingDataset(dataset.id)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="space-y-1">
+                      <p className="font-medium text-foreground">{dataset.name}</p>
+                      <p className="text-xs text-muted-foreground">{dataset.original_file_name}</p>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={dataset.status} />
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteDataset(dataset.id)}
+                      disabled={deletingDatasetId === dataset.id}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label={`Delete ${dataset.name}`}
+                      title="Delete dataset"
+                    >
+                      {deletingDatasetId === dataset.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <button type="button" onClick={() => onSelectExistingDataset(dataset.id)} className="mt-3 w-full text-left">
+                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span>{dataset.row_count.toLocaleString()} rows</span>
+                    <span>{dataset.column_count} columns</span>
+                    <span>{dataset.dataset_kind ?? 'dataset'}</span>
+                  </div>
+                </button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        {selectedSavedDataset && (
+          <Card className="min-w-0 bg-white">
+            <CardHeader>
+              <CardTitle className="text-base">Preview</CardTitle>
+              <CardDescription>{selectedSavedDataset.original_file_name}</CardDescription>
+            </CardHeader>
+            <CardContent className="min-w-0 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <MetricCard label="Rows" value={selectedSavedDataset.row_count.toLocaleString()} hint="Stored" />
+                <MetricCard label="Columns" value={String(selectedSavedDataset.column_count)} hint="Visible" />
+              </div>
+              <div className="min-w-0">
+                <GenericPreviewTable
+                  columns={selectedSavedDataset.columns.map((column) => column.name)}
+                  rows={selectedSavedDataset.preview_rows}
+                  emptyMessage="No preview available."
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
@@ -977,83 +1345,61 @@ function DataManagerPanel({
 
 function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
-    <div className="p-3 bg-white rounded-lg">
-      <p className="text-xs text-muted-foreground mb-1">{label}</p>
+    <div className="rounded-lg bg-white p-3">
+      <p className="mb-1 text-xs text-muted-foreground">{label}</p>
       <p className="text-xl font-bold text-foreground">{value}</p>
-      <div className="flex items-center gap-1 mt-1">
-        <TrendingUp className="w-3 h-3 text-green-600" />
-        <p className="text-xs text-green-600">{hint}</p>
-      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">{hint}</p>
     </div>
   );
 }
 
-function ValidationStep({
+function RunSummaryStep({
   runs,
   latestRun,
   loading,
   previewRows,
 }: {
-  runs: {
-    id: string;
-    status: string;
-    started_at: string;
-    records_inserted: number;
-    records_updated: number;
-    records_skipped: number;
-  }[];
-  latestRun: {
-    status: string;
-    records_inserted: number;
-    records_updated: number;
-    records_skipped: number;
-  } | null;
+  runs: EtlRunResponse[];
+  latestRun: EtlRunResponse | null;
   loading: boolean;
-  previewRows: {
-    observed_at: string;
-    station_code: string;
-    variable_code: string;
-    value: number;
-    unit: string | null;
-    source_file_name: string;
-  }[];
+  previewRows: EtlPreviewRowResponse[];
 }) {
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
-          <CardTitle>Data Validation</CardTitle>
-          <CardDescription>Validación de corridas ETL y control de integridad</CardDescription>
+          <CardTitle>Summary</CardTitle>
+          <CardDescription>Review recent runs and preview rows.</CardDescription>
         </CardHeader>
         <CardContent>
-          {loading && <p className="text-sm text-muted-foreground">Cargando historial ETL...</p>}
+          {loading && <p className="text-sm text-muted-foreground">Loading runs...</p>}
 
           {!loading && latestRun && (
-            <div className="mb-4 p-4 bg-[#F9FBFC] border border-border rounded-lg">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="mb-4 rounded-lg border border-border bg-[#F9FBFC] p-4">
+              <div className="mb-2 flex items-center gap-2">
                 {latestRun.status === 'completed' ? (
-                  <Badge className="bg-green-100 text-green-800 border-green-200 hover:bg-green-100 gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Last run completed
+                  <Badge variant="outline" className="gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Latest run completed
                   </Badge>
                 ) : (
                   <Badge variant="destructive" className="gap-1">
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    Last run failed
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    Latest run failed
                   </Badge>
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
-                Insertados: {latestRun.records_inserted} | Actualizados: {latestRun.records_updated} | Omitidos:{' '}
+                Inserted: {latestRun.records_inserted} | Updated: {latestRun.records_updated} | Skipped:{' '}
                 {latestRun.records_skipped}
               </p>
             </div>
           )}
 
-          <div className="border border-border rounded-lg overflow-hidden">
+          <div className="overflow-hidden rounded-lg border border-border">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-[#F9FBFC] border-b border-border">
+                <thead className="border-b border-border bg-[#F9FBFC]">
                   <tr>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Run ID</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Started</th>
@@ -1081,52 +1427,11 @@ function ValidationStep({
             </div>
           </div>
 
-          {runs.length === 0 && !loading && (
-            <p className="mt-4 text-sm text-muted-foreground">No hay corridas ETL aún.</p>
-          )}
+          {runs.length === 0 && !loading && <p className="mt-4 text-sm text-muted-foreground">No runs yet.</p>}
 
           <div className="mt-6">
-            <h4 className="font-medium mb-2">Previsualización de datos cargados</h4>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-[#F9FBFC] border-b border-border sticky top-0">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Fecha/Hora</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Estación</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Variable</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Valor</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Unidad</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Archivo fuente</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewRows.map((row, index) => (
-                      <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b border-border">
-                        <td className="px-3 py-2 whitespace-nowrap">{new Date(row.observed_at).toLocaleString()}</td>
-                        <td className="px-3 py-2">{row.station_code}</td>
-                        <td className="px-3 py-2">{row.variable_code}</td>
-                        <td className="px-3 py-2">{row.value}</td>
-                        <td className="px-3 py-2">{row.unit ?? '-'}</td>
-                        <td className="px-3 py-2 text-xs">{row.source_file_name}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            {previewRows.length === 0 && !loading && (
-              <p className="text-sm text-muted-foreground mt-2">
-                Sin filas para previsualizar. Si la corrida fue exitosa pero quedó en cero, revisa mapeo de fecha y estaciones.
-              </p>
-            )}
-          </div>
-
-          <div className="mt-6 flex justify-end">
-            <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
-              <Settings className="w-4 h-4 mr-2" />
-              Validation Rules Applied
-            </Button>
+            <h4 className="mb-2 font-medium">Preview</h4>
+            <MeasurementRowsTable rows={previewRows} emptyMessage="No rows available for preview." />
           </div>
         </CardContent>
       </Card>
@@ -1134,17 +1439,126 @@ function ValidationStep({
   );
 }
 
-function MappingStep({
+function ExistingQuerySummary({ rows }: { rows: AnalyticsDataRow[] }) {
+  return (
+    <div className="space-y-6">
+      <Card className="bg-white">
+        <CardHeader>
+          <CardTitle>Summary</CardTitle>
+          <CardDescription>Review the current query result.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <MetricCard label="Rows" value={rows.length.toLocaleString()} hint="Current view" />
+            <MetricCard label="Stations" value={String(new Set(rows.map((row) => row.station_code)).size)} hint="Visible" />
+            <MetricCard label="Files" value={String(new Set(rows.map((row) => row.source_file_id)).size)} hint="Selected" />
+          </div>
+          <MeasurementRowsTable
+            rows={rows.map((row) => ({
+              observed_at: row.observed_at,
+              station_code: row.station_code,
+              variable_code: row.variable_code,
+              value: row.value,
+              unit: row.unit,
+              source_file_name: row.source_file_name,
+            }))}
+            emptyMessage="Run a query first."
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function ManualDatasetSummaryStep({ dataset }: { dataset: ManualDatasetResponse }) {
+  const mappingItems = [
+    ['Datetime', dataset.mapping.datetime_column],
+    ['Date', dataset.mapping.date_column],
+    ['Time', dataset.mapping.time_column],
+    ['Station', dataset.mapping.station_code_column],
+    ['Variable', dataset.mapping.variable_code_column],
+    ['Value', dataset.mapping.value_column],
+    ['Unit', dataset.mapping.unit_column],
+  ].filter(([, value]) => Boolean(value));
+
+  return (
+    <div className="space-y-6">
+      <Card className="bg-white">
+        <CardHeader>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Summary</CardTitle>
+              <CardDescription>{dataset.original_file_name}</CardDescription>
+            </div>
+            <StatusBadge status={dataset.status} />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <MetricCard label="Rows" value={dataset.row_count.toLocaleString()} hint="Processed" />
+            <MetricCard label="Columns" value={String(dataset.column_count)} hint="Visible" />
+            <MetricCard label="Kind" value={dataset.dataset_kind ?? 'draft'} hint="Dataset" />
+            <MetricCard label="Pipeline" value={String(dataset.operation_pipeline.length)} hint="Steps" />
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Source</Label>
+              <div className="rounded-lg border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                {dataset.source_url ?? dataset.original_file_name}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {dataset.operation_pipeline.length === 0 ? (
+                  <Badge variant="outline">Base</Badge>
+                ) : (
+                  dataset.operation_pipeline.map((operation, index) => (
+                    <Badge key={`${dataset.id}-op-${index}`} variant="outline">
+                      {operation.type}
+                    </Badge>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Mapping</Label>
+              <div className="rounded-lg border p-4">
+                {mappingItems.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No role mapping defined.</p>
+                ) : (
+                  <div className="grid gap-2">
+                    {mappingItems.map(([label, value]) => (
+                      <div key={label} className="flex items-center justify-between gap-4 text-sm">
+                        <span className="text-muted-foreground">{label}</span>
+                        <span className="font-medium text-foreground">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">Preview</Label>
+            <GenericPreviewTable columns={dataset.columns.map((column) => column.name)} rows={dataset.preview_rows} emptyMessage="No rows available." />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function DatasetMappingStep({
   previewRows,
+  title,
+  description,
+  emptyMessage,
 }: {
-  previewRows: {
-    observed_at: string;
-    station_code: string;
-    variable_code: string;
-    value: number;
-    unit: string | null;
-    source_file_name: string;
-  }[];
+  previewRows: PreviewMeasurementRow[];
+  title: string;
+  description: string;
+  emptyMessage: string;
 }) {
   const baseRows = useMemo(
     () =>
@@ -1354,234 +1768,348 @@ function MappingStep({
     return [header, ...lines].join('\n');
   }, [previewColumns, processedRows]);
 
-  const csvHref = useMemo(
-    () => `data:text/csv;charset=utf-8,${encodeURIComponent(csvData)}`,
-    [csvData],
-  );
-
+  const csvHref = useMemo(() => `data:text/csv;charset=utf-8,${encodeURIComponent(csvData)}`, [csvData]);
   const categoricalColumns = selectedColumns.filter((column) => !numericColumns.includes(column));
 
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
-          <CardTitle>Field Mapping</CardTitle>
-          <CardDescription>
-            Ajusta columnas, tipos, muestreo, fechas e imputación sobre la muestra ETL para validar el mapeo.
-          </CardDescription>
+          <CardTitle>{title}</CardTitle>
+          <CardDescription>{description}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-3">
-            {[
-              { source: 'fecha/hora', target: 'observed_at', type: 'datetime' },
-              { source: 'estacion', target: 'station.code', type: 'string' },
-              { source: 'contaminante/variable', target: 'variable.code', type: 'string' },
-              { source: 'valor', target: 'measurement.value', type: 'float' },
-              { source: 'unidad', target: 'measurement.unit', type: 'string' },
-            ].map((mapping) => (
-              <div key={mapping.source} className="flex items-center gap-4 p-4 bg-[#F9FBFC] rounded-lg">
-                <div className="flex-1">
-                  <Label className="text-xs text-muted-foreground mb-1 block">Source Field</Label>
-                  <p className="font-medium">{mapping.source}</p>
-                </div>
-                <div className="text-muted-foreground">→</div>
-                <div className="flex-1">
-                  <Label className="text-xs text-muted-foreground mb-1 block">Target Field</Label>
-                  <p className="font-medium">{mapping.target}</p>
-                </div>
-                <div className="flex-1">
-                  <Label className="text-xs text-muted-foreground mb-1 block">Data Type</Label>
-                  <Badge variant="outline">{mapping.type}</Badge>
+          {allColumns.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+          ) : (
+            <>
+              <div className="space-y-3">
+                {[
+                  { source: 'observed_at', target: 'date/time', type: 'datetime' },
+                  { source: 'station_code', target: 'station', type: 'string' },
+                  { source: 'variable_code', target: 'variable', type: 'string' },
+                  { source: 'value', target: 'value', type: 'float' },
+                  { source: 'unit', target: 'unit', type: 'string' },
+                ].map((mapping) => (
+                  <div key={mapping.source} className="flex items-center gap-4 rounded-lg bg-[#F9FBFC] p-4">
+                    <div className="flex-1">
+                      <Label className="mb-1 block text-xs text-muted-foreground">Field</Label>
+                      <p className="font-medium">{mapping.source}</p>
+                    </div>
+                    <div className="text-muted-foreground">→</div>
+                    <div className="flex-1">
+                      <Label className="mb-1 block text-xs text-muted-foreground">Role</Label>
+                      <p className="font-medium">{mapping.target}</p>
+                    </div>
+                    <div className="flex-1">
+                      <Label className="mb-1 block text-xs text-muted-foreground">Type</Label>
+                      <Badge variant="outline">{mapping.type}</Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3">
+                <Label className="text-sm font-medium">Columns</Label>
+                <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3">
+                  {allColumns.map((column) => {
+                    const active = selectedColumns.includes(column);
+                    return (
+                      <button
+                        key={`column-${column}`}
+                        type="button"
+                        onClick={() => toggleSelectedColumn(column)}
+                        className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                          active
+                            ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                            : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                        }`}
+                      >
+                        {column}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
-          </div>
 
-          <Separator />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Numeric</Label>
+                  <div className="flex min-h-16 flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3">
+                    {selectedColumns.map((column) => {
+                      const active = numericColumns.includes(column);
+                      return (
+                        <button
+                          key={`numeric-${column}`}
+                          type="button"
+                          onClick={() => toggleNumericColumn(column)}
+                          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                            active
+                              ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                              : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                          }`}
+                        >
+                          {column}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <Label className="text-sm font-medium">Categorical</Label>
+                  <div className="flex min-h-16 flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3">
+                    {categoricalColumns.length === 0 && <span className="text-xs text-muted-foreground">No columns selected.</span>}
+                    {categoricalColumns.map((column) => (
+                      <Badge key={`categorical-${column}`} variant="outline">
+                        {column}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
 
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">Column Selection</Label>
-            <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3">
-              {allColumns.map((column) => {
-                const active = selectedColumns.includes(column);
-                return (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="space-y-1">
+                  <Label htmlFor="sample-pct" className="text-xs text-muted-foreground">
+                    Subsample (%)
+                  </Label>
+                  <Input
+                    id="sample-pct"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={samplePct}
+                    onChange={(event) => setSamplePct(Math.max(1, Math.min(100, Number(event.target.value || 100))))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="date-column" className="text-xs text-muted-foreground">
+                    Date column
+                  </Label>
+                  <select
+                    id="date-column"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={dateColumn}
+                    onChange={(event) => setDateColumn(event.target.value)}
+                  >
+                    {selectedColumns.map((column) => (
+                      <option key={`date-col-${column}`} value={column}>
+                        {column}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Date features</Label>
                   <button
-                    key={`column-${column}`}
                     type="button"
-                    onClick={() => toggleSelectedColumn(column)}
-                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                      active
+                    onClick={() => setExtractDateFeatures((current) => !current)}
+                    className={`h-10 w-full rounded-md border text-xs font-medium transition-colors ${
+                      extractDateFeatures
                         ? 'border-[#509EE3] bg-[#509EE3] text-white'
                         : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
                     }`}
                   >
-                    {column}
+                    {extractDateFeatures ? 'On' : 'Off'}
                   </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">Numeric Variables</Label>
-              <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3 min-h-16">
-                {selectedColumns.map((column) => {
-                  const active = numericColumns.includes(column);
-                  return (
-                    <button
-                      key={`numeric-${column}`}
-                      type="button"
-                      onClick={() => toggleNumericColumn(column)}
-                      className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
-                        active
-                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
-                      }`}
-                    >
-                      {column}
-                    </button>
-                  );
-                })}
+                </div>
               </div>
-            </div>
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">Categorical Variables</Label>
-              <div className="flex flex-wrap gap-2 rounded-lg border bg-[#F9FBFC] p-3 min-h-16">
-                {categoricalColumns.length === 0 && (
-                  <span className="text-xs text-muted-foreground">No categorical variables selected.</span>
-                )}
-                {categoricalColumns.map((column) => (
-                  <Badge key={`categorical-${column}`} variant="outline">
-                    {column}
-                  </Badge>
-                ))}
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setDropMissingRows((current) => !current)}
+                  className={`h-10 rounded-md border text-xs font-medium transition-colors ${
+                    dropMissingRows
+                      ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                      : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                  }`}
+                >
+                  {dropMissingRows ? 'Drop missing rows: on' : 'Drop missing rows: off'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImputeMissingValues((current) => !current)}
+                  className={`h-10 rounded-md border text-xs font-medium transition-colors ${
+                    imputeMissingValues
+                      ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                      : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
+                  }`}
+                >
+                  {imputeMissingValues ? 'Fill missing values: on' : 'Fill missing values: off'}
+                </button>
               </div>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label htmlFor="sample-pct" className="text-xs text-muted-foreground">
-                Subsample (%)
-              </Label>
-              <Input
-                id="sample-pct"
-                type="number"
-                min={1}
-                max={100}
-                value={samplePct}
-                onChange={(event) =>
-                  setSamplePct(Math.max(1, Math.min(100, Number(event.target.value || 100))))
-                }
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="date-column" className="text-xs text-muted-foreground">
-                Date column
-              </Label>
-              <Select value={dateColumn} onValueChange={setDateColumn}>
-                <SelectTrigger id="date-column">
-                  <SelectValue placeholder="Select date column..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {selectedColumns.map((column) => (
-                    <SelectItem key={`date-col-${column}`} value={column}>
-                      {column}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Date features</Label>
-              <button
-                type="button"
-                onClick={() => setExtractDateFeatures((current) => !current)}
-                className={`h-10 w-full rounded-md border text-xs font-medium transition-colors ${
-                  extractDateFeatures
-                    ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                    : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
-                }`}
-              >
-                {extractDateFeatures ? 'Enabled' : 'Disabled'}
-              </button>
-            </div>
-          </div>
+              <Separator />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <button
-              type="button"
-              onClick={() => setDropMissingRows((current) => !current)}
-              className={`h-10 rounded-md border text-xs font-medium transition-colors ${
-                dropMissingRows
-                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
-              }`}
-            >
-              {dropMissingRows ? 'Drop rows with missing values: on' : 'Drop rows with missing values: off'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setImputeMissingValues((current) => !current)}
-              className={`h-10 rounded-md border text-xs font-medium transition-colors ${
-                imputeMissingValues
-                  ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                  : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/60'
-              }`}
-            >
-              {imputeMissingValues ? 'Impute missing values: on' : 'Impute missing values: off'}
-            </button>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium">
-                Processed Preview ({processedRows.length.toLocaleString()} rows)
-              </Label>
-              <a href={csvHref} download="mapped_preview.csv">
-                <Button size="sm" className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" disabled={!csvData}>
-                  <Download className="w-4 h-4 mr-2" />
-                  Download CSV
-                </Button>
-              </a>
-            </div>
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-[#F9FBFC] border-b border-border sticky top-0">
-                    <tr>
-                      {previewColumns.map((column) => (
-                        <th key={`preview-head-${column}`} className="px-3 py-2 text-left font-medium text-muted-foreground">
-                          {column}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {processedRows.slice(0, 120).map((row, index) => (
-                      <tr key={`processed-row-${index}`} className="border-b border-border">
-                        {previewColumns.map((column) => (
-                          <td key={`processed-${index}-${column}`} className="px-3 py-2">
-                            {row[column] === null || row[column] === undefined ? '' : String(row[column])}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-sm font-medium">Preview ({processedRows.length.toLocaleString()} rows)</Label>
+                  <a href={csvHref} download="mapped_preview.csv">
+                    <Button size="sm" className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90" disabled={!csvData}>
+                      <FolderOpen className="mr-2 h-4 w-4" />
+                      Download CSV
+                    </Button>
+                  </a>
+                </div>
+                <GenericPreviewTable columns={previewColumns} rows={processedRows} emptyMessage={emptyMessage} />
               </div>
-            </div>
-            {processedRows.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No hay datos disponibles para previsualización. Ejecuta una corrida ETL primero.
-              </p>
-            )}
-          </div>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+function MeasurementRowsTable({
+  rows,
+  emptyMessage,
+}: {
+  rows: readonly PreviewMeasurementRow[];
+  emptyMessage: string;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <div className="max-h-[320px] overflow-auto">
+        <table className="min-w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-[180px]" />
+            <col className="w-[120px]" />
+            <col className="w-[140px]" />
+            <col className="w-[120px]" />
+            <col className="w-[100px]" />
+            <col className="w-[220px]" />
+          </colgroup>
+          <thead className="sticky top-0 border-b border-border bg-[#F9FBFC]">
+            <tr>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Date</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Station</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Variable</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Value</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Unit</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  {emptyMessage}
+                </td>
+              </tr>
+            ) : (
+              rows.map((row, index) => (
+                <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b border-border">
+                  <td className="truncate whitespace-nowrap px-3 py-2" title={new Date(row.observed_at).toLocaleString()}>
+                    {new Date(row.observed_at).toLocaleString()}
+                  </td>
+                  <td className="truncate px-3 py-2" title={row.station_code}>{row.station_code}</td>
+                  <td className="truncate px-3 py-2" title={row.variable_code}>{row.variable_code}</td>
+                  <td className="truncate px-3 py-2" title={String(row.value)}>{row.value}</td>
+                  <td className="truncate px-3 py-2" title={row.unit ?? '-'}>{row.unit ?? '-'}</td>
+                  <td className="truncate px-3 py-2 text-xs" title={row.source_file_name}>{row.source_file_name}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function GenericPreviewTable({
+  columns,
+  rows,
+  emptyMessage,
+}: {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  emptyMessage: string;
+}) {
+  return (
+    <div className="max-w-full overflow-hidden rounded-lg border border-border">
+      <div className="max-h-[320px] overflow-auto">
+        <table className="w-max min-w-full table-fixed text-sm">
+          <thead className="sticky top-0 border-b border-border bg-[#F9FBFC]">
+            <tr>
+              {columns.map((column) => (
+                <th key={column} className="min-w-[180px] max-w-[220px] px-3 py-2 text-left font-medium text-muted-foreground">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 || columns.length === 0 ? (
+              <tr>
+                <td colSpan={Math.max(1, columns.length)} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  {emptyMessage}
+                </td>
+              </tr>
+            ) : (
+              rows.slice(0, 120).map((row, index) => (
+                <tr key={`row-${index}`} className="border-b border-border">
+                  {columns.map((column) => (
+                    <td key={`${index}-${column}`} className="px-3 py-2" title={stringifyCell(row[column])}>
+                      <div className="max-w-[220px] truncate whitespace-nowrap">
+                        {stringifyCell(row[column])}
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const normalized = status.toLowerCase();
+  if (normalized.startsWith('finalized')) {
+    return (
+      <Badge className="gap-1 border-green-200 bg-green-100 text-green-800 hover:bg-green-100">
+        <CheckCircle2 className="h-3.5 w-3.5" />
+        Saved
+      </Badge>
+    );
+  }
+
+  if (normalized === 'draft') {
+    return <Badge variant="outline">Draft</Badge>;
+  }
+
+  return (
+    <Badge variant="destructive" className="gap-1">
+      <AlertCircle className="h-3.5 w-3.5" />
+      Error
+    </Badge>
+  );
+}
+
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <Card className="bg-white">
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+    </Card>
+  );
+}
+
+function stringifyCell(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '—';
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return String(value);
 }

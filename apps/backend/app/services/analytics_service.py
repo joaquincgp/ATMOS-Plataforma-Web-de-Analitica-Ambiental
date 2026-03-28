@@ -115,8 +115,18 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         if canonical_code:
             canonical_variables[canonical_code] = _display_variable_name(canonical_code, row.display_name)
 
-    return AnalyticsFilterOptionsResponse(
-        sources=[
+    source_options: list[AnalyticsSourceOption] = []
+    seen_source_keys: set[str] = set()
+    for row in source_rows:
+        source_key = (
+            f"{row.source_type}:{row.original_name}"
+            if row.source_type == "automatic"
+            else f"{row.source_type}:{row.id}"
+        )
+        if source_key in seen_source_keys:
+            continue
+        seen_source_keys.add(source_key)
+        source_options.append(
             AnalyticsSourceOption(
                 id=row.id,
                 name=row.original_name,
@@ -126,8 +136,10 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 row_count=int(row.measurement_count),
                 variable_codes=sorted(source_variable_codes.get(row.id, set())),
             )
-            for row in source_rows
-        ],
+        )
+
+    return AnalyticsFilterOptionsResponse(
+        sources=source_options,
         stations=[
             AnalyticsStationOption(
                 code=row.code,

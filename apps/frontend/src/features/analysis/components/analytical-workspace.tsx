@@ -3,6 +3,8 @@ import {
   AlertCircle,
   BarChart3,
   Calendar,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   Database,
   FileSpreadsheet,
@@ -33,6 +35,11 @@ import {
 } from 'recharts';
 
 import {
+  getManualDatasetAnalyticsPreview,
+  listManualDatasets,
+  type ManualDatasetResponse,
+} from '@/api/modules/etl';
+import {
   getAnalyticsFilters,
   runAnalyticsQuery,
   type AnalyticsDataRow,
@@ -48,6 +55,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { useWorkspace } from '@/contexts/workspace-context';
 
 type ChartType = 'line' | 'bar' | 'scatter' | 'heatmap';
 type TimeGranularity = 'hour' | 'day' | 'month' | 'year';
@@ -1270,8 +1278,10 @@ function correlationColor(value: number): string {
 
 export function AnalyticalWorkspace() {
   const [filters, setFilters] = useState<AnalyticsFilterOptionsResponse | null>(null);
+  const [manualDatasets, setManualDatasets] = useState<ManualDatasetResponse[]>([]);
   const [rows, setRows] = useState<AnalyticsDataRow[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<number[]>([]);
+  const [selectedManualDatasetId, setSelectedManualDatasetId] = useState<string | null>(null);
   const [selectedStations, setSelectedStations] = useState<string[]>([]);
   const [selectedVariables, setSelectedVariables] = useState<string[]>([]);
   const [chartType, setChartType] = useState<ChartType>('line');
@@ -1285,6 +1295,7 @@ export function AnalyticalWorkspace() {
   const [heatmapWindowDays, setHeatmapWindowDays] = useState(14);
   const [heatmapOffset, setHeatmapOffset] = useState(0);
   const [labSection, setLabSection] = useState<LabSection>('load-data');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [rollingWindow, setRollingWindow] = useState(14);
   const [seasonalityMode, setSeasonalityMode] = useState<'weekday' | 'month' | 'hour'>('weekday');
   const [decompositionWindow, setDecompositionWindow] = useState(21);
@@ -1298,11 +1309,13 @@ export function AnalyticalWorkspace() {
   const [pairVariableX, setPairVariableX] = useState<string>('');
   const [pairVariableY, setPairVariableY] = useState<string>('');
   const [bootstrapReady, setBootstrapReady] = useState(false);
+  const [manualDatasetsLoading, setManualDatasetsLoading] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const requestIdRef = useRef(0);
+  const { activeWorkspaceId } = useWorkspace();
 
   const filteredSources = useMemo(() => {
     if (!filters) {
@@ -1320,6 +1333,28 @@ export function AnalyticalWorkspace() {
     });
   }, [filters, sourceSearch]);
 
+  const finalizedManualDatasets = useMemo(
+    () =>
+      manualDatasets.filter(
+        (dataset) => dataset.status.startsWith('finalized') && dataset.source_kind !== 'remmaq',
+      ),
+    [manualDatasets],
+  );
+  const filteredManualDatasets = useMemo(() => {
+    const keyword = sourceSearch.trim().toLowerCase();
+    if (!keyword) {
+      return finalizedManualDatasets;
+    }
+    return finalizedManualDatasets.filter((dataset) => {
+      const haystack = `${dataset.name} ${dataset.original_file_name} ${dataset.dataset_kind ?? ''}`.toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [finalizedManualDatasets, sourceSearch]);
+  const selectedManualDataset = useMemo(
+    () => finalizedManualDatasets.find((dataset) => dataset.id === selectedManualDatasetId) ?? null,
+    [finalizedManualDatasets, selectedManualDatasetId],
+  );
+
   const selectedSources = useMemo(() => {
     if (!filters || selectedSourceIds.length === 0) {
       return [];
@@ -1328,6 +1363,13 @@ export function AnalyticalWorkspace() {
     return filters.sources.filter((source) => selectedSet.has(source.id));
   }, [filters, selectedSourceIds]);
   const availableVariables = useMemo(() => {
+    if (selectedManualDatasetId && rows.length > 0) {
+      const grouped = new Map<string, string>();
+      for (const row of rows) {
+        grouped.set(row.variable_code, row.variable_name || row.variable_code);
+      }
+      return Array.from(grouped.entries()).map(([code, name]) => ({ code, name }));
+    }
     if (!filters) {
       return [];
     }
@@ -1336,18 +1378,30 @@ export function AnalyticalWorkspace() {
     }
     const allowedCodes = new Set(selectedSources.flatMap((source) => source.variable_codes));
     return filters.variables.filter((variable) => allowedCodes.has(variable.code));
-  }, [filters, selectedSources]);
+  }, [filters, rows, selectedManualDatasetId, selectedSources]);
   const availableVariableCodes = useMemo(
     () => availableVariables.map((variable) => variable.code),
     [availableVariables],
   );
+  const availableStations = useMemo(() => {
+    if (selectedManualDatasetId && rows.length > 0) {
+      const grouped = new Map<string, string>();
+      for (const row of rows) {
+        grouped.set(row.station_code, row.station_name || row.station_code);
+      }
+      return Array.from(grouped.entries()).map(([code, name]) => ({ code, name }));
+    }
+    return filters?.stations ?? [];
+  }, [filters, rows, selectedManualDatasetId]);
   const sourceMaxRows = useMemo(
     () =>
       Math.max(
         100,
-        selectedSources.reduce((total, source) => total + source.row_count, 0) || 5000,
+        selectedManualDataset
+          ? selectedManualDataset.row_count || 5000
+          : selectedSources.reduce((total, source) => total + source.row_count, 0) || 5000,
       ),
-    [selectedSources],
+    [selectedManualDataset, selectedSources],
   );
 
   const splitLineByStation = selectedVariables.length <= 1 && selectedStations.length > 1;
@@ -1453,6 +1507,7 @@ export function AnalyticalWorkspace() {
   const runAnalysis = useCallback(
     async ({
       sourceIds,
+      manualDatasetId,
       stationCodes,
       variableCodes,
       fromDate,
@@ -1461,6 +1516,7 @@ export function AnalyticalWorkspace() {
       rangePercent,
     }: {
       sourceIds: number[];
+      manualDatasetId: string | null;
       stationCodes: string[];
       variableCodes: string[];
       fromDate: string;
@@ -1468,30 +1524,24 @@ export function AnalyticalWorkspace() {
       requestedLimit: number;
       rangePercent: [number, number];
     }) => {
-      if (sourceIds.length === 0) {
+      if (sourceIds.length === 0 && !manualDatasetId) {
         setRows([]);
-        setError('Select at least one source file to visualize data.');
+        setError('Select at least one data source to visualize.');
         return;
       }
 
       const selectedSet = new Set(sourceIds);
-      const datasetMaxRows = Math.max(
-        100,
-        filters?.sources
-          .filter((source) => selectedSet.has(source.id))
-          .reduce((total, source) => total + source.row_count, 0) ?? requestedLimit,
-      );
+      const datasetMaxRows = manualDatasetId
+        ? Math.max(100, selectedManualDataset?.row_count ?? requestedLimit)
+        : Math.max(
+            100,
+            filters?.sources
+              .filter((source) => selectedSet.has(source.id))
+              .reduce((total, source) => total + source.row_count, 0) ?? requestedLimit,
+          );
       const effectiveLimit = Math.max(100, Math.min(requestedLimit, datasetMaxRows));
       const exploredRange = applyExploreRange(fromDate, toDate, rangePercent);
       const normalizedRange = normalizeDateRange(exploredRange.from, exploredRange.to);
-      const payload: AnalyticsQueryRequest = {
-        source_file_ids: sourceIds,
-        station_codes: stationCodes.length > 0 ? stationCodes : undefined,
-        variable_codes: variableCodes.length > 0 ? variableCodes : undefined,
-        date_from: normalizedRange.from,
-        date_to: normalizedRange.to,
-        limit: effectiveLimit,
-      };
 
       const requestId = requestIdRef.current + 1;
       requestIdRef.current = requestId;
@@ -1499,7 +1549,22 @@ export function AnalyticalWorkspace() {
       setLoading(true);
       setError(null);
       try {
-        const response = await runAnalyticsQuery(payload);
+        const response = manualDatasetId
+          ? await getManualDatasetAnalyticsPreview(manualDatasetId, {
+              station_codes: stationCodes.length > 0 ? stationCodes : undefined,
+              variable_codes: variableCodes.length > 0 ? variableCodes : undefined,
+              date_from: normalizedRange.from,
+              date_to: normalizedRange.to,
+              limit: effectiveLimit,
+            })
+          : await runAnalyticsQuery({
+              source_file_ids: sourceIds,
+              station_codes: stationCodes.length > 0 ? stationCodes : undefined,
+              variable_codes: variableCodes.length > 0 ? variableCodes : undefined,
+              date_from: normalizedRange.from,
+              date_to: normalizedRange.to,
+              limit: effectiveLimit,
+            } satisfies AnalyticsQueryRequest);
         if (requestId !== requestIdRef.current) {
           return;
         }
@@ -1520,7 +1585,7 @@ export function AnalyticalWorkspace() {
         }
       }
     },
-    [filters],
+    [filters, selectedManualDataset],
   );
 
   useEffect(() => {
@@ -1560,6 +1625,38 @@ export function AnalyticalWorkspace() {
   }, []);
 
   useEffect(() => {
+    if (!activeWorkspaceId) {
+      setManualDatasets([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadManualDatasets = async () => {
+      setManualDatasetsLoading(true);
+      try {
+        const datasets = await listManualDatasets(activeWorkspaceId);
+        if (!cancelled) {
+          setManualDatasets(datasets);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Could not load saved datasets.');
+        }
+      } finally {
+        if (!cancelled) {
+          setManualDatasetsLoading(false);
+        }
+      }
+    };
+
+    void loadManualDatasets();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
+
+  useEffect(() => {
     if (!bootstrapReady) {
       return;
     }
@@ -1567,6 +1664,7 @@ export function AnalyticalWorkspace() {
     const timeout = setTimeout(() => {
       void runAnalysis({
         sourceIds: selectedSourceIds,
+        manualDatasetId: selectedManualDatasetId,
         stationCodes: selectedStations,
         variableCodes: selectedVariables,
         fromDate: dateFrom,
@@ -1580,6 +1678,7 @@ export function AnalyticalWorkspace() {
   }, [
     bootstrapReady,
     selectedSourceIds,
+    selectedManualDatasetId,
     selectedStations,
     selectedVariables,
     dateFrom,
@@ -1664,6 +1763,7 @@ export function AnalyticalWorkspace() {
   const handleRunClick = () => {
     void runAnalysis({
       sourceIds: selectedSourceIds,
+      manualDatasetId: selectedManualDatasetId,
       stationCodes: selectedStations,
       variableCodes: selectedVariables,
       fromDate: dateFrom,
@@ -1691,12 +1791,23 @@ export function AnalyticalWorkspace() {
     });
   };
   const handleToggleSource = (sourceId: number) => {
+    setSelectedManualDatasetId(null);
     setSelectedSourceIds((current) => {
       if (current.includes(sourceId)) {
         return current.filter((item) => item !== sourceId);
       }
       return [...current, sourceId];
     });
+  };
+  const handleSelectManualDataset = (datasetId: string) => {
+    setSelectedSourceIds([]);
+    setSelectedManualDatasetId((current) => (current === datasetId ? null : datasetId));
+    setSelectedStations([]);
+    setSelectedVariables([]);
+    setDateFrom('');
+    setDateTo('');
+    setRangePreset('all');
+    setExploreRange([0, 100]);
   };
 
   const heatValues = Array.from(heatmap.values.values());
@@ -1719,6 +1830,7 @@ export function AnalyticalWorkspace() {
   const selectedVariableLabels = selectedVariables.map(
     (code) => availableVariables.find((variable) => variable.code === code)?.name ?? code,
   );
+  const selectedDataSourceCount = selectedSourceIds.length + (selectedManualDatasetId ? 1 : 0);
   const summaryChartData = variableSummary.map((item) => ({
     variable: item.label,
     mean: round(item.mean),
@@ -2604,10 +2716,27 @@ export function AnalyticalWorkspace() {
 
   return (
     <div className="h-full flex bg-[#F9FBFC]">
-      <aside className="w-72 shrink-0 border-r border-gray-200 bg-white flex flex-col">
-        <div className="border-b border-gray-200 px-4 py-4">
-          <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
-          <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
+      <aside className={`${sidebarCollapsed ? 'w-20' : 'w-72'} shrink-0 border-r border-gray-200 bg-white flex flex-col transition-[width] duration-200`}>
+        <div className={`border-b border-gray-200 ${sidebarCollapsed ? 'px-2 py-3' : 'px-4 py-4'}`}>
+          <div className="flex items-center justify-between gap-2">
+            {!sidebarCollapsed && (
+              <div>
+                <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
+                <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
+              </div>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 p-0 shrink-0"
+              onClick={() => setSidebarCollapsed((current) => !current)}
+              aria-label={sidebarCollapsed ? 'Expand panel' : 'Collapse panel'}
+              title={sidebarCollapsed ? 'Expand panel' : 'Collapse panel'}
+            >
+              {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            </Button>
+          </div>
         </div>
 
         <ScrollArea className="flex-1">
@@ -2615,19 +2744,20 @@ export function AnalyticalWorkspace() {
             {ANALYSIS_SECTIONS.map((section) => {
               const Icon = section.icon;
               const isActive = labSection === section.value;
-              const locked = section.value !== 'load-data' && selectedSourceIds.length === 0;
+              const locked = section.value !== 'load-data' && selectedDataSourceCount === 0;
 
               return (
                 <button
                   key={section.value}
                   type="button"
                   onClick={() => setLabSection(section.value)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                  className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2.5 rounded-lg text-sm transition-all ${
                     isActive ? 'bg-[#509EE3] text-white shadow-md' : 'hover:bg-gray-100 text-foreground'
                   }`}
+                  title={section.label}
                 >
                   <Icon className="w-4 h-4" style={{ color: isActive ? 'white' : section.color }} />
-                  <span className="flex-1 text-left">{section.label}</span>
+                  {!sidebarCollapsed && <span className="flex-1 text-left">{section.label}</span>}
                   {locked && <div className="w-2 h-2 rounded-full bg-orange-400" />}
                 </button>
               );
@@ -2635,7 +2765,7 @@ export function AnalyticalWorkspace() {
           </div>
         </ScrollArea>
 
-        {labSection !== 'load-data' && (
+        {!sidebarCollapsed && labSection !== 'load-data' && (
           <div className="border-t border-gray-200 p-4 space-y-4">
             <div className="space-y-1.5">
               <Label className="text-xs">Variables</Label>
@@ -2665,7 +2795,7 @@ export function AnalyticalWorkspace() {
               <div className="rounded-lg border bg-[#F9FBFC] p-3 space-y-2 text-xs text-muted-foreground">
                 <div className="flex items-center justify-between">
                   <span>Sources</span>
-                  <span className="font-medium text-foreground">{selectedSourceIds.length}</span>
+                  <span className="font-medium text-foreground">{selectedDataSourceCount}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Stations</span>
@@ -2695,7 +2825,7 @@ export function AnalyticalWorkspace() {
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <Badge className="bg-[#e9f3fd] text-[#1F5A8A] border border-[#509EE3]/30">
-                {selectedSourceIds.length > 0 ? `${selectedSourceIds.length} sources selected` : 'No sources selected'}
+                {selectedDataSourceCount > 0 ? `${selectedDataSourceCount} sources selected` : 'No sources selected'}
               </Badge>
               <Badge variant="outline">{selectedVariableLabels.join(', ') || 'Select variables'}</Badge>
             </div>
@@ -2723,13 +2853,13 @@ export function AnalyticalWorkspace() {
               <CardContent className="space-y-6">
                 <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.9fr] gap-4">
                   <div className="rounded-xl border bg-[#fbfdff] p-4">
-                    <Label className="text-xs text-muted-foreground">Source Files</Label>
+                    <Label className="text-xs text-muted-foreground">Sources</Label>
                     <div className="relative mt-2">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                       <Input
                         value={sourceSearch}
                         onChange={(event) => setSourceSearch(event.target.value)}
-                        placeholder="Search loaded file..."
+                        placeholder="Search source..."
                         className="pl-9"
                       />
                     </div>
@@ -2749,7 +2879,7 @@ export function AnalyticalWorkspace() {
                               }`}
                             >
                               <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#509EE3]/10">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#509EE3]/10">
                                   <FileSpreadsheet className="w-4 h-4 text-[#509EE3]" />
                                 </div>
                                 <div className="min-w-0">
@@ -2762,8 +2892,40 @@ export function AnalyticalWorkspace() {
                             </button>
                           );
                         })}
+                        {filteredManualDatasets.map((dataset) => {
+                          const active = selectedManualDatasetId === dataset.id;
+                          return (
+                            <button
+                              key={dataset.id}
+                              type="button"
+                              onClick={() => handleSelectManualDataset(dataset.id)}
+                              className={`w-full rounded-xl border px-3 py-3 text-left transition-colors ${
+                                active
+                                  ? 'border-[#509EE3] bg-[#e9f3fd]'
+                                  : 'border-gray-200 bg-white hover:border-[#509EE3]/35'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#509EE3]/10">
+                                  <Database className="w-4 h-4 text-[#509EE3]" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">{dataset.name}</p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    manual dataset · {dataset.row_count.toLocaleString()} rows
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                        {manualDatasetsLoading && (
+                          <p className="text-xs text-muted-foreground py-4 text-center">Loading datasets...</p>
+                        )}
                         {filteredSources.length === 0 && (
-                          <p className="text-xs text-muted-foreground py-6 text-center">No matching loaded files.</p>
+                          filteredManualDatasets.length === 0 && !manualDatasetsLoading ? (
+                            <p className="text-xs text-muted-foreground py-6 text-center">No matching sources.</p>
+                          ) : null
                         )}
                       </div>
                     </ScrollArea>
@@ -2825,7 +2987,7 @@ export function AnalyticalWorkspace() {
                         <Badge variant="outline">{selectedStations.length || 'All'}</Badge>
                       </div>
                       <div className="flex flex-wrap gap-1.5 max-h-[184px] overflow-auto">
-                        {(filters?.stations ?? []).map((station) => {
+                        {availableStations.map((station) => {
                           const active = selectedStations.includes(station.code);
                           return (
                             <button
@@ -2899,7 +3061,9 @@ export function AnalyticalWorkspace() {
                       <div className="rounded-lg border bg-white p-3 text-xs text-muted-foreground space-y-1">
                         <div className="flex items-center justify-between">
                           <span>Selection</span>
-                          <span className="font-medium text-foreground">{selectedSourceIds.length} files</span>
+                          <span className="font-medium text-foreground">
+                            {selectedManualDatasetId ? '1 dataset' : `${selectedSourceIds.length} files`}
+                          </span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span>Dataset cap</span>
@@ -2918,7 +3082,7 @@ export function AnalyticalWorkspace() {
           ) : (
             <div className="space-y-6">
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <KpiCard label="Sources" value={selectedSources.length.toString()} icon={Database} />
+                <KpiCard label="Sources" value={selectedDataSourceCount.toString()} icon={Database} />
                 <KpiCard label="Samples" value={summary.samples.toLocaleString()} icon={Table2} />
                 <KpiCard label="Mean" value={round(summary.mean).toString()} icon={TrendingUp} />
                 <KpiCard
