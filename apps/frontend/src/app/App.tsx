@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AdvancedSidebar } from '@/components/layout/advanced-sidebar';
 import { TopBar } from '@/components/layout/top-bar';
-import { AnalyticalWorkspace } from '@/features/analysis/components/analytical-workspace';
 import { ForgotPassword } from '@/features/auth/components/forgot-password';
 import { Login } from '@/features/auth/components/login';
 import { ResetPassword } from '@/features/auth/components/reset-password';
@@ -19,6 +18,11 @@ import { SettingsPanel } from '@/features/settings/components/settings-panel';
 import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 import type { AppView } from '@/store/app-store';
+
+const AnalyticalWorkspace = lazy(async () => {
+  const module = await import('@/features/analysis/components/analytical-workspace');
+  return { default: module.AnalyticalWorkspace };
+});
 
 function normalizePath(path: string): string {
   if (!path) {
@@ -144,7 +148,19 @@ function App() {
       case 'ml-experiments':
         return activeWorkspaceId ? <MLExperimentRunner /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'analytical-workspace':
-        return activeWorkspaceId ? <AnalyticalWorkspace /> : <Projects onSelectProject={handleSelectWorkspace} />;
+        return activeWorkspaceId ? (
+          <Suspense
+            fallback={
+              <div className="p-6 text-sm text-muted-foreground">
+                Loading analytical workspace...
+              </div>
+            }
+          >
+            <AnalyticalWorkspace />
+          </Suspense>
+        ) : (
+          <Projects onSelectProject={handleSelectWorkspace} />
+        );
       case 'settings':
         return <SettingsPanel />;
       default:

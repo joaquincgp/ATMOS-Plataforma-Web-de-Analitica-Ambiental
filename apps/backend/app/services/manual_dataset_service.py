@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,15 @@ VARIABLE_ROLE_HINTS = {'variable', 'variable_code', 'pollutant', 'contaminante',
 
 class ManualDatasetError(Exception):
     pass
+
+
+@dataclass
+class ManualDatasetEdaContext:
+    dataset: ManualDataset
+    dataframe: pd.DataFrame
+    mapping: ManualDatasetRoleMapping
+    summary: ManualDatasetSummary
+    columns: list[ManualDatasetColumnProfile]
 
 
 class ManualDatasetService:
@@ -176,6 +186,17 @@ class ManualDatasetService:
             ).all()
         )
         return [self._to_response(dataset) for dataset in datasets]
+
+    def get_eda_context(self, *, dataset_id: str, user: User) -> ManualDatasetEdaContext:
+        dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        dataframe = self._read_dataframe_for_query(dataset)
+        return ManualDatasetEdaContext(
+            dataset=dataset,
+            dataframe=dataframe,
+            mapping=ManualDatasetRoleMapping.model_validate(dataset.mapping_config or {}),
+            summary=ManualDatasetSummary.model_validate(dataset.profile_summary or {}),
+            columns=[ManualDatasetColumnProfile.model_validate(item) for item in dataset.column_schema or []],
+        )
 
     def update_dataset(
         self,
