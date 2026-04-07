@@ -178,6 +178,135 @@ class EtlService:
             force_reprocess=force_reprocess,
         )
 
+    def ingest_normalized_rows(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        rows: Iterable[NormalizedMeasurementRow],
+        source_type: str = "manual",
+        source_url: str | None = None,
+    ) -> EtlRun:
+        run = self.create_manual_run(filename=filename)
+        checksum = compute_sha256(content)
+        safe_name = filename.replace("/", "_").replace("\\", "_")
+        archive_name = f"{checksum[:12]}-{safe_name}"
+        archive_path = self.raw_dir / archive_name
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        archive_path.write_bytes(content)
+
+        source_file = SourceFile(
+            etl_run_id=run.id,
+            source_type=source_type,
+            source_url=source_url,
+            original_name=filename,
+            local_archive_path=str(archive_path),
+            extracted_path=None,
+            checksum_sha256=checksum,
+            status="processing",
+        )
+        self.db.add(source_file)
+        self.db.commit()
+        self.db.refresh(source_file)
+
+        try:
+            inserted, updated, skipped = self._load_rows(rows, source_file.id)
+            source_file.row_count = inserted + updated
+            source_file.status = "completed"
+            source_file.processed_at = datetime.utcnow()
+
+            run.archives_discovered = 1
+            run.archives_processed = 1
+            run.records_inserted = inserted
+            run.records_updated = updated
+            run.records_skipped = skipped
+            run.status = "completed"
+            run.finished_at = datetime.utcnow()
+            self.db.add(source_file)
+            self.db.add(run)
+            self.db.commit()
+            self._set_run_progress(
+                run,
+                stage="completed",
+                stage_label="Completado",
+                progress_percent=100,
+                archives_total=1,
+                archives_processed=1,
+                records_inserted=inserted,
+                records_updated=updated,
+                records_skipped=skipped,
+                filename=filename,
+            )
+            self.db.refresh(run)
+            return run
+        except Exception as exc:  # noqa: BLE001
+            source_file.status = "failed"
+            source_file.error_message = str(exc)
+            self.db.add(source_file)
+            self.db.commit()
+            self._mark_run_failed(run_id=run.id, error_message=str(exc))
+            raise
+
+    def extract_remmaq_dataframe(
+        self,
+        *,
+        variable_codes: list[str] | None,
+        max_archives: int | None,
+        observed_from: date | None = None,
+        observed_to: date | None = None,
+    ) -> tuple[pd.DataFrame, list[dict[str, str]]]:
+        normalized_variables = self._normalize_variable_selection(variable_codes)
+        normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
+        observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
+        max_archives_effective = (
+            len(normalized_variables)
+            if variable_codes
+            else max_archives or self.settings.etl_sync_default_max_archives
+        )
+
+        archives = self._discover_archive_urls(
+            root_url=self.settings.remmaq_base_url,
+            selected_variables=normalized_variables,
+            max_archives=max_archives_effective,
+        )
+
+        records: list[dict[str, object]] = []
+        self.raw_dir.mkdir(parents=True, exist_ok=True)
+        self.extracted_dir.mkdir(parents=True, exist_ok=True)
+
+        for archive in archives:
+            archive_url = archive["url"]
+            content, filename = self._download_binary(archive_url)
+            checksum = compute_sha256(content)
+            safe_name = filename.replace("/", "_").replace("\\", "_")
+            archive_name = f"{checksum[:12]}-{safe_name}"
+            archive_path = self.raw_dir / archive_name
+            archive_path.write_bytes(content)
+            extracted_path = self._extract_input_file(archive_path, checksum)
+
+            for row in self._extract_rows_from_directory(extracted_path):
+                observed_at = row.observed_at.astimezone(UTC)
+                if observed_from_dt is not None and observed_at < observed_from_dt:
+                    continue
+                if observed_to_dt is not None and observed_at > observed_to_dt:
+                    continue
+                records.append(
+                    {
+                        "station_code": normalize_station_code(row.station_code),
+                        "observed_at": observed_at.replace(tzinfo=None).isoformat(),
+                        "variable_code": normalize_variable_code(row.variable_code),
+                        "value": float(row.value),
+                        "unit": row.unit,
+                        "source_file_name": filename,
+                        "source_url": archive_url,
+                    }
+                )
+
+        if not records:
+            raise RuntimeError("No se encontraron filas REMMAQ para el rango o variables seleccionadas.")
+
+        return pd.DataFrame.from_records(records), archives
+
     def _create_run(self, *, trigger_type: str, source: str) -> EtlRun:
         run = EtlRun(trigger_type=trigger_type, source=source, status="running")
         self.db.add(run)
@@ -242,7 +371,7 @@ class EtlService:
         run = self._get_run_or_raise(run_id)
         normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
         observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
-        effective_force_reprocess = force_reprocess or normalized_from is not None or normalized_to is not None
+        effective_force_reprocess = force_reprocess
         try:
             self._set_run_progress(
                 run,
@@ -268,7 +397,11 @@ class EtlService:
             deleted_measurements = 0
             overwritten_variables: list[str] = []
             if effective_force_reprocess:
-                deleted_measurements = self._delete_existing_measurements_for_variable_codes(discovered_variable_codes)
+                deleted_measurements = self._delete_existing_measurements_for_variable_codes(
+                    discovered_variable_codes,
+                    observed_from=observed_from_dt,
+                    observed_to=observed_to_dt,
+                )
                 overwritten_variables = discovered_variable_codes
             self._set_run_progress(
                 run,
@@ -466,7 +599,13 @@ class EtlService:
         to_dt = datetime.combine(observed_to, dt_time.max, tzinfo=UTC) if observed_to is not None else None
         return from_dt, to_dt
 
-    def _delete_existing_measurements_for_variable_codes(self, variable_codes: list[str]) -> int:
+    def _delete_existing_measurements_for_variable_codes(
+        self,
+        variable_codes: list[str],
+        *,
+        observed_from: datetime | None = None,
+        observed_to: datetime | None = None,
+    ) -> int:
         if not variable_codes:
             return 0
 
@@ -478,7 +617,13 @@ class EtlService:
         if not variable_ids:
             return 0
 
-        result = self.db.execute(delete(Measurement).where(Measurement.variable_id.in_(variable_ids)))
+        statement = delete(Measurement).where(Measurement.variable_id.in_(variable_ids))
+        if observed_from is not None:
+            statement = statement.where(Measurement.observed_at >= observed_from.astimezone(UTC).replace(tzinfo=None))
+        if observed_to is not None:
+            statement = statement.where(Measurement.observed_at <= observed_to.astimezone(UTC).replace(tzinfo=None))
+
+        result = self.db.execute(statement)
         self.db.commit()
         rowcount = int(result.rowcount or 0)
         return max(0, rowcount)
@@ -680,7 +825,7 @@ class EtlService:
         existing_file = self.db.scalar(
             select(SourceFile).where(SourceFile.checksum_sha256 == checksum, SourceFile.status == "completed")
         )
-        if existing_file and not force_reprocess:
+        if existing_file and not force_reprocess and observed_from is None and observed_to is None:
             if existing_file.row_count > 0:
                 etl_run.records_skipped += existing_file.row_count
                 etl_run.archives_processed += 1
@@ -710,18 +855,32 @@ class EtlService:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         archive_path.write_bytes(content)
 
-        source_file = SourceFile(
-            etl_run_id=etl_run.id,
-            source_type=source_type,
-            source_url=source_url,
-            original_name=original_name,
-            local_archive_path=str(archive_path),
-            checksum_sha256=checksum,
-            status="downloaded",
-        )
-        self.db.add(source_file)
-        self.db.commit()
-        self.db.refresh(source_file)
+        source_file = self._find_reusable_source_file(source_type=source_type, original_name=original_name)
+        if source_file is None:
+            source_file = SourceFile(
+                etl_run_id=etl_run.id,
+                source_type=source_type,
+                source_url=source_url,
+                original_name=original_name,
+                local_archive_path=str(archive_path),
+                checksum_sha256=checksum,
+                status="downloaded",
+            )
+            self.db.add(source_file)
+            self.db.commit()
+            self.db.refresh(source_file)
+        else:
+            source_file.etl_run_id = etl_run.id
+            source_file.source_url = source_url
+            source_file.local_archive_path = str(archive_path)
+            source_file.checksum_sha256 = checksum
+            source_file.status = "downloaded"
+            source_file.error_message = None
+            source_file.downloaded_at = datetime.utcnow()
+            source_file.processed_at = None
+            self.db.add(source_file)
+            self.db.commit()
+            self.db.refresh(source_file)
 
         self._set_run_progress(
             etl_run,
@@ -814,7 +973,7 @@ class EtlService:
             progress_callback=_on_insert_progress,
         )
 
-        source_file.row_count = inserted + updated
+        source_file.row_count = self._count_measurements_for_source_file(source_file.id)
         source_file.status = "completed"
         source_file.processed_at = datetime.utcnow()
 
@@ -879,6 +1038,21 @@ class EtlService:
             return destination
 
         raise ValueError(f"Formato no soportado para ETL: {input_path.name}")
+
+    def _find_reusable_source_file(self, *, source_type: str, original_name: str) -> SourceFile | None:
+        if source_type != "automatic":
+            return None
+
+        statement = (
+            select(SourceFile)
+            .where(
+                SourceFile.source_type == source_type,
+                SourceFile.original_name == original_name,
+            )
+            .order_by(desc(SourceFile.downloaded_at), desc(SourceFile.id))
+            .limit(1)
+        )
+        return self.db.scalar(statement)
 
     def _extract_rows_from_directory(self, extracted_path: Path) -> Iterator[NormalizedMeasurementRow]:
         workbook_paths = [
@@ -1279,6 +1453,12 @@ class EtlService:
                 existing_map[(measurement.station_id, measurement.variable_id, measurement.observed_at)] = measurement
 
         return existing_map
+
+    def _count_measurements_for_source_file(self, source_file_id: int) -> int:
+        statement = select(func.count()).select_from(Measurement).where(Measurement.source_file_id == source_file_id)
+        return int(
+            self.db.scalar(statement) or 0
+        )
 
     def _get_or_create_station(self, station_code: str) -> Station:
         station_code = normalize_station_code(station_code)

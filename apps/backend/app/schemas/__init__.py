@@ -24,6 +24,7 @@ from app.schemas.auth import (
     UpdateProfileRequest,
     UserResponse,
 )
+from app.schemas.eda import EdaPlotRequest, EdaPlotResponse, EdaSecondaryFigure
 from app.schemas.etl import (
     DbInitResponse,
     EtlMetricsResponse,
@@ -67,6 +68,9 @@ __all__ = [
     "StationLatestVariableResponse",
     "StationLiveSnapshotResponseItem",
     "StationLiveSnapshotResponse",
+    "EdaPlotRequest",
+    "EdaPlotResponse",
+    "EdaSecondaryFigure",
     "DbInitResponse",
     "EtlRunResponse",
     "EtlMetricsResponse",

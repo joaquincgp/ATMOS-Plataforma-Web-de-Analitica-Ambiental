@@ -99,5 +99,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new Error(detail);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }

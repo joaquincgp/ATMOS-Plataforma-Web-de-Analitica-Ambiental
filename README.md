@@ -98,6 +98,26 @@ Ideal para depuración pura en editores como VSCode, PyCharm u otros donde quier
    npm run dev:frontend
    ```
 
+### Opcion 3: Acceso por Red Local (LAN)
+
+Permite que otros equipos en la misma red (Wi-Fi o Ethernet) accedan a la aplicacion sin configuracion adicional. Probar la plataforma desde otros dispositivos mientras el servidor corre en una sola maquina.
+
+Requisitos previos: Node.js 18+, Python 3.11+ y PostgreSQL corriendo (puedes usar `make db-up`).
+
+```bash
+make dev-lan
+```
+
+El comando detecta automaticamente la IP local de la maquina, configura el CORS del backend y la URL del frontend, y levanta ambos servidores.
+
+Para detener los servidores usa `Ctrl+C`. Para limpiar los archivos de configuracion generados:
+
+```bash
+make lan-clean
+```
+
+> **Nota:** Los archivos generados (`apps/backend/.env` y `apps/frontend/.env.local`) estan excluidos en `.gitignore` y no se subiran al repositorio.
+
 ## Scripts Disponibles con NPM Workspaces
 El archivo `package.json` raíz simplifica la inicialización orquestando las acciones frecuentas para los desarrolladores. Desde el directorio base del proyecto (`ATMOS/`) puedes usar:
 

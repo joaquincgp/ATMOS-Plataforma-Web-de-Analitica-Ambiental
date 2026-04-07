@@ -1,5 +1,6 @@
 import { env } from '@/shared/config/env';
 
+import type { AnalyticsQueryResponse } from '@/api/modules/analytics';
 import { apiRequest } from '@/api/http-client';
 
 const AUTH_STORAGE_KEY = 'atmos.auth.v1';
@@ -62,6 +63,83 @@ export interface EtlPreviewRowResponse {
 export interface EtlPreviewResponse {
   run_id: string | null;
   rows: EtlPreviewRowResponse[];
+}
+
+export interface ManualDatasetColumnProfile {
+  name: string;
+  pandas_dtype: string;
+  inferred_kind: string;
+  null_count: number;
+  non_null_count: number;
+  unique_count: number;
+  sample_values: string[];
+}
+
+export interface ManualDatasetSummary {
+  row_count: number;
+  column_count: number;
+  numeric_columns: string[];
+  categorical_columns: string[];
+  datetime_columns: string[];
+}
+
+export interface ManualDatasetRoleMapping {
+  numeric_columns: string[];
+  categorical_columns: string[];
+  datetime_column: string | null;
+  date_column: string | null;
+  time_column: string | null;
+  station_code_column: string | null;
+  variable_code_column: string | null;
+  value_column: string | null;
+  unit_column: string | null;
+  normalized_datetime_column_name: string;
+}
+
+export interface ManualDatasetOperation {
+  type: 'select_columns' | 'cast_types' | 'subsample' | 'melt' | 'date_features';
+  columns?: string[];
+  numeric_columns?: string[];
+  categorical_columns?: string[];
+  sample_pct?: number;
+  id_vars?: string[];
+  var_name?: string;
+  value_name?: string;
+  date_column?: string | null;
+  dayfirst?: boolean;
+}
+
+export interface ManualDatasetResponse {
+  id: string;
+  workspace_id: string;
+  owner_user_id: string;
+  name: string;
+  source_kind: string;
+  source_url: string | null;
+  original_file_name: string;
+  status: string;
+  dataset_kind: string | null;
+  storage_format: string;
+  row_count: number;
+  column_count: number;
+  operation_pipeline: ManualDatasetOperation[];
+  mapping: ManualDatasetRoleMapping;
+  summary: ManualDatasetSummary;
+  columns: ManualDatasetColumnProfile[];
+  preview_rows: Record<string, unknown>[];
+  etl_run_id: string | null;
+  source_file_id: number | null;
+  created_at: string;
+  updated_at: string;
+  error_message: string | null;
+}
+
+export interface ManualDatasetCreateFromRemmaqRequest {
+  workspace_id: string;
+  variable_codes: string[];
+  max_archives?: number;
+  observed_from?: string;
+  observed_to?: string;
 }
 
 export interface SyncRemmaqParams {
@@ -211,4 +289,118 @@ export function getEtlPreview(runId?: string, limit = 100): Promise<EtlPreviewRe
     searchParams.set('run_id', runId);
   }
   return apiRequest<EtlPreviewResponse>(`/api/v1/etl/preview?${searchParams.toString()}`);
+}
+
+export async function uploadManualDataset(workspaceId: string, file: File): Promise<ManualDatasetResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const accessToken = getStoredAccessToken();
+
+  const response = await fetch(`${env.apiBaseUrl}/api/v1/etl/manual-datasets/upload?workspace_id=${workspaceId}`, {
+    method: 'POST',
+    body: formData,
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+  });
+
+  if (!response.ok) {
+    let detail = `Upload failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) {
+        detail = payload.detail;
+      }
+    } catch {
+      // Keep fallback detail
+    }
+    throw new Error(detail);
+  }
+
+  return (await response.json()) as ManualDatasetResponse;
+}
+
+export function createManualDatasetFromUrl(payload: {
+  workspace_id: string;
+  source_url: string;
+}): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>('/api/v1/etl/manual-datasets/from-url', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createManualDatasetFromRemmaq(
+  payload: ManualDatasetCreateFromRemmaqRequest,
+): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>('/api/v1/etl/manual-datasets/from-remmaq', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getManualDataset(datasetId: string): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>(`/api/v1/etl/manual-datasets/${datasetId}`);
+}
+
+export function getManualDatasetAnalyticsPreview(
+  datasetId: string,
+  payload: {
+    limit?: number;
+    date_from?: string;
+    date_to?: string;
+    station_codes?: string[];
+    variable_codes?: string[];
+  } = {},
+): Promise<AnalyticsQueryResponse> {
+  const params = new URLSearchParams();
+  params.set('limit', String(payload.limit ?? 5000));
+  if (payload.date_from) {
+    params.set('date_from', payload.date_from);
+  }
+  if (payload.date_to) {
+    params.set('date_to', payload.date_to);
+  }
+  for (const stationCode of payload.station_codes ?? []) {
+    params.append('station_codes', stationCode);
+  }
+  for (const variableCode of payload.variable_codes ?? []) {
+    params.append('variable_codes', variableCode);
+  }
+  return apiRequest<AnalyticsQueryResponse>(`/api/v1/etl/manual-datasets/${datasetId}/analytics-preview?${params.toString()}`);
+}
+
+export function listManualDatasets(workspaceId: string): Promise<ManualDatasetResponse[]> {
+  return apiRequest<ManualDatasetResponse[]>(`/api/v1/etl/manual-datasets?workspace_id=${workspaceId}`);
+}
+
+export function previewManualDataset(
+  datasetId: string,
+  payload: {
+    operation_pipeline: ManualDatasetOperation[];
+    mapping: ManualDatasetRoleMapping;
+  },
+): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>(`/api/v1/etl/manual-datasets/${datasetId}/preview`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function finalizeManualDataset(
+  datasetId: string,
+  payload: {
+    dataset_name?: string;
+    operation_pipeline: ManualDatasetOperation[];
+    mapping: ManualDatasetRoleMapping;
+  },
+): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>(`/api/v1/etl/manual-datasets/${datasetId}/finalize`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteManualDataset(datasetId: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/etl/manual-datasets/${datasetId}`, {
+    method: 'DELETE',
+  });
 }

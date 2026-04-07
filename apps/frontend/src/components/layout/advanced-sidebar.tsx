@@ -1,4 +1,5 @@
-import { Home, FolderOpen, Database, Settings, Code, Cpu, BarChart3, X } from 'lucide-react';
+import { useState } from 'react';
+import { Home, FolderOpen, Database, Settings, Code, Cpu, BarChart3, ChevronDown, ChevronRight, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { AppView } from '@/store/app-store';
 
@@ -17,6 +18,7 @@ export function AdvancedSidebar({
   selectedProjectName,
   onCloseProject,
 }: AdvancedSidebarProps) {
+  const [projectAssetsCollapsed, setProjectAssetsCollapsed] = useState(false);
   const baseNavItems: { id: AppView; icon: typeof Home; label: string }[] = [
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'projects', icon: FolderOpen, label: 'Projects' },
@@ -70,10 +72,15 @@ export function AdvancedSidebar({
         {/* Project Assets Section (Only shown when project is selected) */}
         {selectedProject && (
           <>
-            <div className="mt-6 mb-3 flex items-center justify-between px-3">
-              <span className="text-xs font-semibold text-sidebar-foreground/60 uppercase tracking-wider">
-                Project Assets
-              </span>
+            <div className="mt-6 mb-3 flex items-center justify-between gap-2 px-3">
+              <button
+                type="button"
+                onClick={() => setProjectAssetsCollapsed((current) => !current)}
+                className="flex min-w-0 items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/60"
+              >
+                {projectAssetsCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                <span>Project Assets</span>
+              </button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -83,33 +90,35 @@ export function AdvancedSidebar({
                 <X className="w-4 h-4" />
               </Button>
             </div>
-            
-            <div className="bg-sidebar-accent/30 rounded-lg p-2">
-              <ul className="space-y-1">
-                {projectAssets.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = activeView === item.id;
-                  
-                  return (
-                    <li key={item.id}>
-                      <button
-                        onClick={() => onNavigate(item.id)}
-                        className={`
-                          w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm
-                          ${isActive 
-                            ? 'bg-sidebar-primary text-sidebar-primary-foreground' 
-                            : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
-                          }
-                        `}
-                      >
-                        <Icon className="w-4 h-4" />
-                        <span>{item.label}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
+
+            {!projectAssetsCollapsed && (
+              <div className="bg-sidebar-accent/30 rounded-lg p-2">
+                <ul className="space-y-1">
+                  {projectAssets.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = activeView === item.id;
+
+                    return (
+                      <li key={item.id}>
+                        <button
+                          onClick={() => onNavigate(item.id)}
+                          className={`
+                            w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm
+                            ${isActive 
+                              ? 'bg-sidebar-primary text-sidebar-primary-foreground' 
+                              : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                            }
+                          `}
+                        >
+                          <Icon className="w-4 h-4" />
+                          <span>{item.label}</span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
 
             {/* Project Info */}
             <div className="mt-3 px-3 py-2 bg-[#509EE3]/10 rounded-lg">
