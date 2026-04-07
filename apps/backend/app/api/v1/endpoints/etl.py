@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
@@ -24,7 +24,7 @@ from app.schemas.etl import (
     ManualDatasetUpdateRequest,
 )
 from app.services.etl import EtlService
-from app.services.manual_dataset_service import ManualDatasetError, ManualDatasetService
+from app.services.manual_dataset import ManualDatasetError, ManualDatasetService
 
 router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
 
@@ -331,9 +331,11 @@ def get_manual_dataset(
 @router.get("/manual-datasets/{dataset_id}/analytics-preview", response_model=AnalyticsQueryResponse)
 def get_manual_dataset_analytics_preview(
     dataset_id: str,
-    limit: int = Query(default=5000, ge=100, le=5000),
+    limit: int | None = Query(default=None, ge=1),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
+    view_from: datetime | None = Query(default=None),
+    view_to: datetime | None = Query(default=None),
     station_codes: list[str] | None = Query(default=None),
     variable_codes: list[str] | None = Query(default=None),
     db: Session = Depends(get_db_session),
@@ -347,6 +349,8 @@ def get_manual_dataset_analytics_preview(
             limit=limit,
             date_from=date_from,
             date_to=date_to,
+            view_from=view_from,
+            view_to=view_to,
             station_codes=station_codes,
             variable_codes=variable_codes,
         )

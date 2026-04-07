@@ -123,7 +123,7 @@ export function AdvancedSidebar({
             {/* Project Info */}
             <div className="mt-3 px-3 py-2 bg-[#509EE3]/10 rounded-lg">
               <p className="text-xs font-medium text-[#509EE3] truncate">
-                {selectedProjectName ?? selectedProject}
+                {selectedProjectName ?? 'Project selected'}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Active Project

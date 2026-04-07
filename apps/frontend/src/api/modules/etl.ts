@@ -97,7 +97,7 @@ export interface ManualDatasetRoleMapping {
 }
 
 export interface ManualDatasetOperation {
-  type: 'select_columns' | 'cast_types' | 'subsample' | 'melt' | 'date_features';
+  type: 'select_columns' | 'cast_types' | 'subsample' | 'melt' | 'date_features' | 'cast_datetime';
   columns?: string[];
   numeric_columns?: string[];
   categorical_columns?: string[];
@@ -107,6 +107,9 @@ export interface ManualDatasetOperation {
   value_name?: string;
   date_column?: string | null;
   dayfirst?: boolean;
+  date_format?: string | null;
+  fuzzy_parse?: boolean;
+  year_default?: number | null;
 }
 
 export interface ManualDatasetResponse {
@@ -347,17 +350,27 @@ export function getManualDatasetAnalyticsPreview(
     limit?: number;
     date_from?: string;
     date_to?: string;
+    view_from?: string;
+    view_to?: string;
     station_codes?: string[];
     variable_codes?: string[];
   } = {},
 ): Promise<AnalyticsQueryResponse> {
   const params = new URLSearchParams();
-  params.set('limit', String(payload.limit ?? 5000));
+  if (payload.limit !== undefined) {
+    params.set('limit', String(payload.limit));
+  }
   if (payload.date_from) {
     params.set('date_from', payload.date_from);
   }
   if (payload.date_to) {
     params.set('date_to', payload.date_to);
+  }
+  if (payload.view_from) {
+    params.set('view_from', payload.view_from);
+  }
+  if (payload.view_to) {
+    params.set('view_to', payload.view_to);
   }
   for (const stationCode of payload.station_codes ?? []) {
     params.append('station_codes', stationCode);

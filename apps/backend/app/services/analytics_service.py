@@ -200,15 +200,23 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
     if payload.date_to is not None:
         end_dt = datetime.combine(payload.date_to + timedelta(days=1), time.min)
         statement = statement.where(Measurement.observed_at < end_dt)
+    if payload.view_from is not None:
+        statement = statement.where(Measurement.observed_at >= payload.view_from)
+    if payload.view_to is not None:
+        statement = statement.where(Measurement.observed_at <= payload.view_to)
 
     ordered_statement = statement.order_by(Measurement.observed_at.asc())
     dataset_max_rows = _resolve_dataset_max_rows(db, payload.source_file_ids)
-    requested_limit = max(100, payload.limit or DEFAULT_ANALYTICS_LIMIT)
-    effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
-
-    result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
-    truncated = len(result_rows) > effective_limit
-    capped_rows = result_rows[:effective_limit]
+    if payload.limit is None:
+        result_rows = db.execute(ordered_statement).all()
+        truncated = False
+        capped_rows = result_rows
+    else:
+        requested_limit = max(1, payload.limit)
+        effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
+        result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
+        truncated = len(result_rows) > effective_limit
+        capped_rows = result_rows[:effective_limit]
 
     return AnalyticsQueryResponse(
         rows=[

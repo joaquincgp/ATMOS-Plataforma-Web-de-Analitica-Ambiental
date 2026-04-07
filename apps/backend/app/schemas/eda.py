@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -54,7 +54,9 @@ class EdaPlotRequest(BaseModel):
     variable_codes: list[str] = Field(default_factory=list)
     date_from: date | None = None
     date_to: date | None = None
-    limit: int = Field(default=5000, ge=100, le=20000)
+    view_from: datetime | None = None
+    view_to: datetime | None = None
+    limit: int = Field(default=50000, ge=1, le=500000)
     granularity: TimeGranularity = "day"
     chart_type: EdaChartType | None = None
     rolling_window: int = Field(default=14, ge=2, le=120)

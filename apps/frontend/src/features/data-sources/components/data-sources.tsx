@@ -68,36 +68,39 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
 
   return (
     <div className="w-full py-6">
-      <div className="mx-auto flex max-w-4xl items-center justify-between">
+      <div className="mx-auto flex max-w-4xl justify-between relative">
+        <div className="absolute top-6 left-[15%] right-[15%] h-0.5 bg-gray-200" />
         {steps.map((step, index) => (
-          <div key={step.number} className="flex flex-1 items-center">
-            <div className="flex flex-1 flex-col items-center">
-              <button
-                type="button"
-                onClick={() => onStepClick(step.number)}
-                className={`
-                  flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold transition-all duration-200
-                  ${
-                    currentStep > step.number
-                      ? 'bg-[#509EE3] text-white'
-                      : currentStep === step.number
-                        ? 'bg-[#509EE3] text-white ring-4 ring-[#509EE3]/20'
-                        : 'bg-gray-200 text-gray-500'
-                  }
-                `}
-              >
-                {currentStep > step.number ? <Check className="h-6 w-6" /> : step.number}
-              </button>
-              <div className="mt-2 text-center">
-                <p className={`text-sm font-medium ${currentStep >= step.number ? 'text-foreground' : 'text-muted-foreground'}`}>
-                  {step.label}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
-              </div>
-            </div>
+          <div key={step.number} className="relative z-10 flex flex-1 flex-col items-center">
             {index < steps.length - 1 && (
-              <div className={`mx-4 mt-[-40px] h-0.5 flex-1 ${currentStep > step.number ? 'bg-[#509EE3]' : 'bg-gray-200'}`} />
+              <div 
+                className={`absolute top-6 left-[50%] w-full h-0.5 transition-colors duration-300 ${
+                  currentStep > step.number ? 'bg-[#509EE3]' : 'bg-transparent'
+                }`} 
+              />
             )}
+            <button
+              type="button"
+              onClick={() => onStepClick(step.number)}
+              className={`
+                relative z-20 flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold transition-all duration-200
+                ${
+                  currentStep > step.number
+                    ? 'bg-[#509EE3] text-white'
+                    : currentStep === step.number
+                      ? 'bg-[#509EE3] text-white ring-4 ring-[#509EE3]/20'
+                      : 'bg-gray-200 text-gray-500 hover:bg-gray-300'
+                }
+              `}
+            >
+              {currentStep > step.number ? <Check className="h-6 w-6" /> : step.number}
+            </button>
+            <div className="mt-2 text-center bg-white px-2">
+              <p className={`text-sm font-medium ${currentStep >= step.number ? 'text-foreground' : 'text-muted-foreground'}`}>
+                {step.label}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
+            </div>
           </div>
         ))}
       </div>
@@ -1475,10 +1478,6 @@ function ManualDatasetSummaryStep({ dataset }: { dataset: ManualDatasetResponse 
     ['Datetime', dataset.mapping.datetime_column],
     ['Date', dataset.mapping.date_column],
     ['Time', dataset.mapping.time_column],
-    ['Station', dataset.mapping.station_code_column],
-    ['Variable', dataset.mapping.variable_code_column],
-    ['Value', dataset.mapping.value_column],
-    ['Unit', dataset.mapping.unit_column],
   ].filter(([, value]) => Boolean(value));
 
   return (

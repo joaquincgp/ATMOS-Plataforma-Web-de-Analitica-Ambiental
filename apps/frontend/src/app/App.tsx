@@ -72,7 +72,7 @@ function App() {
     resetPassword,
     logout,
   } = useAuth();
-  const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
+  const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId, isLoading: isLoadingWorkspace } = useWorkspace();
 
   const [activeView, setActiveView] = useState<AppView>('home');
   const [resetTokenPrefill, setResetTokenPrefill] = useState<string | undefined>(undefined);
@@ -260,7 +260,7 @@ function App() {
         activeView={activeView}
         onNavigate={setActiveView}
         selectedProject={activeWorkspaceId}
-        selectedProjectName={activeWorkspace?.name ?? null}
+        selectedProjectName={isLoadingWorkspace ? "Cargando proyecto..." : (activeWorkspace?.name ?? null)}
         onCloseProject={handleCloseWorkspace}
       />
 

@@ -36,6 +36,8 @@ export interface EdaPlotRequest {
   variable_codes?: string[];
   date_from?: string;
   date_to?: string;
+  view_from?: string;
+  view_to?: string;
   limit?: number;
   granularity?: 'hour' | 'day' | 'month' | 'year';
   chart_type?: EdaChartType | null;

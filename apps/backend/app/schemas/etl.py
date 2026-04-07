@@ -90,6 +90,9 @@ class ManualDatasetOperation(BaseModel):
     value_name: str | None = "value"
     date_column: str | None = None
     dayfirst: bool | None = True
+    date_format: str | None = None
+    fuzzy_parse: bool | None = True
+    year_default: int | None = None
 
 
 class ManualDatasetCreateFromUrlRequest(BaseModel):
