@@ -110,7 +110,14 @@ make dev-lan
 
 El comando detecta automaticamente la IP local de la maquina, configura el CORS del backend y la URL del frontend, y levanta ambos servidores.
 
-Para detener los servidores usa `Ctrl+C`. Para limpiar los archivos de configuracion generados:
+Para detener los servidores usa `Ctrl+C`. 
+O para hacerlo manualmente, usa:
+
+```bash
+make lan-stop
+```
+
+Para limpiar los archivos de configuracion generados:
 
 ```bash
 make lan-clean
