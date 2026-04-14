@@ -15,7 +15,12 @@ def fit_statsmodels_model(
     error_cls: type[Exception],
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     arima_class, sarimax_class = _load_statsmodels(error_cls)
+    inferred_freq = getattr(series.index, "freq", None) or getattr(series.index, "inferred_freq", None)
     clean_series = series.dropna()
+    if inferred_freq and getattr(clean_series.index, "freq", None) is None:
+        clean_series = clean_series.asfreq(inferred_freq)
+        clean_series = clean_series.ffill().bfill()
+    
     order = tuple(int(value) for value in payload.order)
     try:
         if payload.model == "sarima":
