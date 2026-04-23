@@ -13,7 +13,9 @@ from app.schemas.advanced_analytics import AdvancedAnalyticsRequest
 _PROPHET_FREQ_MAP = {
     "hour": "h",
     "day": "D",
+    "week": "W-MON",
     "month": "MS",
+    "quarter": "QS",
     "year": "YS",
 }
 

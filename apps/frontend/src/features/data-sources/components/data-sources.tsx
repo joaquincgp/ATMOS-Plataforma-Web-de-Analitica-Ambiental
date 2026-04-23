@@ -33,6 +33,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { useWorkspace } from '@/contexts/workspace-context';
+import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import { ManualDataIngestionWizard } from '@/features/data-sources/components/manual-data-ingestion-wizard';
 import { useEtl } from '@/hooks/use-etl';
 
@@ -108,7 +109,7 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
   );
 }
 
-export function DataSources() {
+export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [sourceType, setSourceType] = useState<SourceMode>('manual');
   const [selectedVariables, setSelectedVariables] = useState<string[]>(['PM25']);
@@ -137,6 +138,18 @@ export function DataSources() {
 
   const { runs, currentRun, metrics, previewRows, loading, refreshing, error, triggerRemmaqSync } = useEtl();
   const { activeWorkspaceId } = useWorkspace();
+  const {
+    setSelectedSourceIds,
+    setSelectedManualDatasetId,
+    setSelectedStations,
+    setSelectedVariables: setAnalysisSelectedVariables,
+    setDateFrom,
+    setDateTo,
+    setRangePreset,
+    setRowLimit,
+    setPlotViewport,
+    setGranularity,
+  } = useAnalyticalWorkspaceState();
 
   const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
   const finalizedManualDatasets = useMemo(
@@ -252,10 +265,6 @@ export function DataSources() {
   }, [managerFilters, managerLoading, sourceType]);
 
   const handleSyncRemmaq = async () => {
-    if (!activeWorkspaceId) {
-      setActionMessage({ type: 'error', text: 'Select a workspace first.' });
-      return;
-    }
     if (selectedVariables.length === 0) {
       setActionMessage({ type: 'error', text: 'Select at least one variable.' });
       return;
@@ -365,6 +374,76 @@ export function DataSources() {
 
     if (currentStep < 3) {
       setCurrentStep((previous) => previous + 1);
+    }
+  };
+
+  const handleOpenInAnalytics = async () => {
+    try {
+      if (sourceType === 'manual') {
+        if (!manualDataset) {
+          setActionMessage({ type: 'info', text: 'Load a dataset first.' });
+          return;
+        }
+        setSelectedManualDatasetId(manualDataset.id);
+        setSelectedSourceIds([]);
+        setSelectedStations([]);
+        setAnalysisSelectedVariables([]);
+      } else if (sourceType === 'existing') {
+        if (selectedExistingDataset) {
+          setSelectedManualDatasetId(selectedExistingDataset.id);
+          setSelectedSourceIds([]);
+          setSelectedStations([]);
+          setAnalysisSelectedVariables([]);
+        } else {
+          const selectedSourceIdsForAnalysis =
+            managerSelectedSourceFiles.length > 0
+              ? managerSelectedSourceFiles
+              : Array.from(new Set(managerRows.map((row) => row.source_file_id)));
+          if (selectedSourceIdsForAnalysis.length === 0) {
+            setActionMessage({ type: 'info', text: 'Run a query or open a saved dataset first.' });
+            return;
+          }
+          setSelectedManualDatasetId(null);
+          setSelectedSourceIds(selectedSourceIdsForAnalysis);
+          setSelectedStations(managerSelectedStations);
+          setAnalysisSelectedVariables(managerSelectedVariables);
+          setDateFrom(managerDateFrom);
+          setDateTo(managerDateTo);
+          setRangePreset(managerDateFrom || managerDateTo ? 'custom' : 'all');
+          setRowLimit(Math.max(100, Math.min(5000, managerLimit)));
+        }
+      } else {
+        if (!latestRun) {
+          setActionMessage({ type: 'info', text: 'Run a REMMAQ sync first.' });
+          return;
+        }
+        const nextFilters = managerFilters ?? (await getAnalyticsFilters());
+        const matchingSources = nextFilters.sources.filter((source) => source.etl_run_id === latestRun.id);
+        if (matchingSources.length === 0) {
+          setActionMessage({
+            type: 'error',
+            text: 'The synced REMMAQ source is not available yet in analytics filters.',
+          });
+          return;
+        }
+        setSelectedManualDatasetId(null);
+        setSelectedSourceIds(matchingSources.map((source) => source.id));
+        setSelectedStations([]);
+        setAnalysisSelectedVariables(selectedVariables);
+        setDateFrom(remmaqDateFrom);
+        setDateTo(remmaqDateTo);
+        setRangePreset(remmaqDateFrom || remmaqDateTo ? 'custom' : 'all');
+        setRowLimit(Math.max(100, Math.min(5000, matchingSources[0]?.row_count ?? 5000)));
+      }
+
+      setGranularity('day');
+      setPlotViewport({ from: null, to: null });
+      onOpenAnalytics?.();
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Could not open the source in Analytics.',
+      });
     }
   };
 
@@ -569,8 +648,11 @@ export function DataSources() {
           <Button variant="outline" onClick={handlePrevious} disabled={currentStep === 1}>
             Back
           </Button>
-          <Button onClick={handleNext} disabled={currentStep === 3} className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
-            Continue
+          <Button
+            onClick={currentStep === 3 ? () => void handleOpenInAnalytics() : handleNext}
+            className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90"
+          >
+            {currentStep === 3 ? 'Open in Analytics' : 'Continue'}
           </Button>
         </div>
       </div>

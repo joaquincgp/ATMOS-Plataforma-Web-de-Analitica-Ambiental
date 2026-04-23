@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Database, Sigma, TrendingUp } from 'lucide-react';
 
 import { runAdvancedForecast, type AdvancedAnalyticsResponse, type AdvancedModel } from '@/api/modules/advanced-analytics';
-import { PlotlyChart } from '@/components/common/plotly-chart';
+import { PlotlyFigurePanel } from '@/components/common/plotly-figure-panel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -186,7 +186,9 @@ export function AnalyticalWorkspaceAdvancedPanel({
                   <SelectContent>
                     <SelectItem value="hour">Hour</SelectItem>
                     <SelectItem value="day">Day</SelectItem>
+                    <SelectItem value="week">Week</SelectItem>
                     <SelectItem value="month">Month</SelectItem>
+                    <SelectItem value="quarter">Quarter</SelectItem>
                     <SelectItem value="year">Year</SelectItem>
                   </SelectContent>
                 </Select>
@@ -296,7 +298,14 @@ export function AnalyticalWorkspaceAdvancedPanel({
 
             <div className="h-[560px] w-full">
               {response ? (
-                <PlotlyChart figure={response.figure_json} height={560} enableTimeNavigation />
+                <PlotlyFigurePanel
+                  figure={response.figure_json}
+                  title="Advanced Forecast"
+                  description="Backend forecast result for the current selection."
+                  height={560}
+                  enableTimeNavigation
+                  uirevision="advanced-analytics"
+                />
               ) : (
                 <div className="flex h-full w-full items-center justify-center rounded-md border bg-white px-6 text-center text-sm text-muted-foreground">
                   Run a model to generate the advanced forecast figure.

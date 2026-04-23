@@ -7,7 +7,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import type { EdaChartType } from '@/api/modules/eda';
-import { PlotlyChart } from '@/components/common/plotly-chart';
+import { PlotlyFigurePanel } from '@/components/common/plotly-figure-panel';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -60,12 +60,14 @@ export function AnalyticalWorkspaceScreen() {
     setRowLimit,
     plotViewport,
     setPlotViewport,
+    timeAggregation,
+    setTimeAggregation,
   } = useAnalyticalWorkspaceState();
   const [chartType, setChartType] = useState<ChartType>('line');
   const [labSection, setLabSection] = useState<LabSection>('load-data');
   const [workspaceMode, setWorkspaceMode] = useState<'exploration' | 'advanced'>('exploration');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rollingWindow, setRollingWindow] = useState(14);
+  const [rollingWindow, setRollingWindow] = useState(0);
   const [seasonalityMode, setSeasonalityMode] = useState<'weekday' | 'month' | 'hour'>('weekday');
   const [decompositionWindow, setDecompositionWindow] = useState(21);
   const [profileMode, setProfileMode] = useState<ProfileMode>('hour');
@@ -102,12 +104,14 @@ export function AnalyticalWorkspaceScreen() {
       dateTo,
       rowLimit,
       granularity,
+      timeAggregation,
       plotViewport,
     }),
     [
       dateFrom,
       dateTo,
       granularity,
+      timeAggregation,
       plotViewport,
       rowLimit,
       selectedManualDatasetId,
@@ -525,16 +529,13 @@ export function AnalyticalWorkspaceScreen() {
     }
 
     return (
-      <PlotlyChart
+      <PlotlyFigurePanel
         figure={plotResponse.figure_json}
+        title={activeSection.label}
+        description={getLabSectionDescription(labSection)}
         height={560}
         enableTimeNavigation={isTimeNavigableSection(labSection)}
         uirevision={`eda-${labSection}`}
-        onViewportChange={(viewport) => {
-          setPlotViewport((current) => (
-            current.from === viewport.from && current.to === viewport.to ? current : viewport
-          ));
-        }}
       />
     );
   };
@@ -645,6 +646,7 @@ export function AnalyticalWorkspaceScreen() {
                       <AnalyticalWorkspaceSectionControls
                         labSection={labSection}
                         granularity={granularity}
+                        timeAggregation={timeAggregation}
                         chartType={chartType}
                         rollingWindow={rollingWindow}
                         seasonalityMode={seasonalityMode}
@@ -661,6 +663,7 @@ export function AnalyticalWorkspaceScreen() {
                         pairVariableOptions={pairVariableOptions}
                         isGenericManualDataset={isGenericManualDataset}
                         onGranularityChange={setGranularity}
+                        onTimeAggregationChange={setTimeAggregation}
                         onChartTypeChange={setChartType}
                         onRollingWindowChange={setRollingWindow}
                         onSeasonalityModeChange={setSeasonalityMode}

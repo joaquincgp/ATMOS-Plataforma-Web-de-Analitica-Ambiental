@@ -96,9 +96,11 @@ class EdaGenericMixin:
                 group_columns.append(payload.facet_col)
             aggregated = (
                 working.groupby(group_columns, dropna=False)["_y_value"]
-                .agg(["mean", "std"])
+                .agg(
+                    _plot_value=lambda series: self._aggregate_values(series, payload.time_aggregation),
+                    _plot_std="std",
+                )
                 .reset_index()
-                .rename(columns={"mean": "_plot_value", "std": "_plot_std"})
             )
             plot_frame = aggregated.sort_values("_bucket")
             x_column = "_bucket"
@@ -107,6 +109,13 @@ class EdaGenericMixin:
             plot_frame = working.sort_values("_x_time")
             x_column = "_x_time"
             y_column = "_y_value"
+
+        if payload.rolling_window > 0 and chart_type != "scatter":
+            plot_frame = plot_frame.copy()
+            plot_frame[y_column] = pd.to_numeric(plot_frame[y_column], errors="coerce").rolling(
+                window=max(1, payload.rolling_window),
+                min_periods=1,
+            ).mean()
 
         plot_frame = self._apply_point_budget(plot_frame, payload.limit)
 

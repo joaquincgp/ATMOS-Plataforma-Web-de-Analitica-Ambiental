@@ -22,7 +22,9 @@ from app.services.manual_dataset import ManualDatasetEdaContext, ManualDatasetSe
 _FREQ_MAP = {
     "hour": "h",
     "day": "D",
+    "week": "W-MON",
     "month": "MS",
+    "quarter": "QS",
     "year": "YS",
 }
 

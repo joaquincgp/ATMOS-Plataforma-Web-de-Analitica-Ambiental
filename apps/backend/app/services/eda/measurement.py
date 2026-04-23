@@ -199,7 +199,8 @@ class EdaMeasurementMixin:
             fig.update_layout(xaxis_title="Hour", yaxis_title="Day")
             return self._finalize_figure(fig, "Calendar Heatmap")
 
-        plot_temporal_frame = self._apply_point_budget(temporal_frame, payload.limit)
+        plotted_temporal = self._smoothed_temporal_frame(temporal_frame, payload.rolling_window)
+        plot_temporal_frame = self._apply_point_budget(plotted_temporal, payload.limit)
         fig = go.Figure()
         for index, key in enumerate(series_keys):
             if key not in plot_temporal_frame.columns:
@@ -853,6 +854,7 @@ class EdaMeasurementMixin:
         frame: pd.DataFrame,
         granularity: str,
         split_by_station: bool,
+        aggregation_mode: str,
     ) -> tuple[pd.DataFrame, list[str]]:
         working = frame.copy()
         working["bucket"] = working["observed_at"].map(lambda value: self._bucket_key(value, granularity))
@@ -862,14 +864,32 @@ class EdaMeasurementMixin:
 
         pivot = (
             working.groupby(["bucket", series_column], dropna=False)["value"]
-            .mean()
+            .apply(lambda series: self._aggregate_values(series, aggregation_mode))
             .reset_index()
             .pivot(index="bucket", columns=series_column, values="value")
             .reset_index()
         )
-        overall = working.groupby("bucket", dropna=False)["value"].mean().reset_index(name="overall")
+        overall = (
+            working.groupby("bucket", dropna=False)["value"]
+            .apply(lambda series: self._aggregate_values(series, aggregation_mode))
+            .reset_index(name="overall")
+        )
         temporal = overall.merge(pivot, on="bucket", how="left").sort_values("bucket").reset_index(drop=True)
         return temporal, series_keys
+
+    def _smoothed_temporal_frame(self, temporal_frame: pd.DataFrame, window_size: int) -> pd.DataFrame:
+        if temporal_frame.empty or window_size <= 0:
+            return temporal_frame
+        safe_window = max(1, min(120, int(window_size)))
+        smoothed = temporal_frame.copy()
+        for column in smoothed.columns:
+            if column == "bucket":
+                continue
+            smoothed[column] = pd.to_numeric(smoothed[column], errors="coerce").rolling(
+                window=safe_window,
+                min_periods=1,
+            ).mean()
+        return smoothed
 
     def _rolling_stats_frame(self, temporal_frame: pd.DataFrame, window_size: int) -> pd.DataFrame:
         if temporal_frame.empty:

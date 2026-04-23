@@ -17,12 +17,12 @@ import type { PlotViewport } from '@/features/analysis/contexts/analytical-works
 import {
   normalizeDateRange,
   toIsoDate,
-  isTimeNavigableSection,
   type AggregationMode,
   type ChartType,
   type HeatmapProfileMode,
   type LabSection,
   type ProfileMode,
+  type TimeAggregationMode,
   type TimeGranularity,
 } from '@/features/analysis/lib/analytical-workspace-config';
 
@@ -35,6 +35,7 @@ interface SharedSelectionState {
   dateTo: string;
   rowLimit: number;
   granularity: TimeGranularity;
+  timeAggregation: TimeAggregationMode;
   plotViewport: PlotViewport;
 }
 
@@ -94,6 +95,18 @@ export function useAnalyticalWorkspaceController({
   plotControls,
   bootstrapActions,
 }: UseAnalyticalWorkspaceControllerParams) {
+  const {
+    selectedSourceIds,
+    selectedManualDatasetId,
+    selectedStations,
+    selectedVariables,
+    dateFrom,
+    dateTo,
+    rowLimit,
+    granularity,
+    timeAggregation,
+    plotViewport,
+  } = selection;
   const [filters, setFilters] = useState<AnalyticsFilterOptionsResponse | null>(null);
   const [manualDatasets, setManualDatasets] = useState<ManualDatasetResponse[]>([]);
   const [rows, setRows] = useState<AnalyticsDataRow[]>([]);
@@ -109,16 +122,6 @@ export function useAnalyticalWorkspaceController({
   const plotRequestIdRef = useRef(0);
 
   const runAnalysis = useCallback(async () => {
-    const {
-      selectedSourceIds,
-      selectedManualDatasetId,
-      selectedStations,
-      selectedVariables,
-      dateFrom,
-      dateTo,
-      rowLimit,
-      plotViewport,
-    } = selection;
     const selectedManualDataset =
       manualDatasets.find((dataset) => dataset.id === selectedManualDatasetId) ?? null;
     const isMeasurementManualDataset = selectedManualDataset?.dataset_kind === 'measurements';
@@ -146,16 +149,6 @@ export function useAnalyticalWorkspaceController({
         );
     const effectiveLimit = Math.max(100, Math.min(rowLimit, datasetMaxRows));
     const normalizedRange = normalizeDateRange(dateFrom, dateTo);
-    const visibleRange = isTimeNavigableSection(labSection)
-      ? {
-          from: plotViewport.from ?? undefined,
-          to: plotViewport.to ?? undefined,
-        }
-      : {
-          from: undefined,
-          to: undefined,
-        };
-
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
 
@@ -168,8 +161,6 @@ export function useAnalyticalWorkspaceController({
             variable_codes: selectedVariables.length > 0 ? selectedVariables : undefined,
             date_from: normalizedRange.from,
             date_to: normalizedRange.to,
-            view_from: visibleRange.from,
-            view_to: visibleRange.to,
             limit: effectiveLimit,
           })
         : await runAnalyticsQuery({
@@ -178,8 +169,6 @@ export function useAnalyticalWorkspaceController({
             variable_codes: selectedVariables.length > 0 ? selectedVariables : undefined,
             date_from: normalizedRange.from,
             date_to: normalizedRange.to,
-            view_from: visibleRange.from,
-            view_to: visibleRange.to,
             limit: effectiveLimit,
           } satisfies AnalyticsQueryRequest);
 
@@ -190,9 +179,7 @@ export function useAnalyticalWorkspaceController({
       setRows(response.rows);
       if (response.rows.length === 0) {
         setError(
-          visibleRange.from ?? visibleRange.to
-            ? 'No data for the visible time window and current filters.'
-            : 'No data for the selected source selection and filters.',
+          'No data for the selected source selection and filters.',
         );
       }
     } catch (err) {
@@ -206,20 +193,9 @@ export function useAnalyticalWorkspaceController({
         setLoading(false);
       }
     }
-  }, [filters, labSection, manualDatasets, selection]);
+  }, [dateFrom, dateTo, filters, manualDatasets, rowLimit, selectedManualDatasetId, selectedSourceIds, selectedStations, selectedVariables]);
 
   const runPlotRequest = useCallback(async () => {
-    const {
-      selectedSourceIds,
-      selectedManualDatasetId,
-      selectedStations,
-      selectedVariables,
-      dateFrom,
-      dateTo,
-      rowLimit,
-      granularity,
-      plotViewport,
-    } = selection;
     const selectedDataSourceCount = selectedSourceIds.length + (selectedManualDatasetId ? 1 : 0);
 
     if (labSection === 'load-data' || selectedDataSourceCount === 0) {
@@ -231,7 +207,6 @@ export function useAnalyticalWorkspaceController({
     const requestId = plotRequestIdRef.current + 1;
     plotRequestIdRef.current = requestId;
     const normalizedRange = normalizeDateRange(dateFrom, dateTo);
-    const enableTimeNavigation = isTimeNavigableSection(labSection);
     const chartTypeForSection =
       labSection === 'rolling'
         ? plotControls.chartType
@@ -252,10 +227,9 @@ export function useAnalyticalWorkspaceController({
         variable_codes: selectedVariables,
         date_from: normalizedRange.from ?? undefined,
         date_to: normalizedRange.to ?? undefined,
-        view_from: enableTimeNavigation ? plotViewport.from ?? undefined : undefined,
-        view_to: enableTimeNavigation ? plotViewport.to ?? undefined : undefined,
         limit: rowLimit,
         granularity,
+        time_aggregation: timeAggregation,
         chart_type: chartTypeForSection,
         rolling_window: plotControls.rollingWindow,
         decomposition_window: plotControls.decompositionWindow,
@@ -300,7 +274,19 @@ export function useAnalyticalWorkspaceController({
         setPlotLoading(false);
       }
     }
-  }, [labSection, plotControls, selection]);
+  }, [
+    dateFrom,
+    dateTo,
+    granularity,
+    labSection,
+    plotControls,
+    rowLimit,
+    selectedManualDatasetId,
+    selectedSourceIds,
+    selectedStations,
+    selectedVariables,
+    timeAggregation,
+  ]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -318,15 +304,29 @@ export function useAnalyticalWorkspaceController({
             ? firstSource.variable_codes.slice(0, 2)
             : nextFilters.variables.slice(0, 2).map((item) => item.code);
 
-        bootstrapActions.setDateFrom(from);
-        bootstrapActions.setDateTo(to);
-        bootstrapActions.setSelectedSourceIds(firstSource ? [firstSource.id] : []);
-        bootstrapActions.setSelectedVariables(initialVariables);
-        bootstrapActions.setPairVariableX(initialVariables[0] ?? nextFilters.variables[0]?.code ?? '');
-        bootstrapActions.setPairVariableY(initialVariables[1] ?? initialVariables[0] ?? nextFilters.variables[1]?.code ?? '');
-        bootstrapActions.setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
-        bootstrapActions.setRangePreset('all');
-        bootstrapActions.setPlotViewport({ from: null, to: null });
+        if (!dateFrom) {
+          bootstrapActions.setDateFrom(from);
+        }
+        if (!dateTo) {
+          bootstrapActions.setDateTo(to);
+        }
+        if (!selectedManualDatasetId && selectedSourceIds.length === 0) {
+          bootstrapActions.setSelectedSourceIds(firstSource ? [firstSource.id] : []);
+        }
+        if (selectedVariables.length === 0) {
+          bootstrapActions.setSelectedVariables(initialVariables);
+          bootstrapActions.setPairVariableX(initialVariables[0] ?? nextFilters.variables[0]?.code ?? '');
+          bootstrapActions.setPairVariableY(initialVariables[1] ?? initialVariables[0] ?? nextFilters.variables[1]?.code ?? '');
+        }
+        if (!rowLimit) {
+          bootstrapActions.setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
+        }
+        if (!dateFrom && !dateTo) {
+          bootstrapActions.setRangePreset('all');
+        }
+        if (!plotViewport.from && !plotViewport.to) {
+          bootstrapActions.setPlotViewport({ from: null, to: null });
+        }
         setBootstrapReady(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not load analytics filters.');
@@ -336,7 +336,7 @@ export function useAnalyticalWorkspaceController({
     };
 
     void bootstrap();
-  }, [bootstrapActions]);
+  }, [bootstrapActions, dateFrom, dateTo, plotViewport.from, plotViewport.to, rowLimit, selectedManualDatasetId, selectedSourceIds.length, selectedVariables.length]);
 
   useEffect(() => {
     if (!activeWorkspaceId) {
@@ -384,14 +384,7 @@ export function useAnalyticalWorkspaceController({
 
   useEffect(() => {
     bootstrapActions.setPlotViewport({ from: null, to: null });
-  }, [
-    bootstrapActions,
-    labSection,
-    selection.selectedManualDatasetId,
-    selection.selectedSourceIds,
-    selection.dateFrom,
-    selection.dateTo,
-  ]);
+  }, [bootstrapActions, labSection, selectedManualDatasetId, selectedSourceIds, dateFrom, dateTo]);
 
   useEffect(() => {
     const timeout = setTimeout(() => {

@@ -7,7 +7,7 @@ import {
   type SetStateAction,
 } from 'react';
 
-import type { TimeGranularity } from '@/features/analysis/lib/analytical-workspace-config';
+import type { TimeAggregationMode, TimeGranularity } from '@/features/analysis/lib/analytical-workspace-config';
 
 export interface PlotViewport {
   from: string | null;
@@ -37,6 +37,8 @@ interface AnalyticalWorkspaceStateValue {
   setPlotViewport: Dispatch<SetStateAction<PlotViewport>>;
   granularity: TimeGranularity;
   setGranularity: Dispatch<SetStateAction<TimeGranularity>>;
+  timeAggregation: TimeAggregationMode;
+  setTimeAggregation: Dispatch<SetStateAction<TimeAggregationMode>>;
 }
 
 const AnalyticalWorkspaceContext = createContext<AnalyticalWorkspaceStateValue | undefined>(undefined);
@@ -53,6 +55,7 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
   const [rowLimit, setRowLimit] = useState(50000);
   const [plotViewport, setPlotViewport] = useState<PlotViewport>({ from: null, to: null });
   const [granularity, setGranularity] = useState<TimeGranularity>('day');
+  const [timeAggregation, setTimeAggregation] = useState<TimeAggregationMode>('mean');
 
   return (
     <AnalyticalWorkspaceContext.Provider
@@ -79,6 +82,8 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
         setPlotViewport,
         granularity,
         setGranularity,
+        timeAggregation,
+        setTimeAggregation,
       }}
     >
       {children}

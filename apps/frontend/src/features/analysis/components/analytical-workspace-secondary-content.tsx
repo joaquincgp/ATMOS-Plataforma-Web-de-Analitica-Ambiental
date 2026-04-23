@@ -1,7 +1,7 @@
 import { BarChart3, LineChart as LineChartIcon, TrendingUp } from 'lucide-react';
 
 import type { EdaPlotResponse } from '@/api/modules/eda';
-import { PlotlyChart } from '@/components/common/plotly-chart';
+import { PlotlyFigurePanel } from '@/components/common/plotly-figure-panel';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AnalyticalWorkspaceKpiCard as KpiCard } from '@/features/analysis/components/analytical-workspace-kpi-card';
 import { round, type LabSection } from '@/features/analysis/lib/analytical-workspace-config';
@@ -38,9 +38,13 @@ export function AnalyticalWorkspaceSecondaryContent({
                 {figure.description && <CardDescription>{figure.description}</CardDescription>}
               </CardHeader>
               <CardContent>
-                <div className="h-[320px] w-full">
-                  <PlotlyChart figure={figure.figure_json} height={320} />
-                </div>
+                <PlotlyFigurePanel
+                  figure={figure.figure_json}
+                  title={figure.title}
+                  description={figure.description}
+                  height={320}
+                  uirevision={`secondary-${figure.key}`}
+                />
               </CardContent>
             </Card>
           ))}

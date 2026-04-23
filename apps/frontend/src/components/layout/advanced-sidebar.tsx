@@ -23,13 +23,13 @@ export function AdvancedSidebar({
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'projects', icon: FolderOpen, label: 'Projects' },
     { id: 'data-sources', icon: Database, label: 'Data Manager' },
+    { id: 'analytical-workspace', icon: BarChart3, label: 'Analytics' },
     { id: 'settings', icon: Settings, label: 'Settings' },
   ];
 
   const projectAssets: { id: AppView; icon: typeof Code; label: string }[] = [
     { id: 'code-editor', icon: Code, label: 'Code Editor' },
     { id: 'ml-experiments', icon: Cpu, label: 'ML Experiments' },
-    { id: 'analytical-workspace', icon: BarChart3, label: 'Analytics' },
   ];
 
   return (

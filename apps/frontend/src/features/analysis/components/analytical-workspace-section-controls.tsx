@@ -1,21 +1,21 @@
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
-  CHART_OPTIONS,
   GRANULARITY_OPTIONS,
   type AggregationMode,
   type ChartType,
   type HeatmapProfileMode,
   type LabSection,
   type ProfileMode,
+  type TimeAggregationMode,
   type TimeGranularity,
 } from '@/features/analysis/lib/analytical-workspace-config';
 
 interface AnalyticalWorkspaceSectionControlsProps {
   labSection: LabSection;
   granularity: TimeGranularity;
+  timeAggregation: TimeAggregationMode;
   chartType: ChartType;
   rollingWindow: number;
   seasonalityMode: 'weekday' | 'month' | 'hour';
@@ -32,6 +32,7 @@ interface AnalyticalWorkspaceSectionControlsProps {
   pairVariableOptions: string[];
   isGenericManualDataset: boolean;
   onGranularityChange: (value: TimeGranularity) => void;
+  onTimeAggregationChange: (value: TimeAggregationMode) => void;
   onChartTypeChange: (value: ChartType) => void;
   onRollingWindowChange: (value: number) => void;
   onSeasonalityModeChange: (value: 'weekday' | 'month' | 'hour') => void;
@@ -50,6 +51,7 @@ interface AnalyticalWorkspaceSectionControlsProps {
 export function AnalyticalWorkspaceSectionControls({
   labSection,
   granularity,
+  timeAggregation,
   chartType,
   rollingWindow,
   seasonalityMode,
@@ -66,6 +68,7 @@ export function AnalyticalWorkspaceSectionControls({
   pairVariableOptions,
   isGenericManualDataset,
   onGranularityChange,
+  onTimeAggregationChange,
   onChartTypeChange,
   onRollingWindowChange,
   onSeasonalityModeChange,
@@ -80,60 +83,69 @@ export function AnalyticalWorkspaceSectionControls({
   onPairVariableXChange,
   onPairVariableYChange,
 }: AnalyticalWorkspaceSectionControlsProps) {
-  const renderGranularityControl = (label = 'Time Detail') => (
+  const renderGranularityControl = (label = 'Select summarization frequency') => (
     <div className="space-y-1.5">
       <Label className="text-xs">{label}</Label>
-      <ToggleGroup
-        type="single"
-        value={granularity}
-        onValueChange={(value) => value && onGranularityChange(value as TimeGranularity)}
-        variant="outline"
-        className="w-full grid grid-cols-4"
-      >
-        {GRANULARITY_OPTIONS.map((option) => (
-          <ToggleGroupItem key={option.id} value={option.id} className="h-8 text-[10px]">
-            {option.label}
-          </ToggleGroupItem>
-        ))}
-      </ToggleGroup>
+      <Select value={granularity} onValueChange={(value) => onGranularityChange(value as TimeGranularity)}>
+        <SelectTrigger className="h-9 text-xs">
+          <SelectValue placeholder="Summarization frequency" />
+        </SelectTrigger>
+        <SelectContent>
+          {GRANULARITY_OPTIONS.map((option) => (
+            <SelectItem key={option.id} value={option.id}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
+  const renderTimeAggregationControl = () => (
+    <div className="space-y-1.5">
+      <Label className="text-xs">Aggregation Method</Label>
+      <Select value={timeAggregation} onValueChange={(value) => onTimeAggregationChange(value as TimeAggregationMode)}>
+        <SelectTrigger className="h-9 text-xs">
+          <SelectValue placeholder="Aggregation method" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="mean">Mean</SelectItem>
+          <SelectItem value="sum">Sum</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
   );
 
   if (labSection === 'rolling') {
     return (
-      <div className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr_auto] gap-3 items-end mb-4">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Chart Type</Label>
-          <ToggleGroup
-            type="single"
-            value={chartType}
-            onValueChange={(value) => value && onChartTypeChange(value as ChartType)}
-            variant="outline"
-            className="w-full grid grid-cols-2 xl:grid-cols-4"
-          >
-            {CHART_OPTIONS.map((option) => {
-              const Icon = option.icon;
-              return (
-                <ToggleGroupItem key={option.id} value={option.id} className="h-9 gap-1.5 text-[11px]">
-                  <Icon className="w-3.5 h-3.5" />
-                  {option.label}
-                </ToggleGroupItem>
-              );
-            })}
-          </ToggleGroup>
-        </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
+        {renderTimeAggregationControl()}
+        <div className="space-y-1.5">
+          <Label className="text-xs">Plot type</Label>
+          <Select value={chartType} onValueChange={(value) => onChartTypeChange(value as ChartType)}>
+            <SelectTrigger className="h-9 text-xs">
+              <SelectValue placeholder="Plot type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="line">Line</SelectItem>
+              <SelectItem value="bar">Bar</SelectItem>
+              <SelectItem value="scatter">Scatter</SelectItem>
+              <SelectItem value="heatmap">Heatmap</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex items-center gap-2">
           <Label htmlFor="rolling-window" className="text-xs text-muted-foreground">
-            Rolling window
+            Rolling Window
           </Label>
           <Input
             id="rolling-window"
             type="number"
-            min={2}
-            max={90}
+            min={0}
+            max={60}
             value={rollingWindow}
-            onChange={(event) => onRollingWindowChange(Math.max(2, Math.min(90, Number(event.target.value || 14))))}
+            onChange={(event) => onRollingWindowChange(Math.max(0, Math.min(60, Number(event.target.value || 0))))}
             className="h-8 w-24"
           />
         </div>
@@ -142,7 +154,12 @@ export function AnalyticalWorkspaceSectionControls({
   }
 
   if (labSection === 'anomaly') {
-    return <div className="mb-4">{renderGranularityControl()}</div>;
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        {renderGranularityControl()}
+        {renderTimeAggregationControl()}
+      </div>
+    );
   }
 
   if (labSection === 'seasonality') {
@@ -220,8 +237,9 @@ export function AnalyticalWorkspaceSectionControls({
 
   if (labSection === 'decomposition') {
     return (
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
+        {renderTimeAggregationControl()}
         <div className="flex items-center gap-2">
           <Label htmlFor="decomposition-window" className="text-xs text-muted-foreground">
             Trend window
@@ -241,13 +259,19 @@ export function AnalyticalWorkspaceSectionControls({
   }
 
   if (labSection === 'autocorr' || labSection === 'pacf') {
-    return <div className="mb-4">{renderGranularityControl()}</div>;
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        {renderGranularityControl()}
+        {renderTimeAggregationControl()}
+      </div>
+    );
   }
 
   if (labSection === 'forecast') {
     return (
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
+        {renderTimeAggregationControl()}
         <div className="flex items-center gap-2">
           <Label htmlFor="forecast-horizon" className="text-xs text-muted-foreground">
             Forecast horizon
@@ -268,8 +292,9 @@ export function AnalyticalWorkspaceSectionControls({
 
   if (labSection === 'changepoints') {
     return (
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto_auto] gap-3 items-end mb-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_auto_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
+        {renderTimeAggregationControl()}
         <div className="flex items-center gap-2">
           <Label htmlFor="changepoint-window" className="text-xs text-muted-foreground">
             Smoothing
@@ -307,8 +332,9 @@ export function AnalyticalWorkspaceSectionControls({
 
   if (labSection === 'trend') {
     return (
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-3 items-end mb-4">
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
+        {renderTimeAggregationControl()}
         <div>
           <button
             type="button"

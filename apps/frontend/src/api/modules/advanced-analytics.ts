@@ -11,7 +11,7 @@ export interface AdvancedAnalyticsRequest {
   date_to?: string;
   view_from?: string;
   view_to?: string;
-  granularity?: 'hour' | 'day' | 'month' | 'year';
+  granularity?: 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
   x_axis?: string;
   y_axis?: string;
   model?: AdvancedModel;

@@ -13,7 +13,8 @@ import {
 import type { AnalyticsDataRow } from '@/api/modules/analytics';
 
 export type ChartType = 'line' | 'bar' | 'scatter' | 'heatmap';
-export type TimeGranularity = 'hour' | 'day' | 'month' | 'year';
+export type TimeGranularity = 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+export type TimeAggregationMode = 'mean' | 'sum';
 export type AggregationMode = 'mean' | 'median' | 'sum' | 'min' | 'max' | 'std';
 export type ProfileMode = 'hour' | 'weekday' | 'month' | 'quarter' | 'year';
 export type HeatmapProfileMode = 'month' | 'hour' | 'weekday' | 'week';
@@ -65,7 +66,9 @@ export const GRANULARITY_OPTIONS: {
 }[] = [
   { id: 'hour', label: 'Hour' },
   { id: 'day', label: 'Day' },
+  { id: 'week', label: 'Week' },
   { id: 'month', label: 'Month' },
+  { id: 'quarter', label: 'Quarter' },
   { id: 'year', label: 'Year' },
 ];
 

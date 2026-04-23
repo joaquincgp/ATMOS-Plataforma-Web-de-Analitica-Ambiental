@@ -145,8 +145,12 @@ class EdaSharedMixin:
             return timestamp
         if granularity == "year":
             return timestamp + pd.DateOffset(years=steps)
+        if granularity == "quarter":
+            return timestamp + pd.DateOffset(months=steps * 3)
         if granularity == "month":
             return timestamp + pd.DateOffset(months=steps)
+        if granularity == "week":
+            return timestamp + pd.Timedelta(weeks=steps)
         if granularity == "hour":
             return timestamp + pd.Timedelta(hours=steps)
         return timestamp + pd.Timedelta(days=steps)
@@ -267,8 +271,13 @@ class EdaSharedMixin:
         timestamp = pd.Timestamp(value)
         if granularity == "year":
             return f"{timestamp.year}"
+        if granularity == "quarter":
+            return f"{timestamp.year}-Q{timestamp.quarter}"
         if granularity == "month":
             return f"{timestamp.year}-{timestamp.month:02d}"
+        if granularity == "week":
+            iso = timestamp.isocalendar()
+            return f"{int(iso.year)}-W{int(iso.week):02d}"
         if granularity == "hour":
             return f"{timestamp.year}-{timestamp.month:02d}-{timestamp.day:02d} {timestamp.hour:02d}:00"
         return f"{timestamp.year}-{timestamp.month:02d}-{timestamp.day:02d}"
@@ -276,10 +285,21 @@ class EdaSharedMixin:
     def _increment_bucket(self, bucket: str, granularity: str, step: int) -> str:
         if granularity == "year":
             return f"{int(bucket) + step}"
+        if granularity == "quarter":
+            year_part, quarter_part = bucket.split("-Q")
+            base = pd.Period(f"{year_part}Q{quarter_part}", freq="Q")
+            target = base + step
+            return f"{target.year}-Q{target.quarter}"
         if granularity == "month":
             base = pd.Timestamp(f"{bucket}-01T00:00:00Z")
             target = base + pd.DateOffset(months=step)
             return f"{target.year}-{target.month:02d}"
+        if granularity == "week":
+            year_part, week_part = bucket.split("-W")
+            base = pd.Timestamp.fromisocalendar(int(year_part), int(week_part), 1).tz_localize("UTC")
+            target = base + pd.Timedelta(weeks=step)
+            iso = target.isocalendar()
+            return f"{int(iso.year)}-W{int(iso.week):02d}"
         if granularity == "hour":
             base = pd.Timestamp(bucket.replace(" ", "T") + ":00Z")
             target = base + pd.Timedelta(hours=step)
@@ -291,8 +311,12 @@ class EdaSharedMixin:
     def _seasonal_period(self, granularity: str) -> int:
         if granularity == "hour":
             return 24
+        if granularity == "week":
+            return 52
         if granularity == "month":
             return 12
+        if granularity == "quarter":
+            return 4
         if granularity == "year":
             return 4
         return 7

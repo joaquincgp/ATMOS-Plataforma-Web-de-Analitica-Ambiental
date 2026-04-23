@@ -58,7 +58,12 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             )
 
         split_by_station = len(payload.variable_codes) <= 1 and len(payload.station_codes) > 1
-        temporal_frame, series_keys = self._compute_temporal_frame(frame, payload.granularity, split_by_station)
+        temporal_frame, series_keys = self._compute_temporal_frame(
+            frame,
+            payload.granularity,
+            split_by_station,
+            payload.time_aggregation,
+        )
         summary_stats = self._measurement_summary_stats(frame, temporal_frame)
         variable_summary = self._measurement_variable_summary(frame)
         stats: dict[str, Any] = {
