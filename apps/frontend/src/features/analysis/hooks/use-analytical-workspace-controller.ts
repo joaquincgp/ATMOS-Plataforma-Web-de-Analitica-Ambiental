@@ -304,10 +304,10 @@ export function useAnalyticalWorkspaceController({
             ? firstSource.variable_codes.slice(0, 2)
             : nextFilters.variables.slice(0, 2).map((item) => item.code);
 
-        if (!dateFrom) {
+        if (!dateFrom && !selectedManualDatasetId) {
           bootstrapActions.setDateFrom(from);
         }
-        if (!dateTo) {
+        if (!dateTo && !selectedManualDatasetId) {
           bootstrapActions.setDateTo(to);
         }
         if (!selectedManualDatasetId && selectedSourceIds.length === 0) {
