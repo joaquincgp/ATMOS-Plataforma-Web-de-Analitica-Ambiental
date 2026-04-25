@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Home, FolderOpen, Database, Settings, Code, Cpu, BarChart3, ChevronDown, ChevronRight, X, PanelLeft } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Home, FolderOpen, Database, Settings, Code, Cpu, BarChart3, ChevronDown, ChevronRight, PanelLeft } from 'lucide-react';
 import type { AppView } from '@/store/app-store';
 
 interface AdvancedSidebarProps {
@@ -52,23 +51,14 @@ export function AdvancedSidebar({
       >
         <div
           className={`
-            overflow-hidden whitespace-nowrap
-            transition-[max-width,opacity] duration-200 ease-in-out
-            ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}
+            overflow-hidden transition-[opacity] duration-200 ease-in-out
+            ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}
           `}
         >
           <h1 className="text-2xl font-black text-sidebar-foreground tracking-tight">ATMOS</h1>
-          <p className="text-[9pt] font-light text-sidebar-foreground/60 mt-1">
+          <p className="text-[9pt] font-light text-sidebar-foreground/60 mt-1 leading-snug">
             Environmental Research and Data Analytics Platform
           </p>
-        </div>
-        <div
-          className={`
-            transition-[max-width,opacity] duration-200 ease-in-out shrink-0
-            ${collapsed ? 'max-w-[20px] opacity-100' : 'max-w-0 opacity-0 overflow-hidden'}
-          `}
-        >
-          <BarChart3 className="w-5 h-5 text-sidebar-foreground/60" />
         </div>
       </div>
 
@@ -127,14 +117,6 @@ export function AdvancedSidebar({
                 {projectAssetsCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 <span>Project Assets</span>
               </button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onCloseProject}
-                className="h-6 w-6 p-0 hover:bg-sidebar-accent"
-              >
-                <X className="w-4 h-4" />
-              </Button>
             </div>
 
             {!projectAssetsCollapsed && (
