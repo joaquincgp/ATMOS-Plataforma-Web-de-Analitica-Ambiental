@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { PanelLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -40,29 +40,47 @@ export function AnalyticalWorkspaceSidebar({
   const { selectedStations, selectedVariables } = useAnalyticalWorkspaceState();
 
   return (
-    <aside className={`${collapsed ? 'w-20' : 'w-72'} shrink-0 border-r border-gray-200 bg-white flex flex-col transition-[width] duration-200`}>
-      <div className={`border-b border-gray-200 ${collapsed ? 'px-2 py-3' : 'px-4 py-4'}`}>
-        <div className="flex items-center justify-between gap-2">
-          {!collapsed && (
-            <div>
-              <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
-              <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
-            </div>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-8 w-8 p-0 shrink-0"
-            onClick={onToggleCollapsed}
-            aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
-            title={collapsed ? 'Expand panel' : 'Collapse panel'}
-          >
-            {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-          </Button>
+    <aside
+      className={`
+        ${collapsed ? 'w-16' : 'w-72'} shrink-0 border-r border-gray-200 bg-white
+        flex flex-col transition-[width] duration-300 ease-in-out overflow-hidden
+      `}
+    >
+      {/* Header */}
+      <div
+        className={`
+          border-b border-gray-200 flex items-center gap-2
+          ${collapsed ? 'justify-center px-2 py-3' : 'justify-between px-4 py-4'}
+          transition-[padding] duration-300 ease-in-out
+        `}
+      >
+        <div
+          className={`
+            overflow-hidden whitespace-nowrap min-w-0
+            transition-[max-width,opacity] duration-200 ease-in-out
+            ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}
+          `}
+        >
+          <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
+          <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
         </div>
+
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 shrink-0 text-gray-400 hover:text-gray-600"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? 'Expand panel' : 'Collapse panel'}
+          title={collapsed ? 'Expand panel' : 'Collapse panel'}
+        >
+          <PanelLeft
+            className={`w-4 h-4 transition-transform duration-300 ease-in-out ${collapsed ? 'rotate-180' : 'rotate-0'}`}
+          />
+        </Button>
       </div>
 
+      {/* Analysis section buttons */}
       <ScrollArea className="flex-1">
         <div className="p-2 space-y-1">
           {ANALYSIS_SECTIONS.map((section) => {
@@ -75,22 +93,39 @@ export function AnalyticalWorkspaceSidebar({
                 key={section.value}
                 type="button"
                 onClick={() => onSelectSection(section.value)}
-                className={`w-full flex items-center ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'} py-2.5 rounded-lg text-sm transition-all ${
-                  isActive ? 'bg-[#509EE3] text-white shadow-md' : 'hover:bg-gray-100 text-foreground'
-                }`}
+                className={`
+                  w-full flex items-center py-2.5 rounded-lg text-sm transition-all duration-200
+                  ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}
+                  ${isActive ? 'bg-[#509EE3] text-white shadow-md' : 'hover:bg-gray-100 text-foreground'}
+                `}
                 title={section.label}
               >
-                <Icon className="w-4 h-4" style={{ color: isActive ? 'white' : section.color }} />
-                {!collapsed && <span className="flex-1 text-left">{section.label}</span>}
-                {locked && <div className="w-2 h-2 rounded-full bg-orange-400" />}
+                <Icon className="w-4 h-4 shrink-0" style={{ color: isActive ? 'white' : section.color }} />
+                <span
+                  className={`
+                    flex-1 text-left whitespace-nowrap overflow-hidden
+                    transition-[max-width,opacity] duration-200 ease-in-out
+                    ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[200px] opacity-100'}
+                  `}
+                >
+                  {section.label}
+                </span>
+                {locked && !collapsed && <div className="w-2 h-2 rounded-full bg-orange-400 shrink-0" />}
               </button>
             );
           })}
         </div>
       </ScrollArea>
 
-      {!collapsed && labSection !== 'load-data' && (
-        <div className="border-t border-gray-200 p-4 space-y-4">
+      {/* Variables & Current Selection panel */}
+      <div
+        className={`
+          border-t border-gray-200 overflow-hidden
+          transition-[max-height,opacity] duration-300 ease-in-out
+          ${collapsed || labSection === 'load-data' ? 'max-h-0 opacity-0' : 'max-h-[420px] opacity-100'}
+        `}
+      >
+        <div className="p-4 space-y-4">
           <div className="space-y-1.5">
             <Label className="text-xs">Variables</Label>
             <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[136px] overflow-auto">
@@ -132,7 +167,7 @@ export function AnalyticalWorkspaceSidebar({
             </div>
           </div>
         </div>
-      )}
+      </div>
     </aside>
   );
 }
