@@ -37,6 +37,8 @@ export interface AnalyticsQueryRequest {
   variable_codes?: string[];
   date_from?: string;
   date_to?: string;
+  view_from?: string;
+  view_to?: string;
   limit?: number;
 }
 

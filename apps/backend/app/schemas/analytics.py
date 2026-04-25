@@ -43,7 +43,9 @@ class AnalyticsQueryRequest(BaseModel):
     variable_codes: list[str] = Field(default_factory=list)
     date_from: date | None = None
     date_to: date | None = None
-    limit: int = Field(default=5000, ge=100)
+    view_from: datetime | None = None
+    view_to: datetime | None = None
+    limit: int | None = Field(default=None, ge=1)
 
 
 class AnalyticsDataRowResponse(BaseModel):

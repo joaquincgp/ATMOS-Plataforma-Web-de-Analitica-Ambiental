@@ -1,0 +1,216 @@
+# .gitlab-ci.yml — ATMOS Data Analytics Web Platform
+#
+# Stack  : Python 3.11 (FastAPI + uvicorn) · React 18 (Vite + TypeScript)
+# Deploy : Azure App Service via zip deploy (az webapp deploy)
+#
+# Variables requeridas en GitLab → Settings → CI/CD → Variables:
+#
+#   AZURE_CLIENT_ID          App ID del service principal           (masked)
+#   AZURE_CLIENT_SECRET      Secret del service principal           (masked, protected)
+#   AZURE_TENANT_ID          ID del tenant de Azure AD
+#   AZURE_SUBSCRIPTION_ID    ID de la suscripción de Azure
+#   AZURE_RESOURCE_GROUP     Nombre del resource group
+#   AZURE_BACKEND_APP_NAME   Nombre del App Service del backend
+#   AZURE_FRONTEND_APP_NAME  Nombre del App Service del frontend
+#   VITE_API_BASE_URL        URL pública de la API (ej: https://api.atmos.example.com)
+#
+# Nota: prophet y statsmodels tienen compilación pesada en la primera ejecución.
+# El caché de pip reduce significativamente las corridas subsiguientes.
+
+stages:
+  - validate
+  - test
+  - build
+  - deploy
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bases reutilizables
+# ──────────────────────────────────────────────────────────────────────────────
+
+.cache:pip:
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cache/pip/
+
+.cache:npm:
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+  cache:
+    key: npm-$CI_COMMIT_REF_SLUG
+    paths:
+      - .cache/npm/
+      - node_modules/
+      - apps/frontend/node_modules/
+
+.deploy:base:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:latest
+  before_script:
+    - az login --service-principal
+        --username "$AZURE_CLIENT_ID"
+        --password "$AZURE_CLIENT_SECRET"
+        --tenant "$AZURE_TENANT_ID"
+        --output none
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+      allow_failure: false
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VALIDATE
+# ──────────────────────────────────────────────────────────────────────────────
+
+backend:lint:
+  stage: validate
+  image: python:3.11-slim
+  extends: .cache:pip
+  before_script:
+    - pip install --upgrade pip --quiet
+    - pip install -e "apps/backend[dev]" --quiet
+  script:
+    - ruff check apps/backend/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+frontend:lint:
+  stage: validate
+  image: node:20-alpine
+  extends: .cache:npm
+  before_script:
+    - npm ci --prefer-offline
+  script:
+    - npm run lint:frontend
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+frontend:typecheck:
+  stage: validate
+  image: node:20-alpine
+  extends: .cache:npm
+  before_script:
+    - npm ci --prefer-offline
+  script:
+    - npm run typecheck:frontend
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TEST
+# ──────────────────────────────────────────────────────────────────────────────
+
+backend:test:
+  stage: test
+  image: python:3.11-slim
+  extends: .cache:pip
+  timeout: 30 minutes
+  services:
+    - name: postgis/postgis:16-3.4
+      alias: postgres
+  variables:
+    # Credenciales del servicio PostgreSQL de CI
+    POSTGRES_DB: atmos_test
+    POSTGRES_USER: atmos
+    POSTGRES_PASSWORD: atmos_test
+    # Configuración de la app durante los tests
+    DATABASE_URL: "postgresql+psycopg://atmos:atmos_test@postgres/atmos_test"
+    SECRET_KEY: "ci-only-not-for-production-replace-in-real-env"
+    ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+    REFRESH_TOKEN_EXPIRE_DAYS: "14"
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: "30"
+    AUTO_INIT_DB_ON_STARTUP: "true"
+    WORKSPACE_STORAGE_DIR: "/tmp/atmos_workspace"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq postgresql-client
+    - pip install --upgrade pip --quiet
+    - pip install -e "apps/backend[dev]" --quiet
+    # Esperar a que PostgreSQL acepte conexiones
+    - until pg_isready -h postgres -p 5432 -U atmos; do echo "Waiting for postgres…"; sleep 2; done
+  script:
+    - cd apps/backend
+    - pytest tests/ -v --tb=short --junitxml=../../reports/backend-junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: reports/backend-junit.xml
+    expire_in: 14 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BUILD
+# ──────────────────────────────────────────────────────────────────────────────
+
+frontend:build:
+  stage: build
+  image: node:20-alpine
+  extends: .cache:npm
+  variables:
+    npm_config_cache: "$CI_PROJECT_DIR/.cache/npm"
+    VITE_API_BASE_URL: $VITE_API_BASE_URL
+  before_script:
+    - npm ci --prefer-offline
+  script:
+    - npm run build:frontend
+  artifacts:
+    paths:
+      - apps/frontend/dist/
+    expire_in: 1 day
+  rules:
+    # En MRs se compila con URL de placeholder para verificar que el build no rompe
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        VITE_API_BASE_URL: "http://localhost:8000"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DEPLOY  (solo rama main, aprobación manual requerida)
+# ──────────────────────────────────────────────────────────────────────────────
+
+deploy:backend:
+  extends: .deploy:base
+  environment:
+    name: production/backend
+    url: https://$AZURE_BACKEND_APP_NAME.azurewebsites.net
+  script:
+    - cd apps/backend
+    - zip -r ../../backend-deploy.zip . -x "*.pyc" -x "*/__pycache__/*" -x "tests/*" -x ".venv/*" -x "data/*"
+    - az webapp deploy
+        --resource-group "$AZURE_RESOURCE_GROUP"
+        --name "$AZURE_BACKEND_APP_NAME"
+        --src-path ../../backend-deploy.zip
+        --type zip
+        --async false
+
+deploy:frontend:
+  extends: .deploy:base
+  needs:
+    - job: frontend:build
+      artifacts: true
+  environment:
+    name: production/frontend
+    url: https://$AZURE_FRONTEND_APP_NAME.azurewebsites.net
+  before_script:
+    - az login --service-principal
+        --username "$AZURE_CLIENT_ID"
+        --password "$AZURE_CLIENT_SECRET"
+        --tenant "$AZURE_TENANT_ID"
+        --output none
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - apt-get update -qq && apt-get install -y -qq zip
+  script:
+    - cd apps/frontend/dist
+    - zip -r ../../../frontend-deploy.zip .
+    - az webapp deploy
+        --resource-group "$AZURE_RESOURCE_GROUP"
+        --name "$AZURE_FRONTEND_APP_NAME"
+        --src-path ../../../frontend-deploy.zip
+        --type zip
+        --async false

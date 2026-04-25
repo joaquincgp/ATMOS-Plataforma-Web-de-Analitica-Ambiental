@@ -15,6 +15,7 @@ interface PlotComponentProps {
   style?: CSSProperties;
   onError?: (error: Error) => void;
   onInitialized?: () => void;
+  onRelayout?: (event: Record<string, unknown>) => void;
 }
 
 type PlotComponent = ComponentType<PlotComponentProps>;
@@ -23,10 +24,16 @@ export function PlotlyChart({
   figure,
   height = 560,
   className = '',
+  enableTimeNavigation = false,
+  uirevision,
+  onViewportChange,
 }: {
   figure: PlotlyFigure | null | undefined;
   height?: number;
   className?: string;
+  enableTimeNavigation?: boolean;
+  uirevision?: string;
+  onViewportChange?: (viewport: { from: string | null; to: string | null }) => void;
 }) {
   const [PlotComponent, setPlotComponent] = useState<PlotComponent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -92,27 +99,55 @@ export function PlotlyChart({
     );
   }
 
+  const layout = {
+    ...(figure.layout ?? {}),
+    autosize: true,
+    height,
+    dragmode: enableTimeNavigation ? 'pan' : (figure.layout?.dragmode as string | undefined),
+    uirevision: uirevision ?? 'plotly-chart',
+    xaxis: enableTimeNavigation
+      ? {
+          ...((figure.layout?.xaxis as Record<string, unknown> | undefined) ?? {}),
+          rangeslider: {
+            visible: true,
+            ...((((figure.layout?.xaxis as Record<string, unknown> | undefined)?.rangeslider as Record<string, unknown> | undefined) ?? {})),
+          },
+        }
+      : figure.layout?.xaxis,
+  };
+
+  const handleRelayout = (event: Record<string, unknown>) => {
+    if (!enableTimeNavigation || !onViewportChange) {
+      return;
+    }
+    const from = typeof event['xaxis.range[0]'] === 'string' ? event['xaxis.range[0]'] : null;
+    const to = typeof event['xaxis.range[1]'] === 'string' ? event['xaxis.range[1]'] : null;
+    if (from && to) {
+      onViewportChange({ from, to });
+      return;
+    }
+    if (event['xaxis.autorange']) {
+      onViewportChange({ from: null, to: null });
+    }
+  };
+
   return (
     <div className={`h-full w-full overflow-hidden rounded-md border bg-white ${className}`}>
       <PlotComponent
         data={(figure.data ?? []) as never[]}
-        layout={
-          {
-            ...(figure.layout ?? {}),
-            autosize: true,
-            height,
-          } as never
-        }
+        layout={layout as never}
         frames={(figure.frames ?? []) as never[]}
         config={
           {
             responsive: true,
             displaylogo: false,
+            scrollZoom: enableTimeNavigation,
             modeBarButtonsToRemove: ['lasso2d', 'select2d'],
           } as never
         }
         onError={(error) => setRenderError(error.message)}
         onInitialized={() => setRenderError(null)}
+        onRelayout={handleRelayout}
         useResizeHandler
         style={{ width: '100%', height: '100%' }}
       />

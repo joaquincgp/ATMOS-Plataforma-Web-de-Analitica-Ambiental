@@ -17,6 +17,7 @@ import { PublicDashboard } from '@/features/public/components/public-dashboard';
 import { SettingsPanel } from '@/features/settings/components/settings-panel';
 import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
+import { AnalyticalWorkspaceProvider } from '@/features/analysis/contexts/analytical-workspace-context';
 import type { AppView } from '@/store/app-store';
 
 const AnalyticalWorkspace = lazy(async () => {
@@ -72,7 +73,7 @@ function App() {
     resetPassword,
     logout,
   } = useAuth();
-  const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId } = useWorkspace();
+  const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId, isLoading: isLoadingWorkspace } = useWorkspace();
 
   const [activeView, setActiveView] = useState<AppView>('home');
   const [resetTokenPrefill, setResetTokenPrefill] = useState<string | undefined>(undefined);
@@ -142,13 +143,13 @@ function App() {
       case 'projects':
         return <Projects onSelectProject={handleSelectWorkspace} />;
       case 'data-sources':
-        return <DataSources />;
+        return <DataSources onOpenAnalytics={() => setActiveView('analytical-workspace')} />;
       case 'code-editor':
         return activeWorkspaceId ? <ModelViewer /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'ml-experiments':
         return activeWorkspaceId ? <MLExperimentRunner /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'analytical-workspace':
-        return activeWorkspaceId ? (
+        return (
           <Suspense
             fallback={
               <div className="p-6 text-sm text-muted-foreground">
@@ -158,8 +159,6 @@ function App() {
           >
             <AnalyticalWorkspace />
           </Suspense>
-        ) : (
-          <Projects onSelectProject={handleSelectWorkspace} />
         );
       case 'settings':
         return <SettingsPanel />;
@@ -255,20 +254,22 @@ function App() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
-      <AdvancedSidebar
-        activeView={activeView}
-        onNavigate={setActiveView}
-        selectedProject={activeWorkspaceId}
-        selectedProjectName={activeWorkspace?.name ?? null}
-        onCloseProject={handleCloseWorkspace}
-      />
+    <AnalyticalWorkspaceProvider>
+      <div className="flex h-screen bg-background">
+        <AdvancedSidebar
+          activeView={activeView}
+          onNavigate={setActiveView}
+          selectedProject={activeWorkspaceId}
+          selectedProjectName={isLoadingWorkspace ? "Cargando proyecto..." : (activeWorkspace?.name ?? null)}
+          onCloseProject={handleCloseWorkspace}
+        />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <TopBar userName={user?.full_name ?? user?.email ?? 'User'} onLogout={() => void logout()} />
-        <main className="flex-1 overflow-y-auto">{privateView}</main>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <TopBar userName={user?.full_name ?? user?.email ?? 'User'} onLogout={() => void logout()} />
+          <main className="flex-1 overflow-y-auto">{privateView}</main>
+        </div>
       </div>
-    </div>
+    </AnalyticalWorkspaceProvider>
   );
 }
 

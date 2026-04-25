@@ -192,7 +192,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
 
           {/* Subtitle */}
           <p className="text-xl md:text-2xl text-muted-foreground max-w-2xl mx-auto">
-            Monitoreo científico y ciudadano de la atmósfera en tiempo real
+            Monitoreo científico y ciudadano de calidad de aire en tiempo real
           </p>
 
           {/* Primary CTA */}
@@ -216,7 +216,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
               </div>
               <h3 className="font-semibold text-foreground mb-2">Datos en Vivo</h3>
               <p className="text-sm text-muted-foreground">
-                Mediciones actualizadas cada hora de 8 estaciones en Quito
+                Mediciones actualizadas de estaciones de monitoreo en Quito
               </p>
             </div>
 
@@ -250,7 +250,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
       {/* Footer */}
       <footer className="relative z-10 px-8 py-6 text-center">
         <p className="text-sm text-muted-foreground">
-          Universidad de Las Américas (UDLA) - Investigación Ambiental
+          Universidad de Las Américas (UDLA) - Departamento de Investigación y Vinculación
         </p>
       </footer>
     </div>

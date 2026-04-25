@@ -113,13 +113,13 @@ export function Projects({ onSelectProject }: ProjectsProps) {
       <div className="px-8 py-6 space-y-6">
         <div>
           <h1 className="text-2xl font-semibold text-foreground mb-2">Workspaces</h1>
-          <p className="text-muted-foreground">Schema-isolated project environments per account.</p>
+          <p className="text-muted-foreground">Entornos de investigación</p>
         </div>
 
         <Card className="bg-white border-[#dce5f1]">
           <CardHeader>
             <CardTitle className="text-lg">Create Workspace</CardTitle>
-            <CardDescription>Creates dedicated PostgreSQL schema and isolated storage paths.</CardDescription>
+            <CardDescription>Inicia un entorno limpio y nativo para tu analítica personal.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -174,7 +174,6 @@ export function Projects({ onSelectProject }: ProjectsProps) {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <CardTitle className="text-lg mb-1 truncate">{workspace.name}</CardTitle>
-                      <CardDescription className="text-xs">Schema: {workspace.schema_name}</CardDescription>
                     </div>
                     <div className="flex items-center gap-1">
                       {!isEditing && (

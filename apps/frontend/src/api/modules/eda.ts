@@ -36,8 +36,11 @@ export interface EdaPlotRequest {
   variable_codes?: string[];
   date_from?: string;
   date_to?: string;
+  view_from?: string;
+  view_to?: string;
   limit?: number;
-  granularity?: 'hour' | 'day' | 'month' | 'year';
+  granularity?: 'hour' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+  time_aggregation?: 'mean' | 'sum';
   chart_type?: EdaChartType | null;
   rolling_window?: number;
   decomposition_window?: number;

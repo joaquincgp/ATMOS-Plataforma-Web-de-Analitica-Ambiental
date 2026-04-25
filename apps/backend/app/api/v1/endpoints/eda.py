@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db_session, require_roles
 from app.schemas.auth import UserRole
 from app.schemas.eda import EdaPlotRequest, EdaPlotResponse
-from app.services.eda_service import EdaService, EdaServiceError
+from app.services.eda import EdaService, EdaServiceError
 
 router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
 

@@ -63,6 +63,9 @@ export function ManualDataIngestionWizard({
   const [dateFeaturesEnabled, setDateFeaturesEnabled] = useState(false);
   const [dateFeatureColumn, setDateFeatureColumn] = useState('');
   const [dateFeatureDayFirst, setDateFeatureDayFirst] = useState(true);
+  const [castDateFormat, setCastDateFormat] = useState('');
+  const [castDateDayFirst, setCastDateDayFirst] = useState(true);
+  const [castDateFuzzy, setCastDateFuzzy] = useState(true);
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -89,6 +92,13 @@ export function ManualDataIngestionWizard({
     setDateFeaturesEnabled(Boolean(dateFeatureOperation));
     setDateFeatureColumn(dateFeatureOperation?.date_column ?? nextDataset.mapping.datetime_column ?? '');
     setDateFeatureDayFirst(dateFeatureOperation?.dayfirst ?? true);
+
+    const castOperation = nextDataset.operation_pipeline.find((operation) => operation.type === 'cast_datetime');
+    if (castOperation) {
+      setCastDateFormat(castOperation.date_format ?? '');
+      setCastDateDayFirst(castOperation.dayfirst ?? true);
+      setCastDateFuzzy(castOperation.fuzzy_parse ?? true);
+    }
   };
 
   const syncLocalState = (nextDataset: ManualDatasetResponse) => {
@@ -169,6 +179,16 @@ export function ManualDataIngestionWizard({
         type: 'date_features',
         date_column: dateFeatureColumn,
         dayfirst: dateFeatureDayFirst,
+      });
+    }
+    if (mapping.datetime_column && safeSelectedColumns.includes(mapping.datetime_column)) {
+      operations.push({
+        type: 'cast_datetime',
+        date_column: mapping.datetime_column,
+        date_format: castDateFormat || null,
+        dayfirst: castDateDayFirst,
+        fuzzy_parse: castDateFuzzy,
+        year_default: new Date().getFullYear(),
       });
     }
 
@@ -382,50 +402,30 @@ export function ManualDataIngestionWizard({
                 </div>
               </CollapsibleSection>
 
-              <CollapsibleSection title="Roles">
+              <CollapsibleSection title="Date Casting">
                 <div className="grid gap-4 md:grid-cols-2">
                   <MappingSelect
-                    label="Datetime"
+                    label="Datetime Column"
                     value={mapping.datetime_column}
                     options={selectedColumns}
                     onChange={(value) => setMapping((current) => ({ ...current, datetime_column: value }))}
                   />
-                  <MappingSelect
-                    label="Date"
-                    value={mapping.date_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, date_column: value }))}
-                  />
-                  <MappingSelect
-                    label="Time"
-                    value={mapping.time_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, time_column: value }))}
-                  />
-                  <MappingSelect
-                    label="Station"
-                    value={mapping.station_code_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, station_code_column: value }))}
-                  />
-                  <MappingSelect
-                    label="Variable"
-                    value={mapping.variable_code_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, variable_code_column: value }))}
-                  />
-                  <MappingSelect
-                    label="Value"
-                    value={mapping.value_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, value_column: value }))}
-                  />
-                  <MappingSelect
-                    label="Unit"
-                    value={mapping.unit_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, unit_column: value }))}
-                  />
+                  <div className="space-y-1.5">
+                    <Label>Format String (Optional)</Label>
+                    <Input 
+                      placeholder="e.g. %b-%y for nov-1"
+                      value={castDateFormat}
+                      onChange={e => setCastDateFormat(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Checkbox checked={castDateDayFirst} onCheckedChange={(checked) => setCastDateDayFirst(checked === true)} />
+                    <span className="text-sm">Europe/Latam day-first logic</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <Checkbox checked={castDateFuzzy} onCheckedChange={(checked) => setCastDateFuzzy(checked === true)} />
+                    <span className="text-sm">Fuzzy auto-parsing</span>
+                  </div>
                 </div>
               </CollapsibleSection>
 
@@ -497,7 +497,7 @@ export function ManualDataIngestionWizard({
               <CardDescription>Filas y columnas.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <ScrollArea className="h-72 rounded-md border">
+              <div className="h-72 rounded-md border overflow-auto">
                 <Table className="w-max min-w-full table-fixed">
                   <TableHeader>
                     <TableRow>
@@ -534,9 +534,9 @@ export function ManualDataIngestionWizard({
                     )}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
 
-              <ScrollArea className="h-64 rounded-md border">
+              <div className="h-64 rounded-md border overflow-auto">
                 <Table className="w-max min-w-full table-fixed">
                   <TableHeader>
                     <TableRow>
@@ -569,7 +569,7 @@ export function ManualDataIngestionWizard({
                     ))}
                   </TableBody>
                 </Table>
-              </ScrollArea>
+              </div>
             </CardContent>
           </Card>
         </>
