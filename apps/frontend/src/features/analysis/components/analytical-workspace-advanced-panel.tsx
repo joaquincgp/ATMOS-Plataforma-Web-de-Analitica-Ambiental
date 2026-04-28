@@ -19,6 +19,8 @@ interface VariableOption {
 interface AnalyticalWorkspaceAdvancedPanelProps {
   selectedDataSourceCount: number;
   selectedVariableLabels: string[];
+  selectedVariables: string[];
+  availableVariables: VariableOption[];
   effectiveRowWindow: {
     from: string;
     to: string;
@@ -27,6 +29,7 @@ interface AnalyticalWorkspaceAdvancedPanelProps {
   manualDatasetColumnOptions: VariableOption[];
   genericXAxis: string;
   genericYAxis: string;
+  onToggleVariable: (value: string) => void;
   onGenericXAxisChange: (value: string) => void;
   onGenericYAxisChange: (value: string) => void;
 }
@@ -48,11 +51,14 @@ function parseOrder(value: string, expectedSize: number): number[] | null {
 export function AnalyticalWorkspaceAdvancedPanel({
   selectedDataSourceCount,
   selectedVariableLabels,
+  selectedVariables,
+  availableVariables,
   effectiveRowWindow,
   isGenericManualDataset,
   manualDatasetColumnOptions,
   genericXAxis,
   genericYAxis,
+  onToggleVariable,
   onGenericXAxisChange,
   onGenericYAxisChange,
 }: AnalyticalWorkspaceAdvancedPanelProps) {
@@ -60,7 +66,6 @@ export function AnalyticalWorkspaceAdvancedPanel({
     selectedSourceIds,
     selectedManualDatasetId,
     selectedStations,
-    selectedVariables,
     dateFrom,
     dateTo,
     granularity,
@@ -160,6 +165,32 @@ export function AnalyticalWorkspaceAdvancedPanel({
                   <span>Granularity</span>
                   <span className="font-medium text-foreground uppercase">{granularity}</span>
                 </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Variables For Advanced Analytics</Label>
+                <span className="text-[10px] text-muted-foreground">{selectedVariables.length} selected</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-[180px] overflow-auto">
+                {availableVariables.map((variable) => {
+                  const active = selectedVariables.includes(variable.code);
+                  return (
+                    <button
+                      key={`advanced-variable-${variable.code}`}
+                      type="button"
+                      onClick={() => onToggleVariable(variable.code)}
+                      className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
+                        active
+                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
+                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
+                      }`}
+                    >
+                      {variable.name}
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

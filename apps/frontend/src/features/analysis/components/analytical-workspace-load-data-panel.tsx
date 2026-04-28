@@ -19,11 +19,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import { RANGE_PRESETS } from '@/features/analysis/lib/analytical-workspace-config';
 
-interface VariableOption {
-  code: string;
-  name: string;
-}
-
 interface StationOption {
   code: string;
   name: string;
@@ -34,7 +29,6 @@ interface AnalyticalWorkspaceLoadDataPanelProps {
   filteredManualDatasets: ManualDatasetResponse[];
   manualDatasetsLoading: boolean;
   availableStations: StationOption[];
-  availableVariables: VariableOption[];
   sourceMaxRows: number;
   loading: boolean;
   viewportBoundToRows: boolean;
@@ -45,7 +39,6 @@ interface AnalyticalWorkspaceLoadDataPanelProps {
   onToggleSource: (sourceId: number) => void;
   onSelectManualDataset: (datasetId: string) => void;
   onToggleStation: (stationCode: string) => void;
-  onToggleVariable: (variableCode: string) => void;
   onApplyRangePreset: (presetId: string) => void;
   onRun: () => void;
 }
@@ -55,7 +48,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
   filteredManualDatasets,
   manualDatasetsLoading,
   availableStations,
-  availableVariables,
   sourceMaxRows,
   loading,
   viewportBoundToRows,
@@ -63,7 +55,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
   onToggleSource,
   onSelectManualDataset,
   onToggleStation,
-  onToggleVariable,
   onApplyRangePreset,
   onRun,
 }: AnalyticalWorkspaceLoadDataPanelProps) {
@@ -81,7 +72,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
     selectedSourceIds,
     selectedManualDatasetId,
     selectedStations,
-    selectedVariables,
   } = useAnalyticalWorkspaceState();
 
   const resetToCustomRange = (nextDate: string, setter: (value: string) => void) => {
@@ -101,7 +91,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.9fr] gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.8fr] gap-4">
           <div className="rounded-xl border bg-[#fbfdff] p-4">
             <Label className="text-xs text-muted-foreground">Sources</Label>
             <div className="relative mt-2">
@@ -251,32 +241,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
           </div>
 
           <div className="space-y-4">
-            <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">Variables</Label>
-                <Badge variant="outline">{selectedVariables.length || 0}</Badge>
-              </div>
-              <div className="flex flex-wrap gap-1.5 max-h-[210px] overflow-auto">
-                {availableVariables.map((variable) => {
-                  const active = selectedVariables.includes(variable.code);
-                  return (
-                    <button
-                      key={variable.code}
-                      type="button"
-                      onClick={() => onToggleVariable(variable.code)}
-                      className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
-                        active
-                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                      }`}
-                    >
-                      {variable.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
               <div className="space-y-1">
                 <Label htmlFor="row-limit" className="text-xs text-muted-foreground">

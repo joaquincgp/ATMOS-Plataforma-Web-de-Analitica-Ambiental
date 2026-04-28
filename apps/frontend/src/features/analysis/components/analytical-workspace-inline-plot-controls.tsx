@@ -17,6 +17,7 @@ interface AnalyticalWorkspaceInlinePlotControlsProps {
   chartType: ChartType;
   summaryChartType: EdaChartType;
   correlationChartType: EdaChartType;
+  useMultiVariables: boolean;
   genericXAxis: string;
   genericYAxis: string;
   genericHue: string;
@@ -50,6 +51,7 @@ export function AnalyticalWorkspaceInlinePlotControls({
   chartType,
   summaryChartType,
   correlationChartType,
+  useMultiVariables,
   genericXAxis,
   genericYAxis,
   genericHue,
@@ -77,6 +79,7 @@ export function AnalyticalWorkspaceInlinePlotControls({
 }: AnalyticalWorkspaceInlinePlotControlsProps) {
   const columnOptions = manualDatasetColumnOptions;
   const canUseGenericAxes = isGenericManualDataset && columnOptions.length > 0;
+  const genericMultiSeriesMode = canUseGenericAxes && useMultiVariables && labSection === 'rolling';
   const currentPlotType =
     labSection === 'rolling' ? chartType : labSection === 'summary' ? summaryChartType : correlationChartType;
   const showTimeIsHereControl = canUseGenericAxes && labSection === 'rolling';
@@ -164,21 +167,28 @@ export function AnalyticalWorkspaceInlinePlotControls({
                 </SelectContent>
               </Select>
             </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Y Axis</Label>
-              <Select value={genericYAxis} onValueChange={onGenericYAxisChange}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Y axis" />
-                </SelectTrigger>
-                <SelectContent>
-                  {columnOptions.map((column) => (
-                    <SelectItem key={`generic-y-${column.code}`} value={column.code}>
-                      {column.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {!genericMultiSeriesMode && (
+              <div className="space-y-1.5">
+                <Label className="text-xs">Y Axis</Label>
+                <Select value={genericYAxis} onValueChange={onGenericYAxisChange}>
+                  <SelectTrigger className="h-9 text-xs">
+                    <SelectValue placeholder="Y axis" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {columnOptions.map((column) => (
+                      <SelectItem key={`generic-y-${column.code}`} value={column.code}>
+                        {column.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {genericMultiSeriesMode && (
+              <div className="rounded-md border border-dashed border-[#509EE3]/30 bg-[#f8fbff] px-3 py-2 text-[11px] text-[#1F5A8A]">
+                Each selected variable is plotted as a separate series. The X axis controls time.
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Hue</Label>
               <Select value={genericHue || '__none__'} onValueChange={(value) => onGenericHueChange(value === '__none__' ? '' : value)}>

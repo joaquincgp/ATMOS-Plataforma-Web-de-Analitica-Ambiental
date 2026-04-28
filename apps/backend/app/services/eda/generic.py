@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from app.schemas.eda import EdaPlotRequest, EdaSecondaryFigure
 from app.services.eda.common import CHART_COLORS
@@ -29,6 +31,8 @@ class EdaGenericMixin:
                     payload.hue,
                     payload.facet_row,
                     payload.facet_col,
+                    context.mapping.datetime_column,
+                    context.mapping.date_column,
                 }
                 selected = [column for column in selected if column is not None]
                 ordered = [
@@ -65,8 +69,10 @@ class EdaGenericMixin:
         warnings: list[str],
     ) -> go.Figure:
         x_axis = self._choose_generic_x_axis(context, frame, payload)
-        y_axis = self._choose_generic_y_axis(context, frame, payload)
-        if x_axis is None or y_axis is None:
+        selected_numeric = self._selected_numeric_columns(context, frame, payload)
+        multi_series_mode = len(selected_numeric) > 1
+        y_axis = None if multi_series_mode else self._choose_generic_y_axis(context, frame, payload)
+        if x_axis is None or (y_axis is None and not multi_series_mode):
             warnings.append("Time series mode requires a datetime-like x-axis column and a numeric y-axis column.")
             return self._empty_figure("Select a valid datetime/object x-axis and numeric y-axis.")
 
@@ -76,8 +82,21 @@ class EdaGenericMixin:
             warnings.append("Time series mode requires a datetime-like object column on the x-axis.")
             return self._empty_figure("The selected x-axis cannot be interpreted as time.")
 
-        working["_y_value"] = pd.to_numeric(working[y_axis], errors="coerce")
-        working = working.dropna(subset=["_x_time", "_y_value"])
+        if multi_series_mode:
+            if payload.hue or payload.facet_row or payload.facet_col:
+                warnings.append("Multi-variable time series uses the selected variables as the series dimension; hue and facets are ignored.")
+            long_frame = working[["_x_time", *selected_numeric]].melt(
+                id_vars=["_x_time"],
+                value_vars=selected_numeric,
+                var_name="_series",
+                value_name="_y_value",
+            )
+            long_frame["_y_value"] = pd.to_numeric(long_frame["_y_value"], errors="coerce")
+            working = long_frame.dropna(subset=["_x_time", "_y_value"])
+        else:
+            working["_y_value"] = pd.to_numeric(working[y_axis], errors="coerce")
+            working = working.dropna(subset=["_x_time", "_y_value"])
+
         working = self._clip_time_frame(working, time_column="_x_time", payload=payload)
         if working.empty:
             warnings.append("No time series rows remained after coercing the selected axes.")
@@ -88,11 +107,13 @@ class EdaGenericMixin:
         if not payload.time_is_here:
             working["_bucket"] = working["_x_time"].map(lambda value: self._bucket_key(value, payload.granularity))
             group_columns = ["_bucket"]
-            if payload.hue and payload.hue in working.columns:
+            if multi_series_mode:
+                group_columns.append("_series")
+            if not multi_series_mode and payload.hue and payload.hue in working.columns:
                 group_columns.append(payload.hue)
-            if payload.facet_row and payload.facet_row in working.columns:
+            if not multi_series_mode and payload.facet_row and payload.facet_row in working.columns:
                 group_columns.append(payload.facet_row)
-            if payload.facet_col and payload.facet_col in working.columns:
+            if not multi_series_mode and payload.facet_col and payload.facet_col in working.columns:
                 group_columns.append(payload.facet_col)
             aggregated = (
                 working.groupby(group_columns, dropna=False)["_y_value"]
@@ -112,25 +133,38 @@ class EdaGenericMixin:
 
         if payload.rolling_window > 0 and chart_type != "scatter":
             plot_frame = plot_frame.copy()
-            plot_frame[y_column] = pd.to_numeric(plot_frame[y_column], errors="coerce").rolling(
-                window=max(1, payload.rolling_window),
-                min_periods=1,
-            ).mean()
+            if multi_series_mode and "_series" in plot_frame.columns:
+                plot_frame = plot_frame.sort_values(["_series", x_column])
+                plot_frame[y_column] = plot_frame.groupby("_series", dropna=False)[y_column].transform(
+                    lambda series: pd.to_numeric(series, errors="coerce").rolling(
+                        window=max(1, payload.rolling_window),
+                        min_periods=1,
+                    ).mean()
+                )
+            else:
+                plot_frame[y_column] = pd.to_numeric(plot_frame[y_column], errors="coerce").rolling(
+                    window=max(1, payload.rolling_window),
+                    min_periods=1,
+                ).mean()
 
         plot_frame = self._apply_point_budget(plot_frame, payload.limit)
+        color_column = "_series" if multi_series_mode else (payload.hue if payload.hue in plot_frame.columns else None)
+        facet_row = None if multi_series_mode else (payload.facet_row if payload.facet_row in plot_frame.columns else None)
+        facet_col = None if multi_series_mode else (payload.facet_col if payload.facet_col in plot_frame.columns else None)
+        y_axis_title = "Value" if multi_series_mode else y_axis
 
         if chart_type == "scatter":
             fig = px.scatter(
                 plot_frame,
                 x=x_column,
                 y=y_column,
-                color=payload.hue if payload.hue in plot_frame.columns else None,
-                facet_row=payload.facet_row if payload.facet_row in plot_frame.columns else None,
-                facet_col=payload.facet_col if payload.facet_col in plot_frame.columns else None,
+                color=color_column,
+                facet_row=facet_row,
+                facet_col=facet_col,
                 category_orders=category_orders,
                 color_discrete_sequence=CHART_COLORS,
             )
-            fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis)
+            fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis_title)
             return self._finalize_figure(fig, "Raw Time Series")
 
         if chart_type == "bar":
@@ -138,13 +172,13 @@ class EdaGenericMixin:
                 plot_frame,
                 x=x_column,
                 y=y_column,
-                color=payload.hue if payload.hue in plot_frame.columns else None,
-                facet_row=payload.facet_row if payload.facet_row in plot_frame.columns else None,
-                facet_col=payload.facet_col if payload.facet_col in plot_frame.columns else None,
+                color=color_column,
+                facet_row=facet_row,
+                facet_col=facet_col,
                 category_orders=category_orders,
                 color_discrete_sequence=CHART_COLORS,
             )
-            fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis)
+            fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis_title)
             return self._finalize_figure(fig, "Raw Time Series")
 
         if chart_type == "heatmap":
@@ -154,18 +188,18 @@ class EdaGenericMixin:
             plot_frame,
             x=x_column,
             y=y_column,
-            color=payload.hue if payload.hue in plot_frame.columns else None,
-            facet_row=payload.facet_row if payload.facet_row in plot_frame.columns else None,
-            facet_col=payload.facet_col if payload.facet_col in plot_frame.columns else None,
+            color=color_column,
+            facet_row=facet_row,
+            facet_col=facet_col,
             category_orders=category_orders,
             color_discrete_sequence=CHART_COLORS,
         )
         if (
             payload.show_std_band
             and "_plot_std" in plot_frame.columns
-            and payload.hue is None
-            and payload.facet_row is None
-            and payload.facet_col is None
+            and color_column is None
+            and facet_row is None
+            and facet_col is None
         ):
             upper = plot_frame[y_column] + plot_frame["_plot_std"].fillna(0)
             lower = plot_frame[y_column] - plot_frame["_plot_std"].fillna(0)
@@ -192,11 +226,11 @@ class EdaGenericMixin:
                 )
             )
         elif payload.show_std_band and (
-            "_plot_std" not in plot_frame.columns or payload.hue or payload.facet_row or payload.facet_col
+            "_plot_std" not in plot_frame.columns or color_column or facet_row or facet_col
         ):
             warnings.append("Standard deviation bands are only displayed for a single non-faceted time series.")
 
-        fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis)
+        fig.update_layout(xaxis_title=x_axis, yaxis_title=y_axis_title)
         return self._finalize_figure(fig, "Raw Time Series")
 
     def _generic_summary_figures(
@@ -213,6 +247,28 @@ class EdaGenericMixin:
 
         if chart_type == "ridge":
             figure = self._generic_ridge_figure(context, frame, payload, warnings)
+            return figure, []
+
+        selected_numeric = self._selected_numeric_columns(context, frame, payload)
+        if len(selected_numeric) > 1:
+            melted = frame[selected_numeric].melt(var_name="_series", value_name="_value")
+            melted["_value"] = pd.to_numeric(melted["_value"], errors="coerce")
+            melted = melted.dropna(subset=["_value"])
+            if melted.empty:
+                warnings.append("No numeric rows remained after preparing the selected variables.")
+                return self._empty_figure("No numeric rows remained after applying the current selection."), []
+
+            figure = self._distribution_figure(
+                melted,
+                chart_type=chart_type,
+                x_axis="_series",
+                y_axis="_value",
+                hue="_series",
+                facet_row=None,
+                facet_col=None,
+                payload=payload,
+                title="Statistical Summary",
+            )
             return figure, []
 
         x_axis = payload.x_axis if payload.x_axis in frame.columns else None
@@ -619,6 +675,140 @@ class EdaGenericMixin:
                     }
                 )
         return output
+
+    def _generic_anomaly_figure(
+        self,
+        context: ManualDatasetEdaContext,
+        frame: pd.DataFrame,
+        payload: EdaPlotRequest,
+        warnings: list[str],
+    ) -> go.Figure:
+        x_axis = self._choose_generic_x_axis(context, frame, payload)
+        if x_axis is None or x_axis not in frame.columns:
+            warnings.append("Anomaly detection requires a datetime x-axis column.")
+            return self._empty_figure("No datetime column found for anomaly detection.")
+
+        numeric_cols = self._selected_numeric_columns(context, frame, payload)
+        if not numeric_cols:
+            return self._empty_figure("No numeric columns available for anomaly detection.")
+
+        working = frame.copy()
+        working["_x_time"] = self._coerce_datetime_series(working[x_axis])
+        working = working.dropna(subset=["_x_time"])
+        working = self._clip_time_frame(working, time_column="_x_time", payload=payload)
+        if working.empty:
+            return self._empty_figure("No rows remained after applying filters.")
+
+        working["_bucket"] = working["_x_time"].map(lambda value: self._bucket_key(value, payload.granularity))
+
+        n_vars = len(numeric_cols)
+        if n_vars > 1:
+            fig = make_subplots(
+                rows=n_vars,
+                cols=1,
+                shared_xaxes=True,
+                subplot_titles=numeric_cols,
+                vertical_spacing=0.06,
+            )
+        else:
+            fig = go.Figure()
+
+        for i, col in enumerate(numeric_cols):
+            if col not in working.columns:
+                continue
+            col_values = pd.to_numeric(working[col], errors="coerce")
+            agg_frame = (
+                pd.DataFrame({"_bucket": working["_bucket"], "_value": col_values})
+                .dropna()
+                .groupby("_bucket", dropna=False)["_value"]
+                .mean()
+                .reset_index(name="overall")
+                .sort_values("_bucket")
+                .reset_index(drop=True)
+            )
+            if agg_frame.empty:
+                continue
+
+            values = agg_frame["overall"].to_numpy(dtype=float)
+            sorted_values = np.sort(values)
+            q1 = float(sorted_values[int(math.floor(len(sorted_values) * 0.25))])
+            q3 = float(sorted_values[int(math.floor(len(sorted_values) * 0.75))])
+            iqr = q3 - q1
+            lower_bound = q1 - iqr * 1.5
+            upper_bound = q3 + iqr * 1.5
+            agg_frame["upper"] = upper_bound
+            agg_frame["lower"] = lower_bound
+            agg_frame["anomaly_value"] = np.where(
+                (agg_frame["overall"] < lower_bound) | (agg_frame["overall"] > upper_bound),
+                agg_frame["overall"],
+                np.nan,
+            )
+
+            color = CHART_COLORS[i % len(CHART_COLORS)]
+            row_kwargs: dict[str, Any] = {"row": i + 1, "col": 1} if n_vars > 1 else {}
+            show_in_legend = i == 0
+
+            fig.add_trace(
+                go.Scatter(
+                    x=agg_frame["_bucket"],
+                    y=agg_frame["overall"],
+                    mode="lines",
+                    name=col,
+                    line={"color": color, "width": 1.8},
+                ),
+                **row_kwargs,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=agg_frame["_bucket"],
+                    y=agg_frame["upper"],
+                    mode="lines",
+                    name="Upper IQR",
+                    line={"color": "#94A3B8", "width": 1, "dash": "dot"},
+                    showlegend=show_in_legend,
+                ),
+                **row_kwargs,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=agg_frame["_bucket"],
+                    y=agg_frame["lower"],
+                    mode="lines",
+                    name="Lower IQR",
+                    line={"color": "#94A3B8", "width": 1, "dash": "dot"},
+                    showlegend=show_in_legend,
+                ),
+                **row_kwargs,
+            )
+            anomalies = agg_frame.dropna(subset=["anomaly_value"])
+            if not anomalies.empty:
+                fig.add_trace(
+                    go.Scatter(
+                        x=anomalies["_bucket"],
+                        y=anomalies["anomaly_value"],
+                        mode="markers",
+                        name="Anomaly",
+                        marker={"color": "#DC2626", "size": 8},
+                        showlegend=show_in_legend,
+                    ),
+                    **row_kwargs,
+                )
+
+        title = "Anomaly Detection (Multi-Variable)" if n_vars > 1 else "Anomaly Detection"
+        total_height = max(350, 280 * n_vars) if n_vars > 1 else 420
+        fig.update_layout(
+            template="plotly_white",
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            height=total_height,
+            margin={"l": 48, "r": 24, "t": 60, "b": 48},
+            legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
+            title={"text": title, "x": 0.01, "xanchor": "left"},
+        )
+        if n_vars > 1:
+            for annotation in fig.layout.annotations:
+                annotation.font = {"size": 11, "color": "#64748B"}
+        return fig
 
     def _resolve_context_datetime_series(self, context: ManualDatasetEdaContext) -> pd.Series | None:
         frame = context.dataframe

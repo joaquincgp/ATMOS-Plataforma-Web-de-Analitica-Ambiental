@@ -95,6 +95,8 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             return figure, secondary, stats
 
         if payload.section == "anomaly":
+            if len(series_keys) > 1:
+                return self._measurement_multi_anomaly_figure(temporal_frame, series_keys), [], stats
             return self._measurement_anomaly_figure(temporal_frame), [], stats
 
         if payload.section == "profiles":
@@ -146,6 +148,18 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             return self._measurement_autocorr_figure(temporal_frame, partial=True), [], stats
 
         if payload.section == "forecast":
+            if len(series_keys) > 1:
+                return (
+                    self._measurement_multi_forecast_figure(
+                        temporal_frame,
+                        series_keys,
+                        payload.granularity,
+                        payload.forecast_horizon,
+                        payload.decomposition_window,
+                    ),
+                    [],
+                    stats,
+                )
             return (
                 self._measurement_forecast_figure(
                     temporal_frame,
@@ -158,6 +172,17 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             )
 
         if payload.section == "changepoints":
+            if len(series_keys) > 1:
+                return (
+                    self._measurement_multi_changepoints_figure(
+                        temporal_frame,
+                        series_keys,
+                        payload.changepoint_window,
+                        payload.changepoint_sensitivity,
+                    ),
+                    [],
+                    stats,
+                )
             figure, changepoint_stats = self._measurement_changepoints_figure(
                 temporal_frame,
                 payload.changepoint_window,
@@ -167,6 +192,18 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             return figure, [], stats
 
         if payload.section == "trend":
+            if len(series_keys) > 1:
+                return (
+                    self._measurement_multi_trend_figure(
+                        temporal_frame,
+                        series_keys,
+                        payload.granularity,
+                        payload.decomposition_window,
+                        payload.trend_deseasonalized,
+                    ),
+                    [],
+                    stats,
+                )
             figure, trend_stats = self._measurement_trend_figure(
                 temporal_frame,
                 payload.granularity,
@@ -208,11 +245,15 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
             figure, secondary = self._generic_correlation_figures(context, frame, payload, warnings)
             return figure, secondary, stats
 
+        if payload.section == "anomaly":
+            figure = self._generic_anomaly_figure(context, frame, payload, warnings)
+            return figure, [], stats
+
         warnings.append(
-            "This generic dataset currently supports Plotly-backed rolling, summary, and correlation sections."
+            "This generic dataset currently supports Plotly-backed rolling, summary, correlation, and anomaly sections."
         )
         return (
-            self._empty_figure("Choose Rolling, Statistical Summary, or Correlation for generic datasets."),
+            self._empty_figure("Choose Rolling, Statistical Summary, Correlation, or Anomaly for generic datasets."),
             [],
             stats,
         )

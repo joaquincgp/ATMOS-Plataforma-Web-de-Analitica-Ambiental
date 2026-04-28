@@ -3,7 +3,6 @@ import { PanelLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import {
   ANALYSIS_SECTIONS,
   type LabSection,
@@ -19,11 +18,12 @@ interface AnalyticalWorkspaceSidebarProps {
   labSection: LabSection;
   selectedDataSourceCount: number;
   availableVariables: VariableOption[];
+  selectedVariables: string[];
+  selectedStationsCount: number;
   rowCount: number;
   viewportBoundToRows: boolean;
   onSelectSection: (section: LabSection) => void;
   onToggleCollapsed: () => void;
-  onToggleVariable: (variableCode: string) => void;
 }
 
 export function AnalyticalWorkspaceSidebar({
@@ -31,14 +31,13 @@ export function AnalyticalWorkspaceSidebar({
   labSection,
   selectedDataSourceCount,
   availableVariables,
+  selectedVariables,
+  selectedStationsCount,
   rowCount,
   viewportBoundToRows,
   onSelectSection,
   onToggleCollapsed,
-  onToggleVariable,
 }: AnalyticalWorkspaceSidebarProps) {
-  const { selectedStations, selectedVariables } = useAnalyticalWorkspaceState();
-
   return (
     <aside
       className={`
@@ -122,31 +121,27 @@ export function AnalyticalWorkspaceSidebar({
         className={`
           border-t border-gray-200 overflow-hidden
           transition-[max-height,opacity] duration-300 ease-in-out
-          ${collapsed || labSection === 'load-data' ? 'max-h-0 opacity-0' : 'max-h-[420px] opacity-100'}
+          ${collapsed || labSection === 'load-data' ? 'max-h-0 opacity-0' : 'max-h-[460px] opacity-100'}
         `}
       >
         <div className="p-4 space-y-4">
           <div className="space-y-1.5">
-            <Label className="text-xs">Variables</Label>
-            <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[136px] overflow-auto">
-              {availableVariables.map((variable) => {
-                const active = selectedVariables.includes(variable.code);
-                return (
-                  <button
-                    key={variable.code}
-                    type="button"
-                    onClick={() => onToggleVariable(variable.code)}
-                    className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
-                      active
-                        ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                        : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                    }`}
-                  >
-                    {variable.name}
-                  </button>
-                );
-              })}
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Variables For This View</Label>
+              <span className="text-[10px] text-muted-foreground">{selectedVariables.length} selected</span>
             </div>
+            {selectedVariables.length > 0 && (
+              <div className="flex flex-wrap gap-1 rounded-md border bg-[#f8fbff] p-2">
+                {selectedVariables.map((code) => {
+                  const label = availableVariables.find((v) => v.code === code)?.name ?? code;
+                  return (
+                    <span key={code} className="rounded-full bg-[#509EE3]/10 border border-[#509EE3]/30 text-[#1F5A8A] text-[10px] px-2 py-0.5">
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -158,7 +153,7 @@ export function AnalyticalWorkspaceSidebar({
               </div>
               <div className="flex items-center justify-between">
                 <span>Stations</span>
-                <span className="font-medium text-foreground">{selectedStations.length || 'All'}</span>
+                <span className="font-medium text-foreground">{selectedStationsCount || 'All'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>{viewportBoundToRows ? 'Visible rows' : 'Rows'}</span>

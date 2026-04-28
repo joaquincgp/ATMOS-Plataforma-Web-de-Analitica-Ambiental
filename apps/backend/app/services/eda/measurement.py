@@ -342,6 +342,79 @@ class EdaMeasurementMixin:
         )
         return self._finalize_figure(fig, "Anomaly Detection")
 
+    def _measurement_multi_anomaly_figure(
+        self,
+        temporal_frame: pd.DataFrame,
+        series_keys: list[str],
+    ) -> go.Figure:
+        n = len(series_keys)
+        fig = make_subplots(
+            rows=n,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.06,
+            subplot_titles=series_keys,
+        )
+        for i, key in enumerate(series_keys, start=1):
+            show_legend = i == 1
+            if key not in temporal_frame.columns:
+                continue
+            sub = temporal_frame[["bucket", key]].rename(columns={key: "overall"})
+            anomaly_frame = self._anomaly_frame(sub)
+            fig.add_trace(
+                go.Scatter(
+                    x=anomaly_frame["bucket"],
+                    y=anomaly_frame["overall"],
+                    mode="lines",
+                    name="Observed",
+                    line={"color": "#1F5A8A"},
+                    showlegend=show_legend,
+                ),
+                row=i,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=anomaly_frame["bucket"],
+                    y=anomaly_frame["upper"],
+                    mode="lines",
+                    name="Upper IQR",
+                    line={"color": "#94A3B8", "dash": "dot"},
+                    showlegend=show_legend,
+                ),
+                row=i,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=anomaly_frame["bucket"],
+                    y=anomaly_frame["lower"],
+                    mode="lines",
+                    name="Lower IQR",
+                    line={"color": "#94A3B8", "dash": "dot"},
+                    showlegend=show_legend,
+                ),
+                row=i,
+                col=1,
+            )
+            anomalies = anomaly_frame.dropna(subset=["anomaly_value"])
+            fig.add_trace(
+                go.Scatter(
+                    x=anomalies["bucket"],
+                    y=anomalies["anomaly_value"],
+                    mode="markers",
+                    name="Anomaly",
+                    marker={"color": "#DC2626", "size": 8},
+                    showlegend=show_legend,
+                ),
+                row=i,
+                col=1,
+            )
+        for annotation in fig.layout.annotations:
+            annotation.font = {"size": 11, "color": "#64748B"}
+        fig.update_layout(height=max(350, 280 * n))
+        return self._finalize_figure(fig, "Anomaly Detection (Multi-Variable)")
+
     def _measurement_profile_figure(self, frame: pd.DataFrame, mode: str, aggregation_mode: str) -> go.Figure:
         profile_frame = self._profile_series(frame, mode, aggregation_mode)
         fig = px.bar(profile_frame, x="bucket", y="overall", color_discrete_sequence=[CHART_COLORS[0]])
@@ -587,6 +660,84 @@ class EdaMeasurementMixin:
         fig.update_xaxes(title_text="Period")
         return self._finalize_figure(fig, "Forecast - Linear trend + seasonal adjustment (95% CI)")
 
+    def _measurement_multi_forecast_figure(
+        self,
+        temporal_frame: pd.DataFrame,
+        series_keys: list[str],
+        granularity: str,
+        horizon: int,
+        trend_window: int,
+    ) -> go.Figure:
+        fig = make_subplots(
+            rows=len(series_keys),
+            cols=1,
+            shared_xaxes=True,
+            subplot_titles=series_keys,
+            vertical_spacing=0.06,
+        )
+        for index, key in enumerate(series_keys, start=1):
+            series_frame = self._temporal_series_frame(temporal_frame, key)
+            if series_frame.empty:
+                continue
+            decomposition = self._decomposition_frame(series_frame, granularity, trend_window)
+            forecast = self._forecast_frame(series_frame, granularity, horizon, decomposition)
+            show_legend = index == 1
+            fig.add_trace(
+                go.Scatter(
+                    x=forecast["bucket"],
+                    y=forecast["observed"],
+                    mode="lines",
+                    name="Observed",
+                    line={"color": "#1F5A8A", "width": 2.0},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=forecast["bucket"],
+                    y=forecast["upper"],
+                    mode="lines",
+                    line={"width": 0},
+                    showlegend=False,
+                    hoverinfo="skip",
+                ),
+                row=index,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=forecast["bucket"],
+                    y=forecast["lower"],
+                    mode="lines",
+                    line={"width": 0},
+                    fill="tonexty",
+                    fillcolor="rgba(80, 158, 227, 0.18)",
+                    name="95% CI",
+                    showlegend=show_legend,
+                    hoverinfo="skip",
+                ),
+                row=index,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=forecast["bucket"],
+                    y=forecast["forecast"],
+                    mode="lines",
+                    name="Forecast",
+                    line={"color": "#509EE3", "width": 2.0, "dash": "dot"},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+        fig.update_layout(height=max(420, 290 * len(series_keys)), showlegend=True)
+        for annotation in fig.layout.annotations:
+            annotation.font = {"size": 11, "color": "#64748B"}
+        return self._finalize_figure(fig, "Forecast - Multi Variable")
+
     def _measurement_changepoints_figure(
         self,
         temporal_frame: pd.DataFrame,
@@ -620,6 +771,57 @@ class EdaMeasurementMixin:
             "changepoint_count": len(result["markers"]),
         }
         return self._finalize_figure(fig, "Changepoints"), stats
+
+    def _measurement_multi_changepoints_figure(
+        self,
+        temporal_frame: pd.DataFrame,
+        series_keys: list[str],
+        rolling_window: int,
+        sensitivity: float,
+    ) -> go.Figure:
+        fig = make_subplots(
+            rows=len(series_keys),
+            cols=1,
+            shared_xaxes=True,
+            subplot_titles=series_keys,
+            vertical_spacing=0.06,
+        )
+        for index, key in enumerate(series_keys, start=1):
+            series_frame = self._temporal_series_frame(temporal_frame, key)
+            if series_frame.empty:
+                continue
+            result = self._changepoint_result(series_frame, rolling_window, sensitivity)
+            show_legend = index == 1
+            fig.add_trace(
+                go.Scatter(
+                    x=series_frame["bucket"],
+                    y=series_frame["overall"],
+                    mode="lines",
+                    name="Observed",
+                    line={"color": "#1F5A8A"},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+            if result["markers"]:
+                marker_frame = pd.DataFrame(result["markers"])
+                fig.add_trace(
+                    go.Scatter(
+                        x=marker_frame["bucket"],
+                        y=marker_frame["value"],
+                        mode="markers",
+                        name="Changepoint",
+                        marker={"color": "#DC2626", "size": 8, "symbol": "diamond"},
+                        showlegend=show_legend,
+                    ),
+                    row=index,
+                    col=1,
+                )
+        fig.update_layout(height=max(420, 260 * len(series_keys)), showlegend=True)
+        for annotation in fig.layout.annotations:
+            annotation.font = {"size": 11, "color": "#64748B"}
+        return self._finalize_figure(fig, "Changepoints - Multi Variable")
 
     def _measurement_trend_figure(
         self,
@@ -693,6 +895,72 @@ class EdaMeasurementMixin:
             )
         suffix = " (deseasonalized)" if deseasonalized else ""
         return self._finalize_figure(fig, f"Trend Analysis{suffix}"), diagnostics
+
+    def _measurement_multi_trend_figure(
+        self,
+        temporal_frame: pd.DataFrame,
+        series_keys: list[str],
+        granularity: str,
+        trend_window: int,
+        deseasonalized: bool,
+    ) -> go.Figure:
+        fig = make_subplots(
+            rows=len(series_keys),
+            cols=1,
+            shared_xaxes=True,
+            subplot_titles=series_keys,
+            vertical_spacing=0.06,
+        )
+        for index, key in enumerate(series_keys, start=1):
+            series_frame = self._temporal_series_frame(temporal_frame, key)
+            if series_frame.empty:
+                continue
+            decomposition = self._decomposition_frame(series_frame, granularity, trend_window)
+            result = self._trend_frame(series_frame, decomposition, deseasonalized)
+            series = result["series"]
+            diagnostics = result["diagnostics"]
+            show_legend = index == 1
+            fig.add_trace(
+                go.Scatter(
+                    x=series["bucket"],
+                    y=series["overall"],
+                    mode="lines",
+                    name="Observed",
+                    line={"color": "#1F5A8A", "width": 2.0},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=series["bucket"],
+                    y=series["linear"],
+                    mode="lines",
+                    name=f"Linear (R2={diagnostics['linearR2']:.3f})",
+                    line={"color": "#509EE3", "width": 1.8, "dash": "dash"},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=series["bucket"],
+                    y=series["quadratic"],
+                    mode="lines",
+                    name="Quadratic",
+                    line={"color": "#0B7285", "width": 1.5, "dash": "dot"},
+                    showlegend=show_legend,
+                ),
+                row=index,
+                col=1,
+            )
+        fig.update_layout(height=max(420, 280 * len(series_keys)), showlegend=True)
+        for annotation in fig.layout.annotations:
+            annotation.font = {"size": 11, "color": "#64748B"}
+        suffix = " (deseasonalized)" if deseasonalized else ""
+        return self._finalize_figure(fig, f"Trend Analysis - Multi Variable{suffix}")
 
     def _measurement_correlation_figures(
         self,
@@ -848,6 +1116,13 @@ class EdaMeasurementMixin:
             fig = px.scatter(pivot, x=cleaned[0], y=cleaned[1], color_discrete_sequence=[CHART_COLORS[0]])
         fig.update_layout(xaxis_title=cleaned[0], yaxis_title=cleaned[1])
         return self._finalize_figure(fig, "Pair Comparison"), {"pair_correlation": correlation}
+
+    def _temporal_series_frame(self, temporal_frame: pd.DataFrame, series_key: str) -> pd.DataFrame:
+        if series_key not in temporal_frame.columns:
+            return pd.DataFrame(columns=["bucket", "overall"])
+        output = temporal_frame[["bucket", series_key]].rename(columns={series_key: "overall"}).copy()
+        output["overall"] = pd.to_numeric(output["overall"], errors="coerce")
+        return output.dropna(subset=["overall"]).reset_index(drop=True)
 
     def _compute_temporal_frame(
         self,

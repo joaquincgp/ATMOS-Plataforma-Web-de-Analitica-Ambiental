@@ -14,7 +14,7 @@ from app.schemas.eda import EdaPlotRequest, EdaSecondaryFigure
 CHART_COLORS = ["#509EE3", "#1F5A8A", "#0EA5E9", "#0B7285", "#16A34A", "#E9730C", "#D946EF", "#A16207"]
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-GENERIC_SECTIONS = {"rolling", "summary", "correlation"}
+GENERIC_SECTIONS = {"rolling", "summary", "correlation", "anomaly"}
 TIME_NAVIGATION_SECTIONS = {"rolling", "anomaly", "decomposition", "forecast", "changepoints", "trend"}
 
 

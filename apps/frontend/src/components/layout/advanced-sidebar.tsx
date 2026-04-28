@@ -15,7 +15,6 @@ export function AdvancedSidebar({
   onNavigate,
   selectedProject,
   selectedProjectName,
-  onCloseProject,
 }: AdvancedSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [projectAssetsCollapsed, setProjectAssetsCollapsed] = useState(false);
