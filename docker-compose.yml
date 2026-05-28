@@ -24,7 +24,7 @@ services:
       APP_NAME: ATMOS API
       ENVIRONMENT: development
       API_V1_PREFIX: /api/v1
-      CORS_ORIGINS: http://localhost:5173
+      CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
       DATABASE_URL: postgresql+psycopg://atmos:atmos_dev_password@db:5432/atmos
       JWT_SECRET_KEY: change-this-in-production
       JWT_ALGORITHM: HS256
@@ -38,6 +38,8 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - atmos_workspace_data:/app/data/workspaces
 
   frontend:
     build:
@@ -52,3 +54,4 @@ services:
 
 volumes:
   atmos_postgres_data:
+  atmos_workspace_data:

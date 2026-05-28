@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Database, Sigma, TrendingUp } from 'lucide-react';
+import { Database, Loader2, Sigma, TrendingUp } from 'lucide-react';
 
 import { runAdvancedForecast, type AdvancedAnalyticsResponse, type AdvancedModel } from '@/api/modules/advanced-analytics';
 import { PlotlyFigurePanel } from '@/components/common/plotly-figure-panel';
@@ -82,10 +82,17 @@ export function AnalyticalWorkspaceAdvancedPanel({
   const stats = response?.stats ?? {};
   const warnings = response?.warnings ?? [];
   const statAic = typeof stats.aic === 'number' ? stats.aic : null;
+  const statBic = typeof stats.bic === 'number' ? stats.bic : null;
   const statRmse = typeof stats.rmse === 'number' ? stats.rmse : null;
+  const statMae = typeof stats.mae === 'number' ? stats.mae : null;
   const statTrainingPoints = typeof stats.training_points === 'number' ? stats.training_points : null;
 
   const columnOptions = manualDatasetColumnOptions;
+  const modelOptions: { value: AdvancedModel; label: string; detail: string }[] = [
+    { value: 'arima', label: 'ARIMA', detail: 'Non-seasonal' },
+    { value: 'sarima', label: 'SARIMA', detail: 'Seasonal' },
+    { value: 'prophet', label: 'Prophet', detail: 'Decomposition' },
+  ];
 
   const handleRun = async () => {
     if (selectedDataSourceCount === 0) {
@@ -195,18 +202,25 @@ export function AnalyticalWorkspaceAdvancedPanel({
             </div>
 
             <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label className="text-xs">Model</Label>
-                <Select value={model} onValueChange={(value) => setModel(value as AdvancedModel)}>
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue placeholder="Model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="arima">ARIMA</SelectItem>
-                    <SelectItem value="sarima">SARIMA</SelectItem>
-                    <SelectItem value="prophet">Prophet</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-3 gap-2">
+                  {modelOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setModel(option.value)}
+                      className={`rounded-md border px-3 py-2 text-left transition-colors ${
+                        model === option.value
+                          ? 'border-[#1F5A8A] bg-[#eef6ff] text-[#1F5A8A]'
+                          : 'border-[#dce5f1] bg-white text-[#334155] hover:border-[#509EE3]/60'
+                      }`}
+                    >
+                      <span className="block text-xs font-semibold">{option.label}</span>
+                      <span className="block text-[10px] text-muted-foreground">{option.detail}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Granularity</Label>
@@ -295,7 +309,8 @@ export function AnalyticalWorkspaceAdvancedPanel({
                 </div>
               )}
               <Button className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={() => void handleRun()} disabled={loading}>
-                Run
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {loading ? 'Running model' : `Run ${model.toUpperCase()}`}
               </Button>
             </div>
           </div>
@@ -321,19 +336,20 @@ export function AnalyticalWorkspaceAdvancedPanel({
               </Card>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
               <KpiCard label="Training Points" value={statTrainingPoints?.toLocaleString() ?? '--'} icon={Database} />
               <KpiCard label="RMSE" value={statRmse !== null ? statRmse.toFixed(3) : '--'} icon={TrendingUp} />
-              <KpiCard label="AIC" value={statAic !== null ? statAic.toFixed(2) : '--'} icon={Sigma} />
+              <KpiCard label="MAE" value={statMae !== null ? statMae.toFixed(3) : '--'} icon={TrendingUp} />
+              <KpiCard label={statBic !== null ? 'BIC' : 'AIC'} value={(statBic ?? statAic) !== null ? (statBic ?? statAic)!.toFixed(2) : '--'} icon={Sigma} />
             </div>
 
-            <div className="h-[560px] w-full">
+            <div className="h-[740px] w-full">
               {response ? (
                 <PlotlyFigurePanel
                   figure={response.figure_json}
                   title="Advanced Forecast"
                   description="Backend forecast result for the current selection."
-                  height={560}
+                  height={720}
                   enableTimeNavigation
                   uirevision="advanced-analytics"
                 />

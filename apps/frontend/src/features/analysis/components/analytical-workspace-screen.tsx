@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  CheckCircle2,
   Database,
   LineChart as LineChartIcon,
   Loader2,
@@ -44,6 +46,11 @@ type VariableSelectionScope = Exclude<LabSection, 'load-data'> | 'advanced';
 
 const VARIABLE_SELECTION_SCOPES: VariableSelectionScope[] = [
   'rolling',
+  'distribution',
+  'scatter',
+  'data_trend',
+  'time_profiles',
+  'heat_map',
   'seasonality',
   'autocorr',
   'pacf',
@@ -60,6 +67,8 @@ const VARIABLE_SELECTION_SCOPES: VariableSelectionScope[] = [
 
 const REFERENCE_MULTI_OUTPUT_SECTIONS = new Set<LabSection>([
   'rolling',
+  'distribution',
+  'data_trend',
   'anomaly',
   'forecast',
   'changepoints',
@@ -74,7 +83,18 @@ const REFERENCE_SINGLE_OUTPUT_SECTIONS = new Set<LabSection>([
   'pacf',
   'decomposition',
   'profiles',
+  'time_profiles',
+  'heat_map',
 ]);
+
+const DESCRIPTIVE_ANALYTICS_SECTIONS: LabSection[] = [
+  'summary',
+  'distribution',
+  'scatter',
+  'data_trend',
+  'time_profiles',
+  'heat_map',
+];
 
 function getDefaultVariableSelection(scope: VariableSelectionScope, availableCodes: string[]) {
   if (availableCodes.length === 0) {
@@ -134,10 +154,26 @@ export function AnalyticalWorkspaceScreen() {
   const [genericCategoryOrderInput, setGenericCategoryOrderInput] = useState('');
   const [timeIsHere, setTimeIsHere] = useState(true);
   const [showStdBand, setShowStdBand] = useState(true);
+  const [showMarkers, setShowMarkers] = useState(false);
   const [normalizeDensity, setNormalizeDensity] = useState(false);
   const [cumulativeDensity, setCumulativeDensity] = useState(false);
   const [swarmOverlay, setSwarmOverlay] = useState(false);
+  const [histogramBins, setHistogramBins] = useState(32);
+  const [histogramStat, setHistogramStat] = useState<'count' | 'probability' | 'percent' | 'density'>('density');
+  const [histogramMode, setHistogramMode] = useState<'overlay' | 'group' | 'stack'>('overlay');
+  const [histogramElement, setHistogramElement] = useState<'bars' | 'step'>('bars');
+  const [densityKind, setDensityKind] = useState<'heatmap' | 'contour'>('heatmap');
+  const [missingPlotType, setMissingPlotType] = useState<'matrix' | 'bars' | 'heatmap'>('matrix');
+  const [colorScale, setColorScale] = useState('Blues');
+  const [regressionOrder, setRegressionOrder] = useState(1);
+  const [confidenceLevel, setConfidenceLevel] = useState(0.95);
+  const [markerOpacity, setMarkerOpacity] = useState(0.78);
+  const [markerSize, setMarkerSize] = useState(7);
+  const [facetVariables, setFacetVariables] = useState(true);
+  const [sameYAxis, setSameYAxis] = useState(false);
+  const [facetColumns, setFacetColumns] = useState(2);
   const [variablesByScope, setVariablesByScope] = useState<Partial<Record<VariableSelectionScope, string[]>>>({});
+  const [loadNotice, setLoadNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [useMultiByScope, setUseMultiByScope] = useState<Partial<Record<VariableSelectionScope, boolean>>>(() => {
     const defaults: Partial<Record<VariableSelectionScope, boolean>> = {};
     for (const scope of VARIABLE_SELECTION_SCOPES) {
@@ -199,17 +235,37 @@ export function AnalyticalWorkspaceScreen() {
       genericCategoryOrderInput,
       timeIsHere,
       showStdBand,
+      showMarkers,
       normalizeDensity,
       cumulativeDensity,
       swarmOverlay,
+      histogramBins,
+      histogramStat,
+      histogramMode,
+      histogramElement,
+      densityKind,
+      missingPlotType,
+      colorScale,
+      regressionOrder,
+      confidenceLevel,
+      markerOpacity,
+      markerSize,
+      facetVariables,
+      sameYAxis,
+      facetColumns,
     }),
     [
       chartType,
       changepointSensitivity,
       changepointWindow,
+      colorScale,
       correlationChartType,
       cumulativeDensity,
+      confidenceLevel,
+      densityKind,
       decompositionWindow,
+      facetColumns,
+      facetVariables,
       forecastHorizon,
       genericCategoryOrderInput,
       genericFacetCol,
@@ -217,14 +273,24 @@ export function AnalyticalWorkspaceScreen() {
       genericHue,
       genericXAxis,
       genericYAxis,
+      histogramBins,
+      histogramElement,
+      histogramMode,
+      histogramStat,
+      markerOpacity,
+      markerSize,
+      missingPlotType,
       normalizeDensity,
       pairVariableX,
       pairVariableY,
       profileAggregation,
       profileHeatmapMode,
       profileMode,
+      regressionOrder,
       rollingWindow,
+      sameYAxis,
       seasonalityMode,
+      showMarkers,
       showStdBand,
       summaryChartType,
       swarmOverlay,
@@ -263,6 +329,9 @@ export function AnalyticalWorkspaceScreen() {
   const configuredScopeVariables = labSection === 'load-data' ? [] : (variablesByScope[labSection] ?? []);
   const requestedPlotVariableCodes = (() => {
     if (labSection === 'load-data') return [];
+    if (labSection === 'scatter') {
+      return configuredScopeVariables.slice(0, 2);
+    }
     // Single-output sections always use one variable unless multi is explicitly on
     if (REFERENCE_SINGLE_OUTPUT_SECTIONS.has(labSection) && !isMultiEnabledForScope(labSection)) {
       return configuredScopeVariables.slice(0, 1);
@@ -315,9 +384,7 @@ export function AnalyticalWorkspaceScreen() {
 
   const finalizedManualDatasets = useMemo(
     () =>
-      controllerManualDatasets.filter(
-        (dataset) => dataset.status.startsWith('finalized') && dataset.source_kind !== 'remmaq',
-      ),
+      controllerManualDatasets.filter((dataset) => dataset.status.startsWith('finalized')),
     [controllerManualDatasets],
   );
 
@@ -327,7 +394,9 @@ export function AnalyticalWorkspaceScreen() {
       return finalizedManualDatasets;
     }
     return finalizedManualDatasets.filter((dataset) => {
-      const haystack = `${dataset.name} ${dataset.original_file_name} ${dataset.dataset_kind ?? ''}`.toLowerCase();
+      const haystack =
+        `${dataset.name} ${dataset.original_file_name} ${dataset.source_kind} ${dataset.dataset_kind ?? ''}`
+          .toLowerCase();
       return haystack.includes(keyword);
     });
   }, [finalizedManualDatasets, sourceSearch]);
@@ -396,7 +465,7 @@ export function AnalyticalWorkspaceScreen() {
   const activeUseMulti = useMemo(
     () => {
       if (labSection === 'load-data') return false;
-      return labSection === 'correlation' || isMultiEnabledForScope(labSection);
+      return labSection === 'correlation' || labSection === 'scatter' || isMultiEnabledForScope(labSection);
     },
     [labSection, useMultiByScope],
   );
@@ -466,6 +535,10 @@ export function AnalyticalWorkspaceScreen() {
   }, [setRowLimit, sourceMaxRows]);
 
   useEffect(() => {
+    setLoadNotice(null);
+  }, [dateFrom, dateTo, rowLimit, selectedManualDatasetId, selectedSourceIds, selectedStations]);
+
+  useEffect(() => {
     if (!isGenericManualDataset) return;
     setUseMultiByScope((current) => {
       const allOn = VARIABLE_SELECTION_SCOPES.every((s) => Boolean(current[s]));
@@ -502,7 +575,7 @@ export function AnalyticalWorkspaceScreen() {
   }, [availableVariableCodes, controllerBootstrapReady]);
 
   useEffect(() => {
-    if (labSection !== 'correlation' || pairVariableOptions.length === 0) {
+    if ((labSection !== 'correlation' && labSection !== 'scatter') || pairVariableOptions.length === 0) {
       return;
     }
 
@@ -572,8 +645,58 @@ export function AnalyticalWorkspaceScreen() {
     setRangePreset(presetId);
   };
 
-  const handleRunClick = () => {
-    void controllerRunAnalysis();
+  const handleRunClick = async () => {
+    setLoadNotice(null);
+    if (selectedSourceIds.length === 0 && !selectedManualDatasetId) {
+      setLoadNotice({ tone: 'error', message: 'Selecciona al menos una fuente o dataset antes de cargar.' });
+      return;
+    }
+
+    const sourceLabel = selectedManualDataset
+      ? selectedManualDataset.name
+      : selectedSources.length === 1
+        ? selectedSources[0].name
+        : `${selectedSources.length} fuentes`;
+
+    if (isGenericManualDataset) {
+      setLoadNotice({
+        tone: 'success',
+        message: `Informacion lista: ${sourceLabel} (${selectedManualDataset.row_count.toLocaleString()} filas).`,
+      });
+      setWorkspaceMode('exploration');
+      setLabSection('summary');
+      return;
+    }
+
+    const result = await controllerRunAnalysis();
+    if (!result.ok) {
+      setLoadNotice({ tone: 'error', message: result.message });
+      return;
+    }
+    setLoadNotice({
+      tone: 'success',
+      message: `Informacion cargada correctamente: ${sourceLabel} (${result.rowsLoaded.toLocaleString()} filas).`,
+    });
+    setWorkspaceMode('exploration');
+    setLabSection('summary');
+  };
+
+  const handleVariableMappingChange = (slot: 'x' | 'y' | 'fill' | 'color' | 'size' | 'group' | 'facet', value: string) => {
+    if (slot === 'x') {
+      setGenericXAxis(value);
+      return;
+    }
+    if (slot === 'y') {
+      setGenericYAxis(value);
+      return;
+    }
+    if (slot === 'color') {
+      setGenericHue(value);
+      return;
+    }
+    if (slot === 'facet') {
+      setGenericFacetCol(value);
+    }
   };
 
   const handleToggleStation = (stationCode: string) => {
@@ -679,6 +802,10 @@ export function AnalyticalWorkspaceScreen() {
 
   const activeSection = ANALYSIS_SECTIONS.find((section) => section.value === labSection) ?? ANALYSIS_SECTIONS[0];
   const ActiveSectionIcon = activeSection.icon;
+  const isDescriptiveSection = DESCRIPTIVE_ANALYTICS_SECTIONS.includes(labSection);
+  const descriptiveSections = ANALYSIS_SECTIONS.filter((section) =>
+    DESCRIPTIVE_ANALYTICS_SECTIONS.includes(section.value),
+  );
   const activeSelectedVariableLabels = activeSelectedVariables.map(
     (code) => availableVariables.find((variable) => variable.code === code)?.name ?? code,
   );
@@ -690,22 +817,55 @@ export function AnalyticalWorkspaceScreen() {
   const selectedDataSourceCount = selectedSourceIds.length + (selectedManualDatasetId ? 1 : 0);
   const plotStats = controllerPlotResponse?.stats ?? {};
   const plotWarnings = controllerPlotResponse?.warnings ?? [];
+  const plotDataFrameSummary = Array.isArray(plotStats.data_frame_summary)
+    ? (plotStats.data_frame_summary as Record<string, unknown>[])
+    : [];
   const plotVariableSummary = Array.isArray(plotStats.variable_summary)
     ? (plotStats.variable_summary as Record<string, unknown>[])
+    : [];
+  const plotQualitySummary = Array.isArray(plotStats.quality_summary)
+    ? (plotStats.quality_summary as Record<string, unknown>[])
     : [];
   const statSamples = typeof plotStats.samples === 'number' ? Number(plotStats.samples) : summary.samples;
   const statMean = typeof plotStats.mean === 'number' ? Number(plotStats.mean) : summary.mean;
   const statTrend = typeof plotStats.trend === 'string' ? plotStats.trend : summary.trend;
   const canUseGenericAxes = isGenericManualDataset && manualDatasetColumnOptions.length > 0;
   const currentInlinePlotType =
-    labSection === 'rolling' ? chartType : labSection === 'summary' ? summaryChartType : correlationChartType;
-  const hasInlinePlotControls =
+    labSection === 'rolling' || labSection === 'data_trend'
+      ? chartType
+      : labSection === 'summary' || labSection === 'distribution'
+        ? summaryChartType
+        : correlationChartType;
+  const supportsInlinePlotControls =
     labSection === 'summary'
+    || labSection === 'distribution'
     || labSection === 'correlation'
-    || canUseGenericAxes
-    || (labSection === 'rolling' && currentInlinePlotType === 'line');
+    || labSection === 'scatter'
+    || ((labSection === 'rolling' || labSection === 'data_trend') && canUseGenericAxes);
+  const hasInlinePlotControls =
+    supportsInlinePlotControls
+    || ((labSection === 'rolling' || labSection === 'data_trend') && currentInlinePlotType === 'line');
 
   const renderAnalysisChart = () => {
+    if (controllerPlotLoading && controllerPlotResponse) {
+      return (
+        <div className="relative h-full">
+          <PlotlyFigurePanel
+            figure={controllerPlotResponse.figure_json}
+            title={activeSection.label}
+            description={getLabSectionDescription(labSection)}
+            height={isDescriptiveSection ? 660 : 560}
+            enableTimeNavigation={isTimeNavigableSection(labSection)}
+            uirevision={`eda-${labSection}`}
+          />
+          <div className="absolute right-4 top-4 rounded-md border border-[#dce5f1] bg-white/90 px-3 py-1.5 text-xs text-muted-foreground shadow-sm">
+            <Loader2 className="mr-2 inline h-3.5 w-3.5 animate-spin" />
+            Updating
+          </div>
+        </div>
+      );
+    }
+
     if (controllerPlotLoading) {
       return (
         <div className="h-full flex items-center justify-center text-sm text-muted-foreground border rounded-md bg-white">
@@ -736,7 +896,7 @@ export function AnalyticalWorkspaceScreen() {
         figure={controllerPlotResponse.figure_json}
         title={activeSection.label}
         description={getLabSectionDescription(labSection)}
-        height={560}
+        height={isDescriptiveSection ? 660 : 560}
         enableTimeNavigation={isTimeNavigableSection(labSection)}
         uirevision={`eda-${labSection}`}
       />
@@ -744,7 +904,7 @@ export function AnalyticalWorkspaceScreen() {
   };
 
   return (
-    <div className="h-full flex bg-[#F9FBFC]">
+    <div className="h-full min-h-0 flex overflow-hidden bg-[#F9FBFC]">
       {workspaceMode === 'exploration' && (
         <AnalyticalWorkspaceSidebar
           collapsed={sidebarCollapsed}
@@ -760,7 +920,7 @@ export function AnalyticalWorkspaceScreen() {
         />
       )}
 
-      <main className="flex-1 overflow-y-auto">
+      <main className="min-h-0 flex-1 overflow-y-auto">
         <div className="p-6 space-y-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
@@ -797,6 +957,29 @@ export function AnalyticalWorkspaceScreen() {
               </Card>
             )}
 
+            {loadNotice && (
+              <Card
+                className={`bg-white border-l-4 ${
+                  loadNotice.tone === 'success' ? 'border-l-emerald-500' : 'border-l-red-500'
+                }`}
+              >
+                <CardContent className="py-3">
+                  <div
+                    className={`flex items-center gap-2 text-sm ${
+                      loadNotice.tone === 'success' ? 'text-emerald-700' : 'text-red-700'
+                    }`}
+                  >
+                    {loadNotice.tone === 'success' ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <AlertTriangle className="h-4 w-4" />
+                    )}
+                    <span>{loadNotice.message}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <TabsContent value="exploration" className="space-y-6">
               {labSection === 'load-data' ? (
                 <AnalyticalWorkspaceLoadDataPanel
@@ -808,6 +991,7 @@ export function AnalyticalWorkspaceScreen() {
                   loading={controllerLoading}
                   viewportBoundToRows={viewportBoundToRows}
                   effectiveRowWindow={effectiveRowWindow}
+                  selectedManualDatasetKind={selectedManualDataset?.dataset_kind ?? null}
                   onToggleSource={handleToggleSource}
                   onSelectManualDataset={handleSelectManualDataset}
                   onToggleStation={handleToggleStation}
@@ -816,6 +1000,30 @@ export function AnalyticalWorkspaceScreen() {
                 />
               ) : (
                 <div className="space-y-6">
+                  <div className="rounded-lg border border-[#dce5f1] bg-white px-3 py-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {descriptiveSections.map((section) => {
+                        const Icon = section.icon;
+                        const active = labSection === section.value;
+                        return (
+                          <button
+                            key={`descriptive-tab-${section.value}`}
+                            type="button"
+                            onClick={() => setLabSection(section.value)}
+                            className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors ${
+                              active
+                                ? 'bg-[#24384d] text-white shadow-sm'
+                                : 'text-[#008c7a] hover:bg-[#eef6ff] hover:text-[#1F5A8A]'
+                            }`}
+                          >
+                            <Icon className="h-3.5 w-3.5" />
+                            {section.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <KpiCard label="Sources" value={selectedDataSourceCount.toString()} icon={Database} />
                     <KpiCard label="Samples" value={statSamples.toLocaleString()} icon={Table2} />
@@ -890,17 +1098,94 @@ export function AnalyticalWorkspaceScreen() {
                           selectedVariables={activeSelectedVariables}
                           useMulti={activeUseMulti}
                           title="Variables"
-                          multiToggleDisabled={labSection === 'correlation'}
+                          multiToggleDisabled={labSection === 'correlation' || labSection === 'scatter'}
+                          mappingValues={{
+                            x: genericXAxis,
+                            y: genericYAxis,
+                            color: genericHue,
+                            facet: genericFacetCol,
+                          }}
+                          onMappingChange={handleVariableMappingChange}
                           onUseMultiChange={(value) => handleUseMultiForScope(labSection, value)}
                           onSelectSingle={handleSelectActiveSectionSingleVariable}
                           onToggleVariable={handleToggleActiveSectionVariable}
                         />
                       </div>
-                      <div className="flex flex-col xl:flex-row gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="h-[560px] w-full">{renderAnalysisChart()}</div>
+                      {isDescriptiveSection && hasInlinePlotControls && (
+                        <div className="mb-4">
+                          <AnalyticalWorkspaceInlinePlotControls
+                            labSection={labSection}
+                            isGenericManualDataset={isGenericManualDataset}
+                            manualDatasetColumnOptions={manualDatasetColumnOptions}
+                            layout="strip"
+                            chartType={chartType}
+                            summaryChartType={summaryChartType}
+                            correlationChartType={correlationChartType}
+                            useMultiVariables={activeUseMulti}
+                            genericXAxis={genericXAxis}
+                            genericYAxis={genericYAxis}
+                            genericHue={genericHue}
+                            genericFacetRow={genericFacetRow}
+                            genericFacetCol={genericFacetCol}
+                            genericCategoryOrderInput={genericCategoryOrderInput}
+                            timeIsHere={timeIsHere}
+                            showStdBand={showStdBand}
+                            showMarkers={showMarkers}
+                            normalizeDensity={normalizeDensity}
+                            cumulativeDensity={cumulativeDensity}
+                            swarmOverlay={swarmOverlay}
+                            histogramBins={histogramBins}
+                            histogramStat={histogramStat}
+                            histogramMode={histogramMode}
+                            histogramElement={histogramElement}
+                            densityKind={densityKind}
+                            missingPlotType={missingPlotType}
+                            colorScale={colorScale}
+                            regressionOrder={regressionOrder}
+                            confidenceLevel={confidenceLevel}
+                            markerOpacity={markerOpacity}
+                            markerSize={markerSize}
+                            facetVariables={facetVariables}
+                            sameYAxis={sameYAxis}
+                            facetColumns={facetColumns}
+                            onSummaryChartTypeChange={setSummaryChartType}
+                            onCorrelationChartTypeChange={setCorrelationChartType}
+                            onGenericXAxisChange={setGenericXAxis}
+                            onGenericYAxisChange={setGenericYAxis}
+                            onGenericHueChange={setGenericHue}
+                            onGenericFacetRowChange={setGenericFacetRow}
+                            onGenericFacetColChange={setGenericFacetCol}
+                            onGenericCategoryOrderInputChange={setGenericCategoryOrderInput}
+                            onToggleTimeIsHere={() => setTimeIsHere((current) => !current)}
+                            onToggleShowStdBand={() => setShowStdBand((current) => !current)}
+                            onToggleShowMarkers={() => setShowMarkers((current) => !current)}
+                            onToggleNormalizeDensity={() => setNormalizeDensity((current) => !current)}
+                            onToggleCumulativeDensity={() => setCumulativeDensity((current) => !current)}
+                            onToggleSwarmOverlay={() => setSwarmOverlay((current) => !current)}
+                            onHistogramBinsChange={setHistogramBins}
+                            onHistogramStatChange={setHistogramStat}
+                            onHistogramModeChange={setHistogramMode}
+                            onHistogramElementChange={setHistogramElement}
+                            onDensityKindChange={setDensityKind}
+                            onMissingPlotTypeChange={setMissingPlotType}
+                            onColorScaleChange={setColorScale}
+                            onRegressionOrderChange={setRegressionOrder}
+                            onConfidenceLevelChange={setConfidenceLevel}
+                            onMarkerOpacityChange={setMarkerOpacity}
+                            onMarkerSizeChange={setMarkerSize}
+                            onToggleFacetVariables={() => setFacetVariables((current) => !current)}
+                            onToggleSameYAxis={() => setSameYAxis((current) => !current)}
+                            onFacetColumnsChange={setFacetColumns}
+                          />
                         </div>
-                        {hasInlinePlotControls && (
+                      )}
+                      <div className={isDescriptiveSection ? 'space-y-4' : 'flex flex-col xl:flex-row gap-4'}>
+                        <div className="flex-1 min-w-0">
+                          <div className={`${isDescriptiveSection ? 'h-[680px]' : 'h-[560px]'} w-full`}>
+                            {renderAnalysisChart()}
+                          </div>
+                        </div>
+                        {!isDescriptiveSection && hasInlinePlotControls && (
                           <div className="w-full xl:w-[320px] shrink-0">
                             <AnalyticalWorkspaceInlinePlotControls
                               labSection={labSection}
@@ -918,9 +1203,24 @@ export function AnalyticalWorkspaceScreen() {
                               genericCategoryOrderInput={genericCategoryOrderInput}
                               timeIsHere={timeIsHere}
                               showStdBand={showStdBand}
+                              showMarkers={showMarkers}
                               normalizeDensity={normalizeDensity}
                               cumulativeDensity={cumulativeDensity}
                               swarmOverlay={swarmOverlay}
+                              histogramBins={histogramBins}
+                              histogramStat={histogramStat}
+                              histogramMode={histogramMode}
+                              histogramElement={histogramElement}
+                              densityKind={densityKind}
+                              missingPlotType={missingPlotType}
+                              colorScale={colorScale}
+                              regressionOrder={regressionOrder}
+                              confidenceLevel={confidenceLevel}
+                              markerOpacity={markerOpacity}
+                              markerSize={markerSize}
+                              facetVariables={facetVariables}
+                              sameYAxis={sameYAxis}
+                              facetColumns={facetColumns}
                               onSummaryChartTypeChange={setSummaryChartType}
                               onCorrelationChartTypeChange={setCorrelationChartType}
                               onGenericXAxisChange={setGenericXAxis}
@@ -931,9 +1231,24 @@ export function AnalyticalWorkspaceScreen() {
                               onGenericCategoryOrderInputChange={setGenericCategoryOrderInput}
                               onToggleTimeIsHere={() => setTimeIsHere((current) => !current)}
                               onToggleShowStdBand={() => setShowStdBand((current) => !current)}
+                              onToggleShowMarkers={() => setShowMarkers((current) => !current)}
                               onToggleNormalizeDensity={() => setNormalizeDensity((current) => !current)}
                               onToggleCumulativeDensity={() => setCumulativeDensity((current) => !current)}
                               onToggleSwarmOverlay={() => setSwarmOverlay((current) => !current)}
+                              onHistogramBinsChange={setHistogramBins}
+                              onHistogramStatChange={setHistogramStat}
+                              onHistogramModeChange={setHistogramMode}
+                              onHistogramElementChange={setHistogramElement}
+                              onDensityKindChange={setDensityKind}
+                              onMissingPlotTypeChange={setMissingPlotType}
+                              onColorScaleChange={setColorScale}
+                              onRegressionOrderChange={setRegressionOrder}
+                              onConfidenceLevelChange={setConfidenceLevel}
+                              onMarkerOpacityChange={setMarkerOpacity}
+                              onMarkerSizeChange={setMarkerSize}
+                              onToggleFacetVariables={() => setFacetVariables((current) => !current)}
+                              onToggleSameYAxis={() => setSameYAxis((current) => !current)}
+                              onFacetColumnsChange={setFacetColumns}
                             />
                           </div>
                         )}
@@ -945,7 +1260,9 @@ export function AnalyticalWorkspaceScreen() {
                     labSection={labSection}
                     plotResponse={controllerPlotResponse}
                     plotStats={plotStats}
+                    plotDataFrameSummary={plotDataFrameSummary}
                     plotVariableSummary={plotVariableSummary}
+                    plotQualitySummary={plotQualitySummary}
                   />
                 </div>
               )}

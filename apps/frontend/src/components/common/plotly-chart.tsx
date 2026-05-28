@@ -105,34 +105,29 @@ export function PlotlyChart({
     height,
     dragmode: enableTimeNavigation ? 'pan' : (figure.layout?.dragmode as string | undefined),
     uirevision: uirevision ?? 'plotly-chart',
-    xaxis: enableTimeNavigation
-      ? {
-          ...((figure.layout?.xaxis as Record<string, unknown> | undefined) ?? {}),
-          rangeslider: {
-            visible: true,
-            ...((((figure.layout?.xaxis as Record<string, unknown> | undefined)?.rangeslider as Record<string, unknown> | undefined) ?? {})),
-          },
-        }
-      : figure.layout?.xaxis,
   };
 
   const handleRelayout = (event: Record<string, unknown>) => {
     if (!enableTimeNavigation || !onViewportChange) {
       return;
     }
-    const from = typeof event['xaxis.range[0]'] === 'string' ? event['xaxis.range[0]'] : null;
-    const to = typeof event['xaxis.range[1]'] === 'string' ? event['xaxis.range[1]'] : null;
+    const rangeKey = Object.keys(event).find((key) => /^xaxis\d*\.range\[0\]$/.test(key));
+    const axisPrefix = rangeKey?.replace('.range[0]', '') ?? 'xaxis';
+    const fromValue = event[`${axisPrefix}.range[0]`];
+    const toValue = event[`${axisPrefix}.range[1]`];
+    const from = typeof fromValue === 'string' ? fromValue : null;
+    const to = typeof toValue === 'string' ? toValue : null;
     if (from && to) {
       onViewportChange({ from, to });
       return;
     }
-    if (event['xaxis.autorange']) {
+    if (Object.keys(event).some((key) => /^xaxis\d*\.autorange$/.test(key))) {
       onViewportChange({ from: null, to: null });
     }
   };
 
   return (
-    <div className={`h-full w-full overflow-hidden rounded-md border bg-white ${className}`}>
+    <div className={`relative h-full w-full overflow-hidden rounded-md border bg-white ${className}`}>
       <PlotComponent
         data={(figure.data ?? []) as never[]}
         layout={layout as never}
@@ -141,7 +136,7 @@ export function PlotlyChart({
           {
             responsive: true,
             displaylogo: false,
-            scrollZoom: enableTimeNavigation,
+            scrollZoom: true,
             modeBarButtonsToRemove: ['lasso2d', 'select2d'],
           } as never
         }

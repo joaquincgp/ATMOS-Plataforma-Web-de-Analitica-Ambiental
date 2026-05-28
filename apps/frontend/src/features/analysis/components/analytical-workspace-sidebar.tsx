@@ -26,6 +26,17 @@ interface AnalyticalWorkspaceSidebarProps {
   onToggleCollapsed: () => void;
 }
 
+const SELECTED_VARIABLE_COLORS = [
+  { bg: '#eef6ff', border: '#0B5EA8', text: '#0B5EA8' },
+  { bg: '#fff3ed', border: '#F05A28', text: '#C2410C' },
+  { bg: '#ecfeff', border: '#0B7285', text: '#0B7285' },
+  { bg: '#f0fdf4', border: '#16A34A', text: '#15803D' },
+  { bg: '#f5f3ff', border: '#7C3AED', text: '#6D28D9' },
+  { bg: '#fffbeb', border: '#A16207', text: '#92400E' },
+  { bg: '#fdf2f8', border: '#DB2777', text: '#BE185D' },
+  { bg: '#f8fafc', border: '#475569', text: '#334155' },
+];
+
 export function AnalyticalWorkspaceSidebar({
   collapsed,
   labSection,
@@ -41,7 +52,7 @@ export function AnalyticalWorkspaceSidebar({
   return (
     <aside
       className={`
-        ${collapsed ? 'w-16' : 'w-72'} shrink-0 border-r border-gray-200 bg-white
+        ${collapsed ? 'w-16' : 'w-72'} h-full min-h-0 shrink-0 border-r border-gray-200 bg-white
         flex flex-col transition-[width] duration-300 ease-in-out overflow-hidden
       `}
     >
@@ -80,7 +91,7 @@ export function AnalyticalWorkspaceSidebar({
       </div>
 
       {/* Analysis section buttons */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-2 space-y-1">
           {ANALYSIS_SECTIONS.map((section) => {
             const Icon = section.icon;
@@ -132,10 +143,15 @@ export function AnalyticalWorkspaceSidebar({
             </div>
             {selectedVariables.length > 0 && (
               <div className="flex flex-wrap gap-1 rounded-md border bg-[#f8fbff] p-2">
-                {selectedVariables.map((code) => {
+                {selectedVariables.map((code, index) => {
                   const label = availableVariables.find((v) => v.code === code)?.name ?? code;
+                  const color = SELECTED_VARIABLE_COLORS[index % SELECTED_VARIABLE_COLORS.length];
                   return (
-                    <span key={code} className="rounded-full bg-[#509EE3]/10 border border-[#509EE3]/30 text-[#1F5A8A] text-[10px] px-2 py-0.5">
+                    <span
+                      key={code}
+                      className="rounded-full border text-[10px] px-2 py-0.5"
+                      style={{ backgroundColor: color.bg, borderColor: color.border, color: color.text }}
+                    >
                       {label}
                     </span>
                   );

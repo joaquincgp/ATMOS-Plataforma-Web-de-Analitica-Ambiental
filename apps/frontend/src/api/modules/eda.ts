@@ -2,6 +2,11 @@ import { apiRequest } from '@/api/http-client';
 
 export type EdaSection =
   | 'rolling'
+  | 'distribution'
+  | 'scatter'
+  | 'data_trend'
+  | 'time_profiles'
+  | 'heat_map'
   | 'anomaly'
   | 'profiles'
   | 'seasonality'
@@ -21,12 +26,16 @@ export type EdaChartType =
   | 'heatmap'
   | 'histogram'
   | 'kde'
+  | 'density2'
   | 'box'
   | 'violin'
+  | 'lineplot'
+  | 'catplot'
   | 'regression'
   | 'pairplot'
   | 'missing'
-  | 'ridge';
+  | 'ridge'
+  | 'clustermap';
 
 export interface EdaPlotRequest {
   section: EdaSection;
@@ -61,9 +70,24 @@ export interface EdaPlotRequest {
   category_order?: string[];
   time_is_here?: boolean;
   show_std_band?: boolean;
+  show_markers?: boolean;
   cumulative?: boolean;
   normalize_density?: boolean;
   swarm_overlay?: boolean;
+  histogram_bins?: number;
+  histogram_stat?: 'count' | 'probability' | 'percent' | 'density';
+  histogram_mode?: 'overlay' | 'group' | 'stack';
+  histogram_element?: 'bars' | 'step';
+  density_kind?: 'heatmap' | 'contour';
+  missing_plot_type?: 'matrix' | 'bars' | 'heatmap';
+  color_scale?: string;
+  regression_order?: number;
+  confidence_level?: number;
+  marker_opacity?: number;
+  marker_size?: number;
+  facet_variables?: boolean;
+  same_y_axis?: boolean;
+  facet_columns?: number;
 }
 
 export interface EdaSecondaryFigure {

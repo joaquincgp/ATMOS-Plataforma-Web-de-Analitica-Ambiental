@@ -116,7 +116,7 @@ export function AnalyticalWorkspaceSectionControls({
     </div>
   );
 
-  if (labSection === 'rolling') {
+  if (labSection === 'rolling' || labSection === 'data_trend') {
     return (
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_1fr_1fr_auto] gap-3 items-end mb-4">
         {renderGranularityControl()}
@@ -192,7 +192,7 @@ export function AnalyticalWorkspaceSectionControls({
     );
   }
 
-  if (labSection === 'profiles') {
+  if (labSection === 'profiles' || labSection === 'time_profiles') {
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
         <Select value={profileMode} onValueChange={(value) => onProfileModeChange(value as ProfileMode)}>
@@ -229,6 +229,37 @@ export function AnalyticalWorkspaceSectionControls({
             <SelectItem value="hour">Year x hour</SelectItem>
             <SelectItem value="weekday">Year x weekday</SelectItem>
             <SelectItem value="week">Year x week</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+
+  if (labSection === 'heat_map') {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-4">
+        <Select value={profileHeatmapMode} onValueChange={(value) => onProfileHeatmapModeChange(value as HeatmapProfileMode)}>
+          <SelectTrigger className="h-9 text-xs">
+            <SelectValue placeholder="Heatmap profile" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="month">Year x month</SelectItem>
+            <SelectItem value="hour">Year x hour</SelectItem>
+            <SelectItem value="weekday">Year x weekday</SelectItem>
+            <SelectItem value="week">Year x week</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={profileAggregation} onValueChange={(value) => onProfileAggregationChange(value as AggregationMode)}>
+          <SelectTrigger className="h-9 text-xs">
+            <SelectValue placeholder="Aggregation" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="mean">Mean</SelectItem>
+            <SelectItem value="median">Median</SelectItem>
+            <SelectItem value="sum">Sum</SelectItem>
+            <SelectItem value="min">Min</SelectItem>
+            <SelectItem value="max">Max</SelectItem>
+            <SelectItem value="std">Std</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -352,7 +383,7 @@ export function AnalyticalWorkspaceSectionControls({
     );
   }
 
-  if (labSection === 'correlation') {
+  if (labSection === 'correlation' || labSection === 'scatter') {
     if (isGenericManualDataset) {
       return <div className="mb-4">{renderGranularityControl('Bucketing')}</div>;
     }

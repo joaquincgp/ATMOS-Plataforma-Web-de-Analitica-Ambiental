@@ -41,6 +41,7 @@ interface AnalyticalWorkspaceLoadDataPanelProps {
   onToggleStation: (stationCode: string) => void;
   onApplyRangePreset: (presetId: string) => void;
   onRun: () => void;
+  selectedManualDatasetKind?: string | null;
 }
 
 export function AnalyticalWorkspaceLoadDataPanel({
@@ -57,6 +58,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
   onToggleStation,
   onApplyRangePreset,
   onRun,
+  selectedManualDatasetKind,
 }: AnalyticalWorkspaceLoadDataPanelProps) {
   const {
     dateFrom,
@@ -77,6 +79,17 @@ export function AnalyticalWorkspaceLoadDataPanel({
   const resetToCustomRange = (nextDate: string, setter: (value: string) => void) => {
     setter(nextDate);
     setRangePreset('custom');
+  };
+
+  const getManualDatasetSubtitle = (dataset: ManualDatasetResponse) => {
+    const sourceLabel =
+      dataset.source_kind === 'remmaq'
+        ? 'REMMAQ'
+        : dataset.source_kind === 'github_raw'
+          ? 'GitHub raw'
+          : 'manual dataset';
+    const kindLabel = dataset.dataset_kind ? ` - ${dataset.dataset_kind}` : '';
+    return `${sourceLabel}${kindLabel} - ${dataset.row_count.toLocaleString()} rows`;
   };
 
   return (
@@ -125,7 +138,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{source.name}</p>
                           <p className="text-[11px] text-muted-foreground">
-                            {source.source_type} · {source.row_count.toLocaleString()} rows
+                            {source.source_type} - {source.row_count.toLocaleString()} rows
                           </p>
                         </div>
                       </div>
@@ -150,10 +163,13 @@ export function AnalyticalWorkspaceLoadDataPanel({
                           <Database className="w-4 h-4 text-[#509EE3]" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{dataset.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            manual dataset · {dataset.row_count.toLocaleString()} rows
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium truncate">{dataset.name}</p>
+                            {active && (
+                              <Badge className="bg-[#509EE3] text-white border-[#509EE3]">selected</Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">{getManualDatasetSubtitle(dataset)}</p>
                         </div>
                       </div>
                     </button>
@@ -260,7 +276,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
               </div>
               <Button className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={onRun} disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
-                Load Analysis Data
+                {selectedManualDatasetKind === 'generic' ? 'Open Summary' : 'Load Analysis Data'}
               </Button>
               <div className="rounded-lg border bg-white p-3 text-xs text-muted-foreground space-y-1">
                 <div className="flex items-center justify-between">

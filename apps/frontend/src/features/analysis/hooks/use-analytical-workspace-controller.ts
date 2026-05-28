@@ -62,9 +62,24 @@ interface PlotControlState {
   genericCategoryOrderInput: string;
   timeIsHere: boolean;
   showStdBand: boolean;
+  showMarkers: boolean;
   normalizeDensity: boolean;
   cumulativeDensity: boolean;
   swarmOverlay: boolean;
+  histogramBins: number;
+  histogramStat: 'count' | 'probability' | 'percent' | 'density';
+  histogramMode: 'overlay' | 'group' | 'stack';
+  histogramElement: 'bars' | 'step';
+  densityKind: 'heatmap' | 'contour';
+  missingPlotType: 'matrix' | 'bars' | 'heatmap';
+  colorScale: string;
+  regressionOrder: number;
+  confidenceLevel: number;
+  markerOpacity: number;
+  markerSize: number;
+  facetVariables: boolean;
+  sameYAxis: boolean;
+  facetColumns: number;
 }
 
 interface BootstrapActions {
@@ -83,6 +98,12 @@ interface UseAnalyticalWorkspaceControllerParams {
   plotVariableCodes: string[];
   plotControls: PlotControlState;
   bootstrapActions: BootstrapActions;
+}
+
+interface RunAnalysisResult {
+  ok: boolean;
+  rowsLoaded: number;
+  message: string;
 }
 
 export function useAnalyticalWorkspaceController({
@@ -117,22 +138,28 @@ export function useAnalyticalWorkspaceController({
 
   const requestIdRef = useRef(0);
   const plotRequestIdRef = useRef(0);
+  const plotCacheRef = useRef<Map<string, EdaPlotResponse>>(new Map());
 
-  const runAnalysis = useCallback(async () => {
+  const runAnalysis = useCallback(async (): Promise<RunAnalysisResult> => {
     const selectedManualDataset =
       manualDatasets.find((dataset) => dataset.id === selectedManualDatasetId) ?? null;
     const isMeasurementManualDataset = selectedManualDataset?.dataset_kind === 'measurements';
 
     if (selectedSourceIds.length === 0 && !selectedManualDatasetId) {
       setRows([]);
-      setError('Select at least one data source to visualize.');
-      return;
+      const message = 'Select at least one data source to visualize.';
+      setError(message);
+      return { ok: false, rowsLoaded: 0, message };
     }
 
     if (selectedManualDatasetId && !isMeasurementManualDataset) {
       setRows([]);
       setError(null);
-      return;
+      return {
+        ok: true,
+        rowsLoaded: selectedManualDataset?.row_count ?? 0,
+        message: 'Dataset is ready for Plotly summary rendering.',
+      };
     }
 
     const selectedSet = new Set(selectedSourceIds);
@@ -168,21 +195,33 @@ export function useAnalyticalWorkspaceController({
           } satisfies AnalyticsQueryRequest);
 
       if (requestId !== requestIdRef.current) {
-        return;
+        return { ok: false, rowsLoaded: 0, message: 'A newer data request replaced this one.' };
       }
 
       setRows(response.rows);
       if (response.rows.length === 0) {
-        setError(
-          'No data for the selected source selection and filters.',
-        );
+        const message = 'No data for the selected source selection and filters.';
+        setError(message);
+        return { ok: false, rowsLoaded: 0, message };
       }
+      return {
+        ok: true,
+        rowsLoaded: response.rows.length,
+        message: `Loaded ${response.rows.length.toLocaleString()} rows.`,
+      };
     } catch (err) {
       if (requestId !== requestIdRef.current) {
-        return;
+        return { ok: false, rowsLoaded: 0, message: 'A newer data request replaced this one.' };
       }
       setRows([]);
-      setError(err instanceof Error ? err.message : 'Failed to load analytics data.');
+      let message: string;
+      if (err instanceof Error && err.message === 'Failed to fetch') {
+        message = 'No se pudo conectar con el backend. Verifica que la API este corriendo en http://localhost:8000.';
+      } else {
+        message = err instanceof Error ? err.message : 'Failed to load analytics data.';
+      }
+      setError(message);
+      return { ok: false, rowsLoaded: 0, message };
     } finally {
       if (requestId === requestIdRef.current) {
         setLoading(false);
@@ -202,19 +241,77 @@ export function useAnalyticalWorkspaceController({
     const requestId = plotRequestIdRef.current + 1;
     plotRequestIdRef.current = requestId;
     const normalizedRange = normalizeDateRange(dateFrom, dateTo);
+    const selectedManualDataset =
+      manualDatasets.find((dataset) => dataset.id === selectedManualDatasetId) ?? null;
+    const usesGenericEngine = selectedManualDataset?.dataset_kind === 'generic';
+    const usesMeasurementEngine = !usesGenericEngine;
+    const sanitizeChartType = (candidate: EdaChartType | null): EdaChartType | null => {
+      if (!usesMeasurementEngine || candidate === null) {
+        return candidate;
+      }
+      if (labSection === 'summary') {
+        return ['bar', 'histogram', 'kde', 'box', 'violin'].includes(candidate) ? candidate : 'bar';
+      }
+      if (labSection === 'distribution') {
+        return ['histogram', 'kde', 'box', 'violin'].includes(candidate) ? candidate : 'histogram';
+      }
+      if (labSection === 'correlation' || labSection === 'scatter') {
+        return ['heatmap', 'scatter', 'regression'].includes(candidate)
+          ? candidate
+          : labSection === 'scatter'
+            ? 'scatter'
+            : 'heatmap';
+      }
+      return candidate;
+    };
     const chartTypeForSection =
-      labSection === 'rolling'
+      labSection === 'rolling' || labSection === 'data_trend'
         ? plotControls.chartType
-        : labSection === 'summary'
+        : labSection === 'summary' || labSection === 'distribution'
           ? plotControls.summaryChartType
-          : labSection === 'correlation'
+          : labSection === 'correlation' || labSection === 'scatter'
             ? plotControls.correlationChartType
             : null;
+    const safeChartTypeForSection = sanitizeChartType(chartTypeForSection);
+    const supportsGenericMappings =
+      labSection === 'summary'
+      || labSection === 'distribution'
+      || labSection === 'correlation'
+      || labSection === 'scatter'
+      || labSection === 'rolling'
+      || labSection === 'data_trend'
+      || labSection === 'time_profiles'
+      || labSection === 'profiles'
+      || labSection === 'heat_map'
+      || labSection === 'seasonality'
+      || labSection === 'anomaly'
+      || labSection === 'decomposition'
+      || labSection === 'autocorr'
+      || labSection === 'pacf'
+      || labSection === 'forecast'
+      || labSection === 'changepoints'
+      || labSection === 'trend';
+    const supportsDistributionOptions = labSection === 'summary' || labSection === 'distribution';
+    const supportsRelationshipOptions = labSection === 'correlation' || labSection === 'scatter';
+    const supportsTimeSeriesOptions =
+      labSection === 'rolling'
+      || labSection === 'data_trend'
+      || labSection === 'time_profiles'
+      || labSection === 'profiles'
+      || labSection === 'heat_map'
+      || labSection === 'seasonality'
+      || labSection === 'anomaly'
+      || labSection === 'decomposition'
+      || labSection === 'autocorr'
+      || labSection === 'pacf'
+      || labSection === 'forecast'
+      || labSection === 'changepoints'
+      || labSection === 'trend';
 
     setPlotLoading(true);
     setPlotError(null);
     try {
-      const response = await runEdaPlot({
+      const payload = {
         section: labSection,
         source_file_ids: selectedSourceIds,
         manual_dataset_id: selectedManualDatasetId,
@@ -225,7 +322,7 @@ export function useAnalyticalWorkspaceController({
         limit: rowLimit,
         granularity,
         time_aggregation: timeAggregation,
-        chart_type: chartTypeForSection,
+        chart_type: safeChartTypeForSection,
         rolling_window: plotControls.rollingWindow,
         decomposition_window: plotControls.decompositionWindow,
         forecast_horizon: plotControls.forecastHorizon,
@@ -237,33 +334,81 @@ export function useAnalyticalWorkspaceController({
         trend_deseasonalized: plotControls.trendDeseasonalized,
         pair_variable_x: plotControls.pairVariableX || undefined,
         pair_variable_y: plotControls.pairVariableY || undefined,
-        x_axis: plotControls.genericXAxis || undefined,
-        y_axis: plotControls.genericYAxis || undefined,
-        hue: plotControls.genericHue || undefined,
-        facet_row: plotControls.genericFacetRow || undefined,
-        facet_col: plotControls.genericFacetCol || undefined,
-        category_order: plotControls.genericCategoryOrderInput
-          .split(',')
-          .map((value) => value.trim())
-          .filter(Boolean),
-        time_is_here: plotControls.timeIsHere,
-        show_std_band: plotControls.showStdBand,
-        cumulative: plotControls.cumulativeDensity,
-        normalize_density: plotControls.normalizeDensity,
-        swarm_overlay: plotControls.swarmOverlay,
-      });
+        x_axis: supportsGenericMappings ? plotControls.genericXAxis || undefined : undefined,
+        y_axis: supportsGenericMappings ? plotControls.genericYAxis || undefined : undefined,
+        hue: supportsGenericMappings ? plotControls.genericHue || undefined : undefined,
+        facet_row: supportsGenericMappings ? plotControls.genericFacetRow || undefined : undefined,
+        facet_col: supportsGenericMappings ? plotControls.genericFacetCol || undefined : undefined,
+        category_order: supportsGenericMappings
+          ? plotControls.genericCategoryOrderInput
+              .split(',')
+              .map((value) => value.trim())
+              .filter(Boolean)
+          : [],
+        time_is_here: supportsTimeSeriesOptions ? plotControls.timeIsHere : true,
+        show_std_band: supportsTimeSeriesOptions ? plotControls.showStdBand : false,
+        show_markers: supportsTimeSeriesOptions || supportsDistributionOptions
+          ? plotControls.showMarkers
+          : false,
+        cumulative: supportsDistributionOptions ? plotControls.cumulativeDensity : false,
+        normalize_density: supportsDistributionOptions ? plotControls.normalizeDensity : false,
+        swarm_overlay: supportsDistributionOptions ? plotControls.swarmOverlay : false,
+        histogram_bins: supportsDistributionOptions ? plotControls.histogramBins : 32,
+        histogram_stat: supportsDistributionOptions ? plotControls.histogramStat : 'count',
+        histogram_mode: supportsDistributionOptions ? plotControls.histogramMode : 'overlay',
+        histogram_element: supportsDistributionOptions ? plotControls.histogramElement : 'bars',
+        density_kind: supportsDistributionOptions || supportsRelationshipOptions ? plotControls.densityKind : 'heatmap',
+        missing_plot_type: supportsDistributionOptions || supportsRelationshipOptions ? plotControls.missingPlotType : 'matrix',
+        color_scale: supportsDistributionOptions || supportsRelationshipOptions || labSection === 'heat_map'
+          ? plotControls.colorScale
+          : 'Blues',
+        regression_order: supportsRelationshipOptions ? plotControls.regressionOrder : 1,
+        confidence_level: supportsRelationshipOptions ? plotControls.confidenceLevel : 0.95,
+        marker_opacity: supportsRelationshipOptions || supportsDistributionOptions || supportsTimeSeriesOptions
+          ? plotControls.markerOpacity
+          : 0.78,
+        marker_size: supportsRelationshipOptions || supportsDistributionOptions || supportsTimeSeriesOptions
+          ? plotControls.markerSize
+          : 7,
+        facet_variables: supportsTimeSeriesOptions ? plotControls.facetVariables : false,
+        same_y_axis: supportsTimeSeriesOptions ? plotControls.sameYAxis : false,
+        facet_columns: supportsTimeSeriesOptions ? plotControls.facetColumns : 2,
+      } as const;
+      const cacheKey = JSON.stringify(payload);
+      const cached = plotCacheRef.current.get(cacheKey);
+      if (cached) {
+        if (requestId === plotRequestIdRef.current) {
+          setPlotResponse(cached);
+        }
+        return;
+      }
+
+      const response = await runEdaPlot(payload);
 
       if (requestId !== plotRequestIdRef.current) {
         return;
       }
 
+      plotCacheRef.current.set(cacheKey, response);
+      if (plotCacheRef.current.size > 24) {
+        const firstKey = plotCacheRef.current.keys().next().value;
+        if (firstKey) {
+          plotCacheRef.current.delete(firstKey);
+        }
+      }
       setPlotResponse(response);
     } catch (err) {
       if (requestId !== plotRequestIdRef.current) {
         return;
       }
       setPlotResponse(null);
-      setPlotError(err instanceof Error ? err.message : 'Failed to build the Plotly figure.');
+      setPlotError(
+        err instanceof Error && err.message === 'Failed to fetch'
+          ? 'No se pudo conectar con el backend para construir el grafico Plotly. Verifica que la API este corriendo en http://localhost:8000.'
+          : err instanceof Error
+            ? err.message
+            : 'Failed to build the Plotly figure.',
+      );
     } finally {
       if (requestId === plotRequestIdRef.current) {
         setPlotLoading(false);
@@ -274,6 +419,7 @@ export function useAnalyticalWorkspaceController({
     dateTo,
     granularity,
     labSection,
+    manualDatasets,
     plotControls,
     plotVariableCodes,
     rowLimit,
@@ -375,7 +521,7 @@ export function useAnalyticalWorkspaceController({
   useEffect(() => {
     const timeout = setTimeout(() => {
       void runPlotRequest();
-    }, 150);
+    }, 300);
 
     return () => clearTimeout(timeout);
   }, [runPlotRequest]);

@@ -25,6 +25,11 @@ class ManualDatasetIOMixin:
         raise self._manual_dataset_error(f"Formato no soportado para inspección manual: {suffix or original_name}")
 
     def _read_dataframe(self, file_path: Path, original_name: str) -> pd.DataFrame:
+        if not file_path.exists():
+            raise self._manual_dataset_error(
+                "El archivo fisico del dataset ya no existe en almacenamiento. "
+                "Vuelve a cargar y finalizar la fuente antes de generar graficos."
+            )
         suffix = file_path.suffix.lower() or Path(original_name).suffix.lower()
         if suffix == ".parquet":
             return pd.read_parquet(file_path)
@@ -41,7 +46,18 @@ class ManualDatasetIOMixin:
             processed_path = Path(dataset.processed_file_path)
             if processed_path.exists():
                 return self._read_dataframe(processed_path, dataset.original_file_name)
-        return self._read_dataframe(Path(dataset.raw_file_path), dataset.original_file_name)
+        raw_path = Path(dataset.raw_file_path) if dataset.raw_file_path else None
+        if raw_path and raw_path.exists():
+            return self._read_dataframe(raw_path, dataset.original_file_name)
+        raise self._manual_dataset_error(
+            "El dataset seleccionado ya no tiene archivo fisico asociado. "
+            "Selecciona la version recien cargada o vuelve a cargar la fuente."
+        )
+
+    def _dataset_query_file_exists(self, dataset: ManualDataset) -> bool:
+        if dataset.processed_file_path and Path(dataset.processed_file_path).exists():
+            return True
+        return bool(dataset.raw_file_path and Path(dataset.raw_file_path).exists())
 
     def _write_processed_dataframe(self, dataframe: pd.DataFrame, target_base_path: Path) -> Path:
         parquet_path = target_base_path.with_suffix(".parquet")

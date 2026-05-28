@@ -34,7 +34,7 @@ export function PlotlyFigurePanel({
 }) {
   return (
     <Dialog>
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex items-center justify-end">
           <DialogTrigger asChild>
             <Button variant="outline" size="sm" className="gap-2">

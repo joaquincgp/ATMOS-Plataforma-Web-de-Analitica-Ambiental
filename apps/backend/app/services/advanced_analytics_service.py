@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -18,6 +19,7 @@ from app.schemas.advanced_analytics import AdvancedAnalyticsRequest, AdvancedAna
 from app.services.advanced_analytics import fit_prophet_model, fit_statsmodels_model
 from app.services.etl.helpers import normalize_variable_code
 from app.services.manual_dataset import ManualDatasetEdaContext, ManualDatasetService
+from app.services.plotly_theme import apply_atmos_plotly_theme
 
 _FREQ_MAP = {
     "hour": "h",
@@ -301,29 +303,57 @@ class AdvancedAnalyticsService:
         label: str,
         model: str,
     ) -> go.Figure:
-        figure = go.Figure()
+        figure = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            row_heights=[0.68, 0.32],
+            vertical_spacing=0.16,
+        )
         observed_frame = self._series_to_frame(observed.dropna())
         observed_frame = self._apply_plot_budget(observed_frame)
         figure.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=observed_frame["bucket"],
                 y=observed_frame["value"],
                 mode="lines",
                 name=f"Observed {label}",
                 line={"color": "#1F5A8A", "width": 2},
-            )
+                hovertemplate="Time %{x}<br>Observed %{y:.4f}<extra></extra>",
+            ),
+            row=1,
+            col=1,
         )
         if not fitted_frame.empty:
             fitted_frame = self._apply_plot_budget(fitted_frame)
             figure.add_trace(
-                go.Scatter(
+                go.Scattergl(
                     x=fitted_frame["bucket"],
                     y=fitted_frame["fitted"],
                     mode="lines",
                     name="Fitted",
                     line={"color": "#509EE3", "width": 1.5, "dash": "dot"},
-                )
+                    hovertemplate="Time %{x}<br>Fitted %{y:.4f}<extra></extra>",
+                ),
+                row=1,
+                col=1,
             )
+            residual_frame = fitted_frame.dropna(subset=["observed", "fitted"]).copy()
+            residual_frame["residual"] = residual_frame["observed"] - residual_frame["fitted"]
+            figure.add_trace(
+                go.Scattergl(
+                    x=residual_frame["bucket"],
+                    y=residual_frame["residual"],
+                    mode="lines",
+                    name="Residual",
+                    line={"color": "#A16207", "width": 1.4},
+                    hovertemplate="Time %{x}<br>Residual %{y:.4f}<extra></extra>",
+                    showlegend=False,
+                ),
+                row=2,
+                col=1,
+            )
+            figure.add_hline(y=0, line_color="#64748B", line_dash="dash", line_width=1, row=2, col=1)
         if not forecast_frame.empty:
             figure.add_trace(
                 go.Scatter(
@@ -333,7 +363,9 @@ class AdvancedAnalyticsService:
                     line={"width": 0},
                     showlegend=False,
                     hoverinfo="skip",
-                )
+                ),
+                row=1,
+                col=1,
             )
             figure.add_trace(
                 go.Scatter(
@@ -345,7 +377,9 @@ class AdvancedAnalyticsService:
                     fillcolor="rgba(80, 158, 227, 0.18)",
                     name="95% interval",
                     hoverinfo="skip",
-                )
+                ),
+                row=1,
+                col=1,
             )
             figure.add_trace(
                 go.Scatter(
@@ -354,17 +388,53 @@ class AdvancedAnalyticsService:
                     mode="lines",
                     name=f"{model.upper()} forecast",
                     line={"color": "#16A34A", "width": 2},
-                )
+                    hovertemplate="Time %{x}<br>Forecast %{y:.4f}<extra></extra>",
+                ),
+                row=1,
+                col=1,
+            )
+            forecast_start = forecast_frame["bucket"].min()
+            figure.add_shape(
+                type="line",
+                x0=forecast_start,
+                x1=forecast_start,
+                y0=0,
+                y1=1,
+                xref="x",
+                yref="paper",
+                line={"color": "#94A3B8", "dash": "dash", "width": 1},
             )
 
-        figure.update_layout(
-            title=f"Advanced Forecast · {label}",
-            template="plotly_white",
-            height=560,
-            margin={"l": 48, "r": 24, "t": 56, "b": 48},
-            legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
-            xaxis={"title": "Time", "rangeslider": {"visible": True}},
-            yaxis={"title": label},
+        figure.update_layout(yaxis={"title": label})
+        figure.update_yaxes(title_text=label, row=1, col=1)
+        figure.update_yaxes(title_text="Residual", row=2, col=1)
+        figure.update_xaxes(title_text="", row=1, col=1)
+        figure.update_xaxes(title_text="Time", title_standoff=18, row=2, col=1)
+        figure.update_xaxes(rangeslider={"visible": True, "thickness": 0.08}, row=2, col=1)
+        apply_atmos_plotly_theme(
+            figure,
+            title=f"Advanced Forecast - {label}",
+            height=720,
+            margin={"l": 78, "r": 48, "t": 128, "b": 96},
+            legend_y=1.16,
+        )
+        figure.add_annotation(
+            text=f"{model.upper()} forecast",
+            x=0.5,
+            y=1.035,
+            xref="x domain",
+            yref="y domain",
+            showarrow=False,
+            font={"size": 11, "color": "#64748B"},
+        )
+        figure.add_annotation(
+            text="Model residuals",
+            x=0.5,
+            y=1.08,
+            xref="x2 domain",
+            yref="y2 domain",
+            showarrow=False,
+            font={"size": 11, "color": "#64748B"},
         )
         return figure
 
