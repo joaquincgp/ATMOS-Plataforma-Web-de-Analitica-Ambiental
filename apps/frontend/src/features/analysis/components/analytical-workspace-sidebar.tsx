@@ -2,7 +2,6 @@ import { PanelLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   ANALYSIS_SECTIONS,
   type LabSection,
@@ -66,13 +65,13 @@ export function AnalyticalWorkspaceSidebar({
       >
         <div
           className={`
-            overflow-hidden whitespace-nowrap min-w-0
+            min-w-0 flex-1 overflow-hidden
             transition-[max-width,opacity] duration-200 ease-in-out
             ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}
           `}
         >
-          <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
-          <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
+          <h2 className="mb-1 whitespace-nowrap font-semibold text-foreground">Analysis Section</h2>
+          <p className="text-xs leading-snug text-muted-foreground">Select analysis type and keep charts in focus</p>
         </div>
 
         <Button
@@ -91,7 +90,7 @@ export function AnalyticalWorkspaceSidebar({
       </div>
 
       {/* Analysis section buttons */}
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="p-2 space-y-1">
           {ANALYSIS_SECTIONS.map((section) => {
             const Icon = section.icon;
@@ -125,7 +124,7 @@ export function AnalyticalWorkspaceSidebar({
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Variables & Current Selection panel */}
       <div
