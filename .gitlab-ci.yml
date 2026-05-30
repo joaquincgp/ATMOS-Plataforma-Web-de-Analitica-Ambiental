@@ -38,13 +38,13 @@ variables:
   BACKEND_REPORT_DIR: "$CI_PROJECT_DIR/reports/quality/backend"
   FRONTEND_REPORT_DIR: "$CI_PROJECT_DIR/reports/quality/frontend"
 
-.rules:main_feat_mr:
+.rules_main_feat_mr:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH =~ /^feat\/.+$/'
 
-.cache:pip:
+.cache_pip:
   cache:
     key:
       files:
@@ -53,7 +53,7 @@ variables:
     paths:
       - .cache/pip/
 
-.cache:npm:
+.cache_npm:
   cache:
     key:
       files:
@@ -63,28 +63,28 @@ variables:
     paths:
       - .cache/npm/
 
-.backend:base:
+.backend_base:
   image: python:3.11-slim
   extends:
-    - .cache:pip
-    - .rules:main_feat_mr
+    - .cache_pip
+    - .rules_main_feat_mr
   before_script:
     - python -m pip install --upgrade pip
     - python -m pip install -e "apps/backend[dev]"
     - mkdir -p "$BACKEND_REPORT_DIR"
 
-.frontend:base:
+.frontend_base:
   image: node:20-alpine
   extends:
-    - .cache:npm
-    - .rules:main_feat_mr
+    - .cache_npm
+    - .rules_main_feat_mr
   before_script:
     - npm ci --prefer-offline
     - mkdir -p "$FRONTEND_REPORT_DIR"
 
 backend:ruff:
   stage: validate
-  extends: .backend:base
+  extends: .backend_base
   script:
     - cd apps/backend
     - set +e
@@ -103,7 +103,7 @@ backend:ruff:
 
 backend:pylint:
   stage: validate
-  extends: .backend:base
+  extends: .backend_base
   script:
     - cd apps/backend
     - python -m pylint app tests --output-format="json:$BACKEND_REPORT_DIR/pylint.json" --reports=y --score=y --exit-zero
@@ -118,7 +118,7 @@ backend:pylint:
 
 frontend:eslint:
   stage: validate
-  extends: .frontend:base
+  extends: .frontend_base
   script:
     - npm run lint:frontend
     - npm exec --workspace @atmos/frontend -- eslint "src/**/*.{ts,tsx}" --format html --output-file "$FRONTEND_REPORT_DIR/eslint.html"
@@ -130,13 +130,13 @@ frontend:eslint:
 
 frontend:typecheck:
   stage: validate
-  extends: .frontend:base
+  extends: .frontend_base
   script:
     - npm run typecheck:frontend
 
 backend:test:
   stage: test
-  extends: .backend:base
+  extends: .backend_base
   variables:
     SECRET_KEY: "ci-only-not-for-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: "60"
@@ -166,7 +166,7 @@ backend:test:
 
 frontend:test:
   stage: test
-  extends: .frontend:base
+  extends: .frontend_base
   script:
     - npm run coverage:frontend
     - cp reports/frontend-junit.xml "$FRONTEND_REPORT_DIR/junit.xml"
@@ -186,7 +186,7 @@ frontend:test:
 
 frontend:build:
   stage: build
-  extends: .frontend:base
+  extends: .frontend_base
   needs:
     - frontend:eslint
     - frontend:typecheck
@@ -200,7 +200,7 @@ frontend:build:
 
 backend:package:
   stage: package
-  extends: .backend:base
+  extends: .backend_base
   needs:
     - backend:ruff
     - backend:pylint
@@ -215,7 +215,7 @@ backend:package:
 frontend:package:
   stage: package
   image: alpine:3.20
-  extends: .rules:main_feat_mr
+  extends: .rules_main_feat_mr
   needs:
     - job: frontend:build
       artifacts: true
