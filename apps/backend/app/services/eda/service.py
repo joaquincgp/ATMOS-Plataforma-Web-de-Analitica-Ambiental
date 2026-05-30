@@ -65,6 +65,7 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
         payload: EdaPlotRequest,
         warnings: list[str],
     ) -> tuple[go.Figure, list[EdaSecondaryFigure], dict[str, Any]]:
+        del warnings
         if frame.empty:
             return (
                 self._empty_figure("No data matched the current selection."),
@@ -72,7 +73,7 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
                 {"samples": 0, "mean": 0, "min": 0, "max": 0, "trend": "Stable", "row_count": 0},
             )
 
-        split_by_station = len(payload.variable_codes) <= 1 and len(payload.station_codes) > 1
+        split_by_station = len(payload.station_codes) > 1 >= len(payload.variable_codes)
         temporal_frame, series_keys = self._compute_temporal_frame(
             frame,
             payload.granularity,

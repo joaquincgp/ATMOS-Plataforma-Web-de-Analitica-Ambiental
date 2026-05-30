@@ -535,7 +535,9 @@ class EdaGenericMixin:
             fig.update_layout(xaxis_title=x_axis, yaxis_title="Count", bargap=0.08)
             return self._finalize_figure(fig, "Bar Plot")
 
-        selected_columns = list(dict.fromkeys(column for column in [x_axis, y_axis, hue, facet_row, facet_col] if column))
+        selected_columns = list(
+            dict.fromkeys(column for column in [x_axis, y_axis, hue, facet_row, facet_col] if column)
+        )
         plot_frame = frame[selected_columns].copy()
         plot_frame["_y_value"] = pd.to_numeric(plot_frame[y_axis], errors="coerce")
         plot_frame = plot_frame.dropna(subset=["_y_value"])
@@ -584,7 +586,9 @@ class EdaGenericMixin:
         hue = payload.hue if payload.hue in frame.columns else None
         facet_row = payload.facet_row if payload.facet_row in frame.columns else None
         facet_col = payload.facet_col if payload.facet_col in frame.columns else None
-        selected_columns = list(dict.fromkeys(column for column in [x_axis, y_axis, hue, facet_row, facet_col] if column))
+        selected_columns = list(
+            dict.fromkeys(column for column in [x_axis, y_axis, hue, facet_row, facet_col] if column)
+        )
         plot_frame = frame[selected_columns].copy()
         plot_frame["_y_value"] = pd.to_numeric(plot_frame[y_axis], errors="coerce")
         plot_frame = plot_frame.dropna(subset=["_y_value"])
@@ -649,8 +653,14 @@ class EdaGenericMixin:
         warnings: list[str],
     ) -> go.Figure:
         numeric_columns = self._selected_numeric_columns(context, frame, payload)
-        x_axis = payload.x_axis if payload.x_axis in numeric_columns else (numeric_columns[0] if numeric_columns else None)
-        y_axis = payload.y_axis if payload.y_axis in numeric_columns else (numeric_columns[1] if len(numeric_columns) > 1 else None)
+        x_axis = (
+            payload.x_axis if payload.x_axis in numeric_columns else (numeric_columns[0] if numeric_columns else None)
+        )
+        y_axis = (
+            payload.y_axis
+            if payload.y_axis in numeric_columns
+            else (numeric_columns[1] if len(numeric_columns) > 1 else None)
+        )
         if x_axis is None or y_axis is None or x_axis == y_axis:
             warnings.append("2D density plots require two numeric columns.")
             return self._empty_figure("Select two different numeric columns for 2D density.")
@@ -697,8 +707,14 @@ class EdaGenericMixin:
         del context
         categorical_columns = self._categorical_columns(frame)
         numeric_columns = self._numeric_columns(frame)
-        x_axis = payload.x_axis if payload.x_axis in frame.columns else (categorical_columns[0] if categorical_columns else None)
-        y_axis = payload.y_axis if payload.y_axis in frame.columns else (numeric_columns[0] if numeric_columns else None)
+        x_axis = (
+            payload.x_axis
+            if payload.x_axis in frame.columns
+            else (categorical_columns[0] if categorical_columns else None)
+        )
+        y_axis = (
+            payload.y_axis if payload.y_axis in frame.columns else (numeric_columns[0] if numeric_columns else None)
+        )
         if x_axis is None or y_axis is None:
             warnings.append("Categorical plots require X and Y columns.")
             return self._empty_figure("Select X and Y columns for the categorical plot.")
@@ -1096,7 +1112,10 @@ class EdaGenericMixin:
                         histnorm=histnorm,
                         marker={
                             "color": "rgba(80, 158, 227, 0.14)" if payload.histogram_element == "step" else color,
-                            "line": {"color": color if payload.histogram_element == "step" else "white", "width": 2 if payload.histogram_element == "step" else 1},
+                            "line": {
+                                "color": color if payload.histogram_element == "step" else "white",
+                                "width": 2 if payload.histogram_element == "step" else 1,
+                            },
                         },
                         opacity=0.58 if payload.histogram_mode == "overlay" else 0.86,
                         nbinsx=payload.histogram_bins,
@@ -1147,6 +1166,7 @@ class EdaGenericMixin:
         title: str,
         value_label: str,
     ) -> go.Figure:
+        del value_label
         column_count = 2 if len(grouped_items) > 1 else 1
         row_count = int(math.ceil(len(grouped_items) / column_count))
         fig = make_subplots(
@@ -1192,7 +1212,10 @@ class EdaGenericMixin:
                         histnorm=histnorm,
                         marker={
                             "color": "rgba(80, 158, 227, 0.14)" if payload.histogram_element == "step" else color,
-                            "line": {"color": color if payload.histogram_element == "step" else "white", "width": 2 if payload.histogram_element == "step" else 1},
+                            "line": {
+                                "color": color if payload.histogram_element == "step" else "white",
+                                "width": 2 if payload.histogram_element == "step" else 1,
+                            },
                         },
                         opacity=0.62,
                         nbinsx=payload.histogram_bins,
@@ -1288,7 +1311,12 @@ class EdaGenericMixin:
         if payload.missing_plot_type == "bars":
             primary = rate_figure
             secondary = [
-                self._secondary("missing-matrix", "Missingness Matrix", "Presence/missingness by row and column.", matrix_figure)
+                self._secondary(
+                    "missing-matrix",
+                    "Missingness Matrix",
+                    "Presence/missingness by row and column.",
+                    matrix_figure,
+                )
             ]
             if corr_figure is not None:
                 secondary.append(
@@ -1304,7 +1332,12 @@ class EdaGenericMixin:
         if payload.missing_plot_type == "heatmap" and corr_figure is not None:
             secondary = [
                 self._secondary("missing-rate", "Missing Rate", "Percent missing by column.", rate_figure),
-                self._secondary("missing-matrix", "Missingness Matrix", "Presence/missingness by row and column.", matrix_figure),
+                self._secondary(
+                    "missing-matrix",
+                    "Missingness Matrix",
+                    "Presence/missingness by row and column.",
+                    matrix_figure,
+                ),
             ]
             return corr_figure, secondary
 

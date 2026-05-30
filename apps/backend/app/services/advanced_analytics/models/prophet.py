@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ _PROPHET_FREQ_MAP = {
     "year": "YS",
 }
 
-_MPL_CACHE_DIR = Path("/tmp/atmos-mpl-cache")
+_MPL_CACHE_DIR = Path(tempfile.gettempdir()) / "atmos-mpl-cache"
 
 
 def fit_prophet_model(

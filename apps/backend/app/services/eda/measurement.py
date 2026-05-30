@@ -548,8 +548,19 @@ class EdaMeasurementMixin:
             height=700,
             margin={"l": 68, "r": 42, "t": 92, "b": 64},
             showlegend=False,
-            font={"family": "Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif", "size": 12, "color": "#1F2937"},
-            title={"text": title, "x": 0.01, "y": 0.985, "xanchor": "left", "yanchor": "top", "font": {"size": 15, "color": "#24384D"}},
+            font={
+                "family": "Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
+                "size": 12,
+                "color": "#1F2937",
+            },
+            title={
+                "text": title,
+                "x": 0.01,
+                "y": 0.985,
+                "xanchor": "left",
+                "yanchor": "top",
+                "font": {"size": 15, "color": "#24384D"},
+            },
         )
         fig.update_xaxes(showgrid=True, gridcolor="#E5EAF0", linecolor="#CBD5E1", automargin=True)
         fig.update_yaxes(showgrid=True, gridcolor="#E5EAF0", linecolor="#CBD5E1", automargin=True)

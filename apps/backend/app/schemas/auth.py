@@ -6,6 +6,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Pylint expects enum members to be uppercase, but these values are serialized
+# directly in API contracts and must remain lowercase.
+# pylint: disable=invalid-name
+
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 

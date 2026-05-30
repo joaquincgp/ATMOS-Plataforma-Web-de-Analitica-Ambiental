@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -318,13 +318,16 @@ export function AnalyticalWorkspaceScreen() {
     ],
   );
 
-  const getVariablesForScope = (scope: VariableSelectionScope, availableCodes: string[]) => {
+  const getVariablesForScope = useCallback((scope: VariableSelectionScope, availableCodes: string[]) => {
     const current = variablesByScope[scope] ?? [];
     const cleaned = current.filter((code) => availableCodes.includes(code));
     return cleaned.length > 0 ? cleaned : getDefaultVariableSelection(scope, availableCodes);
-  };
+  }, [variablesByScope]);
 
-  const isMultiEnabledForScope = (scope: VariableSelectionScope) => Boolean(useMultiByScope[scope]);
+  const isMultiEnabledForScope = useCallback(
+    (scope: VariableSelectionScope) => Boolean(useMultiByScope[scope]),
+    [useMultiByScope],
+  );
 
   const configuredScopeVariables = labSection === 'load-data' ? [] : (variablesByScope[labSection] ?? []);
   const requestedPlotVariableCodes = (() => {
@@ -459,7 +462,7 @@ export function AnalyticalWorkspaceScreen() {
 
   const activeRawSelectedVariables = useMemo(
     () => (labSection === 'load-data' ? [] : getVariablesForScope(labSection, availableVariableCodes)),
-    [availableVariableCodes, labSection, variablesByScope],
+    [availableVariableCodes, getVariablesForScope, labSection],
   );
 
   const activeUseMulti = useMemo(
@@ -467,7 +470,7 @@ export function AnalyticalWorkspaceScreen() {
       if (labSection === 'load-data') return false;
       return labSection === 'correlation' || labSection === 'scatter' || isMultiEnabledForScope(labSection);
     },
-    [labSection, useMultiByScope],
+    [isMultiEnabledForScope, labSection],
   );
 
   const activeSelectedVariables = useMemo(
@@ -484,7 +487,7 @@ export function AnalyticalWorkspaceScreen() {
     () => (isMultiEnabledForScope('advanced')
       ? getVariablesForScope('advanced', availableVariableCodes)
       : getVariablesForScope('advanced', availableVariableCodes).slice(0, 1)),
-    [availableVariableCodes, useMultiByScope, variablesByScope],
+    [availableVariableCodes, getVariablesForScope, isMultiEnabledForScope],
   );
 
   const availableStations = useMemo(() => {
@@ -996,7 +999,7 @@ export function AnalyticalWorkspaceScreen() {
                   onSelectManualDataset={handleSelectManualDataset}
                   onToggleStation={handleToggleStation}
                   onApplyRangePreset={applyRangePreset}
-                  onRun={handleRunClick}
+                  onRun={() => void handleRunClick()}
                 />
               ) : (
                 <div className="space-y-6">

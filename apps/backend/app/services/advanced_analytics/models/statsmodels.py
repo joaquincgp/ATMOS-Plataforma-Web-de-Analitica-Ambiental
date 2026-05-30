@@ -20,7 +20,7 @@ def fit_statsmodels_model(
     if inferred_freq and getattr(clean_series.index, "freq", None) is None:
         clean_series = clean_series.asfreq(inferred_freq)
         clean_series = clean_series.ffill().bfill()
-    
+
     order = tuple(int(value) for value in payload.order)
     try:
         if payload.model == "sarima":

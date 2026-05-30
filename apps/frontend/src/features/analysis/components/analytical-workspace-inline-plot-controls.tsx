@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { EdaChartType } from '@/api/modules/eda';
 import { BarChart3, Database, LineChart as LineChartIcon, Orbit } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -214,18 +214,18 @@ export function AnalyticalWorkspaceInlinePlotControls({
   const effectiveCurrentPlotType = geometryOptions.some((option) => option.value === currentPlotType)
     ? currentPlotType
     : geometryOptions[0]?.value ?? currentPlotType;
-  const handlePlotTypeChange = (value: EdaChartType) => {
+  const handlePlotTypeChange = useCallback((value: EdaChartType) => {
     if (labSection === 'summary' || labSection === 'distribution') {
       onSummaryChartTypeChange(value);
       return;
     }
     onCorrelationChartTypeChange(value);
-  };
+  }, [labSection, onCorrelationChartTypeChange, onSummaryChartTypeChange]);
   useEffect(() => {
     if ((isDistributionSection || isScatterSection) && effectiveCurrentPlotType !== currentPlotType) {
       handlePlotTypeChange(effectiveCurrentPlotType);
     }
-  }, [currentPlotType, effectiveCurrentPlotType, isDistributionSection, isScatterSection]);
+  }, [currentPlotType, effectiveCurrentPlotType, handlePlotTypeChange, isDistributionSection, isScatterSection]);
 
   const isCorrelationMatrixPlot = isScatterSection && (effectiveCurrentPlotType === 'heatmap' || effectiveCurrentPlotType === 'clustermap');
   const isMissingPlot = effectiveCurrentPlotType === 'missing';
