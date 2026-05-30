@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shutil
 from io import BytesIO
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pandas as pd
 
@@ -85,7 +85,7 @@ class ManualDatasetIOMixin:
         return cleaned
 
     def _safe_filename(self, filename: str) -> str:
-        safe = Path(filename).name.replace("/", "_").replace("\\", "_")
+        safe = Path(PureWindowsPath(filename).name).name.replace("/", "_").replace("\\", "_")
         return safe or "manual-dataset.csv"
 
     def _remove_dataset_dir(self, directory: Path | None) -> None:
