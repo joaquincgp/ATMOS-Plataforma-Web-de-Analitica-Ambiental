@@ -58,20 +58,22 @@ export function AnalyticalWorkspaceSidebar({
       {/* Header */}
       <div
         className={`
-          border-b border-gray-200 flex items-center gap-2
+          border-b border-gray-200 flex gap-2
           ${collapsed ? 'justify-center px-2 py-3' : 'justify-between px-4 py-4'}
           transition-[padding] duration-300 ease-in-out
         `}
       >
         <div
           className={`
-            min-w-0 flex-1 overflow-hidden
+            min-w-0 flex-1
             transition-[max-width,opacity] duration-200 ease-in-out
-            ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}
+            ${collapsed ? 'max-w-0 overflow-hidden opacity-0' : 'max-w-none opacity-100'}
           `}
         >
           <h2 className="mb-1 whitespace-nowrap font-semibold text-foreground">Analysis Section</h2>
-          <p className="text-xs leading-snug text-muted-foreground">Select analysis type and keep charts in focus</p>
+          <p className="max-w-[220px] text-xs leading-snug text-muted-foreground">
+            Select analysis type and keep charts in focus
+          </p>
         </div>
 
         <Button
@@ -90,8 +92,8 @@ export function AnalyticalWorkspaceSidebar({
       </div>
 
       {/* Analysis section buttons */}
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <div className="p-2 space-y-1">
+      <div className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+        <div className="p-2 pb-5 space-y-1">
           {ANALYSIS_SECTIONS.map((section) => {
             const Icon = section.icon;
             const isActive = labSection === section.value;
