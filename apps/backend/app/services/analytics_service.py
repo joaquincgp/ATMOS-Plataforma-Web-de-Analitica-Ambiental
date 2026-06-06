@@ -318,8 +318,7 @@ def get_station_live_snapshot(
         if current_variable is None or row.observed_at >= current_variable.observed_at:
             grouped_variables[row.station_code][canonical_code] = next_variable
 
-        if row.observed_at > station_item.latest_observed_at:
-            station_item.latest_observed_at = row.observed_at
+        station_item.latest_observed_at = max(station_item.latest_observed_at, row.observed_at)
 
         if global_latest is None or row.observed_at > global_latest:
             global_latest = row.observed_at

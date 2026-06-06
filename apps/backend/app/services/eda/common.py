@@ -10,12 +10,39 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from app.schemas.eda import EdaPlotRequest, EdaSecondaryFigure
+from app.services.plotly_theme import apply_atmos_plotly_theme
 
 CHART_COLORS = ["#509EE3", "#1F5A8A", "#0EA5E9", "#0B7285", "#16A34A", "#E9730C", "#D946EF", "#A16207"]
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-GENERIC_SECTIONS = {"rolling", "summary", "correlation"}
-TIME_NAVIGATION_SECTIONS = {"rolling", "anomaly", "decomposition", "forecast", "changepoints", "trend"}
+GENERIC_SECTIONS = {
+    "rolling",
+    "distribution",
+    "scatter",
+    "data_trend",
+    "time_profiles",
+    "heat_map",
+    "summary",
+    "correlation",
+    "anomaly",
+    "profiles",
+    "seasonality",
+    "decomposition",
+    "autocorr",
+    "pacf",
+    "forecast",
+    "changepoints",
+    "trend",
+}
+TIME_NAVIGATION_SECTIONS = {
+    "rolling",
+    "data_trend",
+    "anomaly",
+    "decomposition",
+    "forecast",
+    "changepoints",
+    "trend",
+}
 
 
 class EdaServiceError(ValueError):
@@ -59,10 +86,23 @@ class EdaSharedMixin:
         return payload.section in TIME_NAVIGATION_SECTIONS
 
     def _apply_time_navigation(self, figure: go.Figure, payload: EdaPlotRequest) -> go.Figure:
-        xaxis_update: dict[str, Any] = {"rangeslider": {"visible": True}, "type": "date"}
+        xaxis_update: dict[str, Any] = {"type": "date"}
         if payload.view_from and payload.view_to:
             xaxis_update["range"] = [payload.view_from.isoformat(), payload.view_to.isoformat()]
         figure.update_xaxes(**xaxis_update)
+        slider_update: dict[str, Any] = {"rangeslider": {"visible": True, "thickness": 0.08}}
+        if "range" in xaxis_update:
+            slider_update["range"] = xaxis_update["range"]
+        xaxis_keys = [
+            key
+            for key in figure.layout
+            if key.startswith("xaxis") and getattr(figure.layout, key, None) is not None
+        ]
+        if not xaxis_keys:
+            figure.update_xaxes(**slider_update)
+            return figure
+        xaxis_keys.sort(key=lambda key: 1 if key == "xaxis" else int(key.replace("xaxis", "") or "1"))
+        getattr(figure.layout, xaxis_keys[-1]).update(slider_update)
         return figure
 
     def _clip_time_frame(
@@ -125,7 +165,7 @@ class EdaSharedMixin:
         return start, end
 
     def _navigation_lookback_steps(self, payload: EdaPlotRequest) -> int:
-        if payload.section == "rolling":
+        if payload.section in {"rolling", "data_trend"}:
             return max(2, payload.rolling_window)
         if payload.section in {"decomposition", "trend", "forecast"}:
             return max(2, payload.decomposition_window)
@@ -156,16 +196,7 @@ class EdaSharedMixin:
         return timestamp + pd.Timedelta(days=steps)
 
     def _finalize_figure(self, figure: go.Figure, title: str | None = None) -> go.Figure:
-        figure.update_layout(
-            template="plotly_white",
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-            margin={"l": 40, "r": 20, "t": 48 if title else 24, "b": 40},
-            legend={"orientation": "h", "yanchor": "bottom", "y": 1.02, "xanchor": "left", "x": 0},
-        )
-        if title:
-            figure.update_layout(title={"text": title, "x": 0.01, "xanchor": "left"})
-        return figure
+        return apply_atmos_plotly_theme(figure, title=title)
 
     def _apply_point_budget(self, frame: pd.DataFrame, limit: int | None) -> pd.DataFrame:
         if limit is None or frame.empty or len(frame) <= limit:
@@ -175,7 +206,13 @@ class EdaSharedMixin:
         unique_positions = np.unique(positions)
         return frame.iloc[unique_positions].reset_index(drop=True)
 
-    def _regression_line(self, x_values: np.ndarray, y_values: np.ndarray) -> dict[str, np.ndarray]:
+    def _regression_line(
+        self,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        *,
+        confidence_level: float = 0.95,
+    ) -> dict[str, np.ndarray]:
         slope, intercept, _, _, _ = self._linear_regression_terms(x_values, y_values)
         x_grid = np.linspace(float(np.min(x_values)), float(np.max(x_values)), 100)
         y_grid = intercept + (slope * x_grid)
@@ -190,8 +227,20 @@ class EdaSharedMixin:
         if s_xx <= 1e-12:
             return {"x": x_grid, "y": y_grid, "lower": y_grid, "upper": y_grid}
 
-        conf = 1.96 * s_err * np.sqrt((1 / x_values.size) + (((x_grid - mean_x) ** 2) / s_xx))
+        z_lookup = {0.68: 1.0, 0.9: 1.645, 0.95: 1.96, 0.99: 2.576}
+        z_value = z_lookup.get(round(float(confidence_level), 2), 1.96)
+        conf = z_value * s_err * np.sqrt((1 / x_values.size) + (((x_grid - mean_x) ** 2) / s_xx))
         return {"x": x_grid, "y": y_grid, "lower": y_grid - conf, "upper": y_grid + conf}
+
+    def _polynomial_line(self, x_values: np.ndarray, y_values: np.ndarray, order: int) -> dict[str, np.ndarray]:
+        if x_values.size == 0 or y_values.size == 0:
+            return {"x": np.array([]), "y": np.array([])}
+        clean = pd.DataFrame({"x": x_values, "y": y_values}).replace([np.inf, -np.inf], np.nan).dropna()
+        if clean.shape[0] < order + 1:
+            return self._regression_line(clean["x"].to_numpy(dtype=float), clean["y"].to_numpy(dtype=float))
+        x_grid = np.linspace(float(clean["x"].min()), float(clean["x"].max()), 140)
+        coefficients = np.polyfit(clean["x"].to_numpy(dtype=float), clean["y"].to_numpy(dtype=float), deg=order)
+        return {"x": x_grid, "y": np.polyval(coefficients, x_grid)}
 
     def _kde_curve(
         self,
@@ -260,6 +309,8 @@ class EdaSharedMixin:
     def _autocorrelation_at_lag(self, values: np.ndarray, lag: int) -> float:
         if values.size == 0 or lag >= values.size:
             return 0.0
+        if lag == 0:
+            return 1.0
         mean = self._safe_mean(values)
         denominator = float(np.sum((values - mean) ** 2))
         if abs(denominator) < 1e-12:

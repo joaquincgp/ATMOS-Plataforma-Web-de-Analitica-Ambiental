@@ -2,8 +2,6 @@ import { PanelLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import {
   ANALYSIS_SECTIONS,
   type LabSection,
@@ -19,50 +17,63 @@ interface AnalyticalWorkspaceSidebarProps {
   labSection: LabSection;
   selectedDataSourceCount: number;
   availableVariables: VariableOption[];
+  selectedVariables: string[];
+  selectedStationsCount: number;
   rowCount: number;
   viewportBoundToRows: boolean;
   onSelectSection: (section: LabSection) => void;
   onToggleCollapsed: () => void;
-  onToggleVariable: (variableCode: string) => void;
 }
+
+const SELECTED_VARIABLE_COLORS = [
+  { bg: '#eef6ff', border: '#0B5EA8', text: '#0B5EA8' },
+  { bg: '#fff3ed', border: '#F05A28', text: '#C2410C' },
+  { bg: '#ecfeff', border: '#0B7285', text: '#0B7285' },
+  { bg: '#f0fdf4', border: '#16A34A', text: '#15803D' },
+  { bg: '#f5f3ff', border: '#7C3AED', text: '#6D28D9' },
+  { bg: '#fffbeb', border: '#A16207', text: '#92400E' },
+  { bg: '#fdf2f8', border: '#DB2777', text: '#BE185D' },
+  { bg: '#f8fafc', border: '#475569', text: '#334155' },
+];
 
 export function AnalyticalWorkspaceSidebar({
   collapsed,
   labSection,
   selectedDataSourceCount,
   availableVariables,
+  selectedVariables,
+  selectedStationsCount,
   rowCount,
   viewportBoundToRows,
   onSelectSection,
   onToggleCollapsed,
-  onToggleVariable,
 }: AnalyticalWorkspaceSidebarProps) {
-  const { selectedStations, selectedVariables } = useAnalyticalWorkspaceState();
-
   return (
     <aside
       className={`
-        ${collapsed ? 'w-16' : 'w-72'} shrink-0 border-r border-gray-200 bg-white
+        ${collapsed ? 'w-16' : 'w-72'} h-full min-h-0 shrink-0 border-r border-gray-200 bg-white
         flex flex-col transition-[width] duration-300 ease-in-out overflow-hidden
       `}
     >
       {/* Header */}
       <div
         className={`
-          border-b border-gray-200 flex items-center gap-2
+          border-b border-gray-200 flex gap-2
           ${collapsed ? 'justify-center px-2 py-3' : 'justify-between px-4 py-4'}
           transition-[padding] duration-300 ease-in-out
         `}
       >
         <div
           className={`
-            overflow-hidden whitespace-nowrap min-w-0
+            min-w-0 flex-1
             transition-[max-width,opacity] duration-200 ease-in-out
-            ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}
+            ${collapsed ? 'max-w-0 overflow-hidden opacity-0' : 'max-w-none opacity-100'}
           `}
         >
-          <h2 className="font-semibold text-foreground mb-1">Analysis Section</h2>
-          <p className="text-xs text-muted-foreground">Select analysis type and keep charts in focus</p>
+          <h2 className="mb-1 whitespace-nowrap font-semibold text-foreground">Analysis Section</h2>
+          <p className="max-w-[220px] text-xs leading-snug text-muted-foreground">
+            Select analysis type and keep charts in focus
+          </p>
         </div>
 
         <Button
@@ -81,8 +92,8 @@ export function AnalyticalWorkspaceSidebar({
       </div>
 
       {/* Analysis section buttons */}
-      <ScrollArea className="flex-1">
-        <div className="p-2 space-y-1">
+      <div className="min-h-0 flex-1 basis-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+        <div className="p-2 pb-5 space-y-1">
           {ANALYSIS_SECTIONS.map((section) => {
             const Icon = section.icon;
             const isActive = labSection === section.value;
@@ -115,38 +126,39 @@ export function AnalyticalWorkspaceSidebar({
             );
           })}
         </div>
-      </ScrollArea>
+      </div>
 
       {/* Variables & Current Selection panel */}
       <div
         className={`
           border-t border-gray-200 overflow-hidden
           transition-[max-height,opacity] duration-300 ease-in-out
-          ${collapsed || labSection === 'load-data' ? 'max-h-0 opacity-0' : 'max-h-[420px] opacity-100'}
+          ${collapsed || labSection === 'load-data' ? 'max-h-0 opacity-0' : 'max-h-[460px] opacity-100'}
         `}
       >
         <div className="p-4 space-y-4">
           <div className="space-y-1.5">
-            <Label className="text-xs">Variables</Label>
-            <div className="flex flex-wrap gap-1.5 rounded-md border bg-[#f8fbff] p-2 max-h-[136px] overflow-auto">
-              {availableVariables.map((variable) => {
-                const active = selectedVariables.includes(variable.code);
-                return (
-                  <button
-                    key={variable.code}
-                    type="button"
-                    onClick={() => onToggleVariable(variable.code)}
-                    className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
-                      active
-                        ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                        : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                    }`}
-                  >
-                    {variable.name}
-                  </button>
-                );
-              })}
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">Variables For This View</Label>
+              <span className="text-[10px] text-muted-foreground">{selectedVariables.length} selected</span>
             </div>
+            {selectedVariables.length > 0 && (
+              <div className="flex flex-wrap gap-1 rounded-md border bg-[#f8fbff] p-2">
+                {selectedVariables.map((code, index) => {
+                  const label = availableVariables.find((v) => v.code === code)?.name ?? code;
+                  const color = SELECTED_VARIABLE_COLORS[index % SELECTED_VARIABLE_COLORS.length];
+                  return (
+                    <span
+                      key={code}
+                      className="rounded-full border text-[10px] px-2 py-0.5"
+                      style={{ backgroundColor: color.bg, borderColor: color.border, color: color.text }}
+                    >
+                      {label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -158,7 +170,7 @@ export function AnalyticalWorkspaceSidebar({
               </div>
               <div className="flex items-center justify-between">
                 <span>Stations</span>
-                <span className="font-medium text-foreground">{selectedStations.length || 'All'}</span>
+                <span className="font-medium text-foreground">{selectedStationsCount || 'All'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span>{viewportBoundToRows ? 'Visible rows' : 'Rows'}</span>

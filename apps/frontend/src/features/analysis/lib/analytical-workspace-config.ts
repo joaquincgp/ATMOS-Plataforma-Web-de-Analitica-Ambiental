@@ -21,6 +21,11 @@ export type HeatmapProfileMode = 'month' | 'hour' | 'weekday' | 'week';
 export type LabSection =
   | 'load-data'
   | 'rolling'
+  | 'distribution'
+  | 'scatter'
+  | 'data_trend'
+  | 'time_profiles'
+  | 'heat_map'
   | 'seasonality'
   | 'autocorr'
   | 'pacf'
@@ -46,10 +51,15 @@ export const CHART_OPTIONS: {
 
 export const ANALYSIS_SECTIONS: { value: LabSection; label: string; icon: typeof Database; color: string }[] = [
   { value: 'load-data', label: 'Load Data', icon: Upload, color: '#509EE3' },
-  { value: 'rolling', label: 'Time Series', icon: LineChartIcon, color: '#509EE3' },
+  { value: 'summary', label: 'Summary', icon: BarChart3, color: '#14B8A6' },
+  { value: 'distribution', label: 'Distribution', icon: BarChart3, color: '#509EE3' },
+  { value: 'scatter', label: 'Data Scatter', icon: Orbit, color: '#0B7285' },
+  { value: 'data_trend', label: 'Data Trend', icon: LineChartIcon, color: '#509EE3' },
+  { value: 'time_profiles', label: 'Time Profiles', icon: Clock3, color: '#8B5CF6' },
+  { value: 'heat_map', label: 'Heat Map', icon: Calendar, color: '#0B7285' },
+  { value: 'rolling', label: 'Rolling Series', icon: LineChartIcon, color: '#1F5A8A' },
   { value: 'anomaly', label: 'Anomaly Detection', icon: AlertCircle, color: '#EF4444' },
   { value: 'profiles', label: 'Temporal Profiles', icon: Clock3, color: '#8B5CF6' },
-  { value: 'summary', label: 'Statistical Summary', icon: BarChart3, color: '#14B8A6' },
   { value: 'seasonality', label: 'Calendar Heatmap', icon: Calendar, color: '#0B7285' },
   { value: 'decomposition', label: 'Decomposition', icon: TrendingUp, color: '#1F5A8A' },
   { value: 'autocorr', label: 'ACF', icon: Orbit, color: '#A16207' },
@@ -86,6 +96,11 @@ export const RANGE_PRESETS: {
 
 const LAB_SECTION_DESCRIPTIONS: Record<Exclude<LabSection, 'load-data'>, string> = {
   rolling: 'Visualize temporal behavior with line, bar, scatter or heatmap views.',
+  distribution: 'Inspect histograms, density curves, boxplots and missingness for selected variables.',
+  scatter: 'Compare two variables with scatter and regression views.',
+  data_trend: 'Track selected variables across time with aggregation and rolling controls.',
+  time_profiles: 'Inspect recurring hourly, weekday, monthly and yearly patterns.',
+  heat_map: 'Compare temporal intensity patterns in a year-by-calendar heat map.',
   anomaly: 'Detect abnormal behavior using rolling spread and anomaly markers.',
   profiles: 'Inspect recurring hourly, weekly or seasonal profiles.',
   summary: 'Review descriptive statistics for the current data selection.',
@@ -129,6 +144,7 @@ export function normalizeDateRange(from: string, to: string): { from?: string; t
 export function isTimeNavigableSection(section: LabSection): boolean {
   return (
     section === 'rolling'
+    || section === 'data_trend'
     || section === 'anomaly'
     || section === 'decomposition'
     || section === 'forecast'

@@ -170,6 +170,20 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
                 .order_by(ManualDataset.updated_at.desc())
             ).all()
         )
+        stale_datasets = [
+            dataset
+            for dataset in datasets
+            if dataset.status.startswith("finalized") and not self._dataset_query_file_exists(dataset)
+        ]
+        for dataset in stale_datasets:
+            dataset.status = "missing_files"
+            dataset.error_message = (
+                "El archivo fisico del dataset ya no existe. "
+                "Vuelve a cargar y finalizar la fuente para usarla en Analytics."
+            )
+            self.db.add(dataset)
+        if stale_datasets:
+            self.db.commit()
         return [self._to_response(dataset) for dataset in datasets]
 
     def get_eda_context(self, *, dataset_id: str, user: User) -> ManualDatasetEdaContext:

@@ -7,6 +7,10 @@ import pytest
 from app.schemas.advanced_analytics import AdvancedAnalyticsRequest
 from app.services.advanced_analytics_service import AdvancedAnalyticsError, AdvancedAnalyticsService
 
+# Unit tests intentionally exercise internal helpers to keep expensive model
+# and plotting behavior covered without requiring full API/database setup.
+# pylint: disable=protected-access
+
 
 def test_aggregate_series_resamples_and_interpolates() -> None:
     service = AdvancedAnalyticsService(db=None, user=None)  # type: ignore[arg-type]
@@ -100,6 +104,7 @@ def test_build_figure_accepts_series_without_reset_index_names_support() -> None
     fitted_frame = pd.DataFrame(
         {
             "bucket": pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC"),
+            "observed": [10.0, 12.0, 14.0],
             "fitted": [10.1, 11.9, 14.1],
         }
     )
@@ -114,4 +119,4 @@ def test_build_figure_accepts_series_without_reset_index_names_support() -> None
 
     figure = service._build_figure(observed, fitted_frame, forecast_frame, "PM25", "arima")
 
-    assert len(figure.data) == 5
+    assert len(figure.data) == 6

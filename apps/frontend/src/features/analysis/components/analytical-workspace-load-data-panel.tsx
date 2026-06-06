@@ -19,11 +19,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import { RANGE_PRESETS } from '@/features/analysis/lib/analytical-workspace-config';
 
-interface VariableOption {
-  code: string;
-  name: string;
-}
-
 interface StationOption {
   code: string;
   name: string;
@@ -34,7 +29,6 @@ interface AnalyticalWorkspaceLoadDataPanelProps {
   filteredManualDatasets: ManualDatasetResponse[];
   manualDatasetsLoading: boolean;
   availableStations: StationOption[];
-  availableVariables: VariableOption[];
   sourceMaxRows: number;
   loading: boolean;
   viewportBoundToRows: boolean;
@@ -45,9 +39,9 @@ interface AnalyticalWorkspaceLoadDataPanelProps {
   onToggleSource: (sourceId: number) => void;
   onSelectManualDataset: (datasetId: string) => void;
   onToggleStation: (stationCode: string) => void;
-  onToggleVariable: (variableCode: string) => void;
   onApplyRangePreset: (presetId: string) => void;
   onRun: () => void;
+  selectedManualDatasetKind?: string | null;
 }
 
 export function AnalyticalWorkspaceLoadDataPanel({
@@ -55,7 +49,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
   filteredManualDatasets,
   manualDatasetsLoading,
   availableStations,
-  availableVariables,
   sourceMaxRows,
   loading,
   viewportBoundToRows,
@@ -63,9 +56,9 @@ export function AnalyticalWorkspaceLoadDataPanel({
   onToggleSource,
   onSelectManualDataset,
   onToggleStation,
-  onToggleVariable,
   onApplyRangePreset,
   onRun,
+  selectedManualDatasetKind,
 }: AnalyticalWorkspaceLoadDataPanelProps) {
   const {
     dateFrom,
@@ -81,12 +74,22 @@ export function AnalyticalWorkspaceLoadDataPanel({
     selectedSourceIds,
     selectedManualDatasetId,
     selectedStations,
-    selectedVariables,
   } = useAnalyticalWorkspaceState();
 
   const resetToCustomRange = (nextDate: string, setter: (value: string) => void) => {
     setter(nextDate);
     setRangePreset('custom');
+  };
+
+  const getManualDatasetSubtitle = (dataset: ManualDatasetResponse) => {
+    const sourceLabel =
+      dataset.source_kind === 'remmaq'
+        ? 'REMMAQ'
+        : dataset.source_kind === 'github_raw'
+          ? 'GitHub raw'
+          : 'manual dataset';
+    const kindLabel = dataset.dataset_kind ? ` - ${dataset.dataset_kind}` : '';
+    return `${sourceLabel}${kindLabel} - ${dataset.row_count.toLocaleString()} rows`;
   };
 
   return (
@@ -101,7 +104,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.9fr] gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.4fr_0.9fr_0.8fr] gap-4">
           <div className="rounded-xl border bg-[#fbfdff] p-4">
             <Label className="text-xs text-muted-foreground">Sources</Label>
             <div className="relative mt-2">
@@ -135,7 +138,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{source.name}</p>
                           <p className="text-[11px] text-muted-foreground">
-                            {source.source_type} · {source.row_count.toLocaleString()} rows
+                            {source.source_type} - {source.row_count.toLocaleString()} rows
                           </p>
                         </div>
                       </div>
@@ -160,10 +163,13 @@ export function AnalyticalWorkspaceLoadDataPanel({
                           <Database className="w-4 h-4 text-[#509EE3]" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{dataset.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            manual dataset · {dataset.row_count.toLocaleString()} rows
-                          </p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium truncate">{dataset.name}</p>
+                            {active && (
+                              <Badge className="bg-[#509EE3] text-white border-[#509EE3]">selected</Badge>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">{getManualDatasetSubtitle(dataset)}</p>
                         </div>
                       </div>
                     </button>
@@ -252,32 +258,6 @@ export function AnalyticalWorkspaceLoadDataPanel({
 
           <div className="space-y-4">
             <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs text-muted-foreground">Variables</Label>
-                <Badge variant="outline">{selectedVariables.length || 0}</Badge>
-              </div>
-              <div className="flex flex-wrap gap-1.5 max-h-[210px] overflow-auto">
-                {availableVariables.map((variable) => {
-                  const active = selectedVariables.includes(variable.code);
-                  return (
-                    <button
-                      key={variable.code}
-                      type="button"
-                      onClick={() => onToggleVariable(variable.code)}
-                      className={`rounded-full border px-2 py-1 text-[11px] transition-colors ${
-                        active
-                          ? 'border-[#509EE3] bg-[#509EE3] text-white'
-                          : 'border-gray-300 bg-white text-foreground hover:border-[#509EE3]/70'
-                      }`}
-                    >
-                      {variable.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
               <div className="space-y-1">
                 <Label htmlFor="row-limit" className="text-xs text-muted-foreground">
                   Rows to load
@@ -296,7 +276,7 @@ export function AnalyticalWorkspaceLoadDataPanel({
               </div>
               <Button className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white" onClick={onRun} disabled={loading}>
                 {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
-                Load Analysis Data
+                {selectedManualDatasetKind === 'generic' ? 'Open Summary' : 'Load Analysis Data'}
               </Button>
               <div className="rounded-lg border bg-white p-3 text-xs text-muted-foreground space-y-1">
                 <div className="flex items-center justify-between">

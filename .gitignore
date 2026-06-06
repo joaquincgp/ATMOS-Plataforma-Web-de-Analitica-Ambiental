@@ -39,6 +39,11 @@ apps/backend/.env.*
 # Coverage
 coverage/
 htmlcov/
+reports/
+.tmp/
+coverage.xml
+.coverage*
+apps/frontend/coverage/
 
 # Local Data
 apps/backend/data/

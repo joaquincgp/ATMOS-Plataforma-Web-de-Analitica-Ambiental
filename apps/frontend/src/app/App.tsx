@@ -264,9 +264,9 @@ function App() {
           onCloseProject={handleCloseWorkspace}
         />
 
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
           <TopBar userName={user?.full_name ?? user?.email ?? 'User'} onLogout={() => void logout()} />
-          <main className="flex-1 overflow-y-auto">{privateView}</main>
+          <main className="min-h-0 flex-1 overflow-y-auto">{privateView}</main>
         </div>
       </div>
     </AnalyticalWorkspaceProvider>
