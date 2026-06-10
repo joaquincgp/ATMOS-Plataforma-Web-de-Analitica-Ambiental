@@ -48,6 +48,13 @@ STATION_REFERENCES: tuple[StationReference, ...] = (
         aliases=("belisario", "bel"),
     ),
     StationReference(
+        name="Jipijapa",
+        latitude=-0.156861,
+        longitude=-78.480725,
+        region="Quito",
+        aliases=("jipijapa", "jip"),
+    ),
+    StationReference(
         name="Tumbaco",
         latitude=-0.214933,
         longitude=-78.403253,

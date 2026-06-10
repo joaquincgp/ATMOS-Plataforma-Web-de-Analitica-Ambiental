@@ -284,7 +284,10 @@ class EtlService:
             archive_path.write_bytes(content)
             extracted_path = self._extract_input_file(archive_path, checksum)
 
-            for row in self._extract_rows_from_directory(extracted_path):
+            for row in self._extract_rows_from_directory(
+                extracted_path,
+                default_variable_code=archive["variable_code"],
+            ):
                 observed_at = row.observed_at.astimezone(UTC)
                 if observed_from_dt is not None and observed_at < observed_from_dt:
                     continue
@@ -882,6 +885,12 @@ class EtlService:
             self.db.commit()
             self.db.refresh(source_file)
 
+        if force_reprocess:
+            self.db.execute(delete(Measurement).where(Measurement.source_file_id == source_file.id))
+            source_file.row_count = 0
+            self.db.add(source_file)
+            self.db.commit()
+
         self._set_run_progress(
             etl_run,
             stage="extraction",
@@ -917,7 +926,7 @@ class EtlService:
             selected_variables=selected_variables,
         )
 
-        rows = self._extract_rows_from_directory(extracted_path)
+        rows = self._extract_rows_from_directory(extracted_path, default_variable_code=current_variable)
         self._set_run_progress(
             etl_run,
             stage="insertion",
@@ -1054,7 +1063,11 @@ class EtlService:
         )
         return self.db.scalar(statement)
 
-    def _extract_rows_from_directory(self, extracted_path: Path) -> Iterator[NormalizedMeasurementRow]:
+    def _extract_rows_from_directory(
+        self,
+        extracted_path: Path,
+        default_variable_code: str | None = None,
+    ) -> Iterator[NormalizedMeasurementRow]:
         workbook_paths = [
             path for path in extracted_path.rglob("*") if path.is_file() and path.suffix.lower() in {".xlsx", ".xls"}
         ]
@@ -1063,12 +1076,16 @@ class EtlService:
         ]
 
         for workbook_path in workbook_paths:
-            yield from self._extract_rows_from_workbook(workbook_path)
+            yield from self._extract_rows_from_workbook(workbook_path, default_variable_code=default_variable_code)
 
         for delimited_path in delimited_paths:
-            yield from self._extract_rows_from_delimited(delimited_path)
+            yield from self._extract_rows_from_delimited(delimited_path, default_variable_code=default_variable_code)
 
-    def _extract_rows_from_workbook(self, workbook_path: Path) -> Iterator[NormalizedMeasurementRow]:
+    def _extract_rows_from_workbook(
+        self,
+        workbook_path: Path,
+        default_variable_code: str | None = None,
+    ) -> Iterator[NormalizedMeasurementRow]:
         try:
             sheets = pd.read_excel(workbook_path, sheet_name=None)
         except Exception as exc:  # noqa: BLE001
@@ -1081,9 +1098,14 @@ class EtlService:
                 dataframe=dataframe,
                 workbook_name=workbook_path.name,
                 sheet_name=sheet_name,
+                default_variable_code=default_variable_code,
             )
 
-    def _extract_rows_from_delimited(self, file_path: Path) -> Iterator[NormalizedMeasurementRow]:
+    def _extract_rows_from_delimited(
+        self,
+        file_path: Path,
+        default_variable_code: str | None = None,
+    ) -> Iterator[NormalizedMeasurementRow]:
         dataframe = self._read_delimited_file(file_path)
         if dataframe is None or dataframe.empty:
             return
@@ -1092,6 +1114,7 @@ class EtlService:
             dataframe=dataframe,
             workbook_name=file_path.name,
             sheet_name="data",
+            default_variable_code=default_variable_code,
         )
 
     def _read_delimited_file(self, file_path: Path) -> pd.DataFrame | None:
@@ -1109,6 +1132,7 @@ class EtlService:
         dataframe: pd.DataFrame,
         workbook_name: str,
         sheet_name: str,
+        default_variable_code: str | None = None,
     ) -> Iterator[NormalizedMeasurementRow]:
         dataframe = dataframe.dropna(how="all")
         if dataframe.empty:
@@ -1125,7 +1149,10 @@ class EtlService:
         variable_column = self._first_existing(column_map, VARIABLE_COLUMNS)
         value_column = self._first_existing(column_map, VALUE_COLUMNS)
         unit_column = self._first_existing(column_map, UNIT_COLUMNS)
-        wide_variable_code = self._derive_wide_variable_code(sheet_name=sheet_name, workbook_name=workbook_name)
+        wide_variable_code = normalize_variable_code(default_variable_code or "") or self._derive_wide_variable_code(
+            sheet_name=sheet_name,
+            workbook_name=workbook_name,
+        )
         wide_units_by_column = self._extract_wide_units_row(dataframe, datetime_column)
 
         metadata_columns = {

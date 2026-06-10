@@ -231,6 +231,30 @@ def test_normalize_dataframe_supports_long_and_wide_layouts(tmp_path: Path) -> N
     assert {row.unit for row in wide_rows} == {"ug/m3"}
 
 
+def test_remmaq_wide_workbook_uses_archive_variable_over_sheet_name(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    dataframe = pd.DataFrame(
+        {
+            "fecha": ["2026-04-01T00:00:00", "2026-04-01T01:00:00"],
+            "BELISARIO": [1.2, 1.5],
+            "CENTRO": [2.1, None],
+        }
+    )
+
+    rows = list(
+        service._normalize_dataframe(
+            dataframe=dataframe,
+            workbook_name="CO_validados.xlsx",
+            sheet_name="LIMPIO",
+            default_variable_code="CO",
+        )
+    )
+
+    assert rows
+    assert {row.variable_code for row in rows} == {"CO"}
+    assert {row.station_code for row in rows} == {"BELISARIO", "CENTRO"}
+
+
 def test_row_loading_filters_range_and_reports_progress(tmp_path: Path) -> None:
     service = _service(tmp_path)
     calls = []
@@ -333,7 +357,7 @@ def test_manual_ingestion_and_process_binary_paths(tmp_path: Path) -> None:
     extracted_path.mkdir(parents=True)
     process_service._find_reusable_source_file = lambda **_kwargs: None
     process_service._extract_input_file = lambda input_path, checksum: extracted_path
-    process_service._extract_rows_from_directory = lambda path: [
+    process_service._extract_rows_from_directory = lambda path, **_kwargs: [
         NormalizedMeasurementRow("A", datetime(2025, 1, 1, tzinfo=UTC), "PM25", 1.0, "ug/m3", "s", 1, "w")
     ]
     process_service._load_rows = lambda rows, source_file_id, **_kwargs: (1, 0, 0)

@@ -16,6 +16,9 @@ __pycache__/
 *.so
 *.egg-info/
 .pytest_cache/
+.pytest-basetemp*/
+pytest-cache-files-*/
+apps/backend/pytest-cache-files-*/
 .ruff_cache/
 .mypy_cache/
 .venv/
