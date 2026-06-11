@@ -9,8 +9,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.time import ecuador_now_naive
 from app.models.etl_run import EtlRun
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_PUBLIC, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
 from app.models.variable import Variable
@@ -38,6 +39,8 @@ PUBLIC_SYNC_MIN_INTERVAL = timedelta(hours=1)
 PUBLIC_SYNC_ACTIVE_TIMEOUT = timedelta(hours=3)
 PUBLIC_SYNC_LOOKBACK_DAYS = 540
 PUBLIC_DEFAULT_PERIOD = "latest"
+PUBLIC_DASHBOARD_SOURCE_TYPE = "public_dashboard"
+PUBLIC_DASHBOARD_LEGACY_SOURCE_PREFIX = "aireambiente-current-"
 PUBLIC_PERIOD_ALIASES = {
     "latest": "latest",
     "last_hour": "latest",
@@ -150,7 +153,10 @@ class PublicVariableSelector:
 
     @property
     def has_sources(self) -> bool:
-        return bool(self.variable_ids or (self.clean_variable_ids and self.clean_source_file_ids))
+        return bool(
+            (self.variable_ids and self.source_file_ids)
+            or (self.clean_variable_ids and self.clean_source_file_ids)
+        )
 
 
 def prepare_public_remmaq_sync(
@@ -206,6 +212,8 @@ def prepare_public_remmaq_sync(
             "public_dashboard_force_sync": force_sync,
             "public_dashboard_policy": "all_remmaq_variables_1_hour_throttle_recent_window",
             "public_dashboard_lookback_days": PUBLIC_SYNC_LOOKBACK_DAYS,
+            # Marca el origen de datos para que run_remmaq_sync use data_origin='public'.
+            "data_origin": DATA_ORIGIN_PUBLIC,
         }
     )
     run.details = details
@@ -264,8 +272,15 @@ def _source_name_to_public_code(value: str | None) -> str | None:
     return None
 
 
+def _public_source_condition() -> Any:
+    return or_(
+        SourceFile.source_type == PUBLIC_DASHBOARD_SOURCE_TYPE,
+        SourceFile.original_name.startswith(PUBLIC_DASHBOARD_LEGACY_SOURCE_PREFIX),
+    )
+
+
 def _utc_naive_now() -> datetime:
-    return datetime.now(UTC).replace(tzinfo=None)
+    return ecuador_now_naive()
 
 
 def _normalized_variable_sql_expr(column: Any) -> Any:
@@ -499,7 +514,7 @@ def _load_variable_options(db: Session) -> tuple[list[PublicAirQualityVariableOp
 
 def _load_variable_selectors(db: Session) -> dict[str, PublicVariableSelector]:
     variables = db.scalars(select(Variable)).all()
-    source_files = db.scalars(select(SourceFile).where(SourceFile.source_type == "automatic")).all()
+    source_files = db.scalars(select(SourceFile).where(_public_source_condition())).all()
     direct_ids: dict[str, list[int]] = defaultdict(list)
     clean_ids: list[int] = []
     clean_source_ids: dict[str, list[int]] = defaultdict(list)
@@ -519,13 +534,17 @@ def _load_variable_selectors(db: Session) -> dict[str, PublicVariableSelector]:
         code = _source_name_to_public_code(source_file.original_name) or _source_name_to_public_code(
             source_file.source_url
         )
+        source_timestamp = source_file.processed_at or source_file.downloaded_at
+        for public_code in PUBLIC_VARIABLE_ORDER:
+            source_ids[public_code].append(source_file.id)
+            if source_timestamp and (
+                public_code not in latest_ingested or source_timestamp > latest_ingested[public_code]
+            ):
+                latest_ingested[public_code] = source_timestamp
+
         if code in PUBLIC_VARIABLE_ORDER:
-            source_ids[code].append(source_file.id)
             clean_source_ids[code].append(source_file.id)
             source_row_counts[code] += int(source_file.row_count or 0)
-            source_timestamp = source_file.processed_at or source_file.downloaded_at
-            if source_timestamp and (code not in latest_ingested or source_timestamp > latest_ingested[code]):
-                latest_ingested[code] = source_timestamp
 
     return {
         code: PublicVariableSelector(
@@ -544,7 +563,12 @@ def _load_variable_selectors(db: Session) -> dict[str, PublicVariableSelector]:
 def _selector_condition(selector: PublicVariableSelector) -> Any:
     conditions = []
     if selector.variable_ids:
-        conditions.append(Measurement.variable_id.in_(selector.variable_ids))
+        conditions.append(
+            and_(
+                Measurement.variable_id.in_(selector.variable_ids),
+                Measurement.source_file_id.in_(selector.source_file_ids),
+            )
+        )
     if selector.clean_variable_ids and selector.clean_source_file_ids:
         conditions.append(
             and_(
@@ -663,9 +687,21 @@ def _build_public_air_quality_snapshot(
         period=period if uses_relative_window else None,
     )
     sync_summary = _load_sync_summary(db, today_window)
-    latest_ingested_at = db.scalar(select(func.max(Measurement.updated_at)))
+    latest_ingested_at = db.scalar(
+        select(func.max(Measurement.updated_at))
+        .join(SourceFile, SourceFile.id == Measurement.source_file_id)
+        .where(
+            _public_source_condition(),
+            Measurement.data_origin == DATA_ORIGIN_PUBLIC,
+        )
+    )
     today_observation_count = db.scalar(
-        _apply_window(select(func.count(Measurement.id)).select_from(Measurement), today_window)
+        _apply_window(
+            select(func.count(Measurement.id))
+            .select_from(Measurement)
+            .where(Measurement.data_origin == DATA_ORIGIN_PUBLIC),
+            today_window,
+        )
     ) or 0
 
     if window.start is None or window.end is None:
@@ -933,12 +969,17 @@ def _load_sync_summary(db: Session, today_window: PublicAirQualityWindow) -> Pub
     )
     latest_source = db.scalar(
         select(SourceFile)
-        .where(SourceFile.source_type == "automatic")
+        .where(_public_source_condition())
         .order_by(desc(SourceFile.processed_at), desc(SourceFile.downloaded_at), desc(SourceFile.id))
         .limit(1)
     )
 
-    records_today_statement = select(func.count(Measurement.id)).select_from(Measurement)
+    records_today_statement = (
+        select(func.count(Measurement.id))
+        .select_from(Measurement)
+        .join(SourceFile, SourceFile.id == Measurement.source_file_id)
+        .where(_public_source_condition())
+    )
     if today_window.start is not None:
         records_today_statement = records_today_statement.where(Measurement.created_at >= today_window.start)
     if today_window.end is not None:

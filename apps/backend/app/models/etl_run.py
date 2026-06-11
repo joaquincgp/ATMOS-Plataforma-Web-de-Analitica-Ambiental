@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import ecuador_now_naive
 from app.models.base import Base
 
 
@@ -16,7 +17,7 @@ class EtlRun(Base):
     trigger_type: Mapped[str] = mapped_column(String(32), index=True)
     source: Mapped[str] = mapped_column(String(255), default="unknown")
     status: Mapped[str] = mapped_column(String(32), index=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archives_discovered: Mapped[int] = mapped_column(Integer, default=0)
     archives_processed: Mapped[int] = mapped_column(Integer, default=0)

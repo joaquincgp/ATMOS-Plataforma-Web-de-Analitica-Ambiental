@@ -44,6 +44,10 @@ export interface EtlRunResponse {
   details: Record<string, unknown>;
 }
 
+export interface EtlRunHistoryClearResponse {
+  cleared: number;
+}
+
 export interface EtlMetricsResponse {
   total_measurements: number;
   total_stations: number;
@@ -279,6 +283,12 @@ export function getEtlRuns(limit = 20): Promise<EtlRunResponse[]> {
 
 export function getEtlRun(runId: string): Promise<EtlRunResponse> {
   return apiRequest<EtlRunResponse>(`/api/v1/etl/runs/${runId}`);
+}
+
+export function clearEtlRunHistory(): Promise<EtlRunHistoryClearResponse> {
+  return apiRequest<EtlRunHistoryClearResponse>('/api/v1/etl/runs/history', {
+    method: 'DELETE',
+  });
 }
 
 export function getEtlMetrics(): Promise<EtlMetricsResponse> {

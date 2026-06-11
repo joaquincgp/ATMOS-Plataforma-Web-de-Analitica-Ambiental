@@ -3,17 +3,14 @@ from __future__ import annotations
 import logging
 from datetime import date
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
-from app.db.session import SessionLocal
 from app.schemas.public_air_quality import PublicAirQualityResponse
-from app.services.etl import EtlService
 from app.services.public_air_quality_service import (
     clear_public_snapshot_cache,
     get_public_air_quality_snapshot,
-    prepare_public_remmaq_sync,
 )
 from app.services.remmaq_current import should_sync_current_remmaq_snapshot, sync_current_remmaq_snapshot
 
@@ -21,32 +18,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _run_public_remmaq_sync_background(
-    run_id: str,
-    selected_variables: list[str],
-    max_archives: int,
-    force_reprocess: bool,
-    observed_from: date | None,
-    observed_to: date | None,
-) -> None:
-    db = SessionLocal()
-    try:
-        service = EtlService(db)
-        service.run_remmaq_sync(
-            run_id=run_id,
-            selected_variables=selected_variables,
-            max_archives=max_archives,
-            force_reprocess=force_reprocess,
-            observed_from=observed_from,
-            observed_to=observed_to,
-        )
-    finally:
-        db.close()
-
-
 @router.get("/air-quality", response_model=PublicAirQualityResponse)
 def get_public_air_quality(
-    background_tasks: BackgroundTasks,
     variable_code: str = Query(default="PM25"),
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
@@ -66,9 +39,6 @@ def get_public_air_quality(
                     clear_public_snapshot_cache()
             except Exception:
                 logger.exception("Failed to sync current REMMAQ public map data.")
-            sync_task = prepare_public_remmaq_sync(db, force_sync=False)
-            if sync_task is not None:
-                background_tasks.add_task(_run_public_remmaq_sync_background, *sync_task)
         return get_public_air_quality_snapshot(
             db,
             variable_code=variable_code,

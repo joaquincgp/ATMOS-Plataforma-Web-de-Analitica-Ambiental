@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import {
+  clearEtlRunHistory,
   getEtlRun,
   getEtlMetrics,
   getEtlPreview,
@@ -14,6 +15,7 @@ import {
   type EtlPreviewRowResponse,
   type EtlRunResponse,
 } from '@/api/modules/etl';
+import { parseBackendDateInEcuador } from '@/shared/lib/datetime';
 
 interface UseEtlState {
   runs: EtlRunResponse[];
@@ -29,6 +31,7 @@ interface UseEtlActions {
   initDatabase: () => Promise<DbInitResponse>;
   triggerRemmaqSync: (params?: SyncRemmaqParams) => Promise<EtlRunResponse>;
   uploadManualFile: (file: File, forceReprocess?: boolean) => Promise<EtlRunResponse>;
+  clearRunHistory: () => Promise<number>;
   refresh: () => Promise<void>;
 }
 
@@ -44,7 +47,7 @@ export function useEtl(): UseEtlState & UseEtlActions {
   const upsertRun = useCallback((run: EtlRunResponse) => {
     setRuns((previous) => {
       const next = [run, ...previous.filter((item) => item.id !== run.id)];
-      next.sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+      next.sort((a, b) => parseBackendDateInEcuador(b.started_at).getTime() - parseBackendDateInEcuador(a.started_at).getTime());
       return next;
     });
     setCurrentRun(run);
@@ -128,6 +131,12 @@ export function useEtl(): UseEtlState & UseEtlActions {
     [pollRun, upsertRun],
   );
 
+  const clearRunHistory = useCallback(async () => {
+    const response = await clearEtlRunHistory();
+    await refresh();
+    return response.cleared;
+  }, [refresh]);
+
   return {
     runs,
     currentRun,
@@ -139,6 +148,7 @@ export function useEtl(): UseEtlState & UseEtlActions {
     initDatabase,
     triggerRemmaqSync,
     uploadManualFile,
+    clearRunHistory,
     refresh,
   };
 }

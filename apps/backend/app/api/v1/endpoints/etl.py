@@ -16,6 +16,7 @@ from app.schemas.etl import (
     DbInitResponse,
     EtlMetricsResponse,
     EtlPreviewResponse,
+    EtlRunHistoryClearResponse,
     EtlRunResponse,
     ManualDatasetCreateFromRemmaqRequest,
     ManualDatasetCreateFromUrlRequest,
@@ -212,7 +213,14 @@ def list_runs(
     db: Session = Depends(get_db_session),
 ) -> list[EtlRunResponse]:
     service = EtlService(db)
-    return [_to_run_response(run) for run in service.list_runs(limit=limit)]
+    list_user_runs = getattr(service, "list_user_remmaq_runs", service.list_runs)
+    return [_to_run_response(run) for run in list_user_runs(limit=limit)]
+
+
+@router.delete("/runs/history", response_model=EtlRunHistoryClearResponse)
+def clear_run_history(db: Session = Depends(get_db_session)) -> EtlRunHistoryClearResponse:
+    service = EtlService(db)
+    return EtlRunHistoryClearResponse(cleared=service.clear_user_remmaq_run_history())
 
 
 @router.get("/runs/{run_id}", response_model=EtlRunResponse)

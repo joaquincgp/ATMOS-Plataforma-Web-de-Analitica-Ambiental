@@ -38,7 +38,7 @@ def _seed_public_measurements(db_session) -> None:
 
     source = SourceFile(
         etl_run_id=run.id,
-        source_type="automatic",
+        source_type="public_dashboard",
         source_url="https://datosambiente.quito.gob.ec/",
         original_name="pm25.zip",
         local_archive_path="pm25.zip",
@@ -106,7 +106,7 @@ def test_public_air_quality_snapshot_infers_remmaq_variable_from_clean_sheet_sou
 
     source = SourceFile(
         etl_run_id=run.id,
-        source_type="automatic",
+        source_type="public_dashboard",
         source_url="https://datosambiente.quito.gob.ec/datos/PM2.5.rar",
         original_name="PM2.5.rar",
         local_archive_path="PM2.5.rar",
@@ -151,7 +151,7 @@ def test_public_air_quality_variable_summaries_use_each_variable_latest_relative
 
     pm25_source = SourceFile(
         etl_run_id=run.id,
-        source_type="automatic",
+        source_type="public_dashboard",
         source_url="https://datosambiente.quito.gob.ec/datos/PM2.5.rar",
         original_name="PM2.5.rar",
         local_archive_path="PM2.5.rar",
@@ -161,7 +161,7 @@ def test_public_air_quality_variable_summaries_use_each_variable_latest_relative
     )
     co_source = SourceFile(
         etl_run_id=run.id,
-        source_type="automatic",
+        source_type="public_dashboard",
         source_url="https://datosambiente.quito.gob.ec/datos/CO.rar",
         original_name="CO.rar",
         local_archive_path="CO.rar",

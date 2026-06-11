@@ -17,9 +17,10 @@ from sqlalchemy import delete, desc, func, select, tuple_
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
+from app.core.time import ecuador_now_iso, ecuador_now_naive
 from app.db.init_db import init_db
 from app.models.etl_run import EtlRun
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_PUBLIC, DATA_ORIGIN_USER, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
 from app.models.variable import Variable
@@ -126,12 +127,60 @@ class EtlService:
         return {
             "status": "initialized",
             "database": str(self.settings.database_url),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": ecuador_now_iso(),
         }
 
     def list_runs(self, limit: int = 20) -> list[EtlRun]:
         statement = select(EtlRun).order_by(desc(EtlRun.started_at)).limit(limit)
         return list(self.db.scalars(statement).all())
+
+    def list_user_remmaq_runs(self, limit: int = 20) -> list[EtlRun]:
+        statement = (
+            select(EtlRun)
+            .where(EtlRun.trigger_type == "automatic")
+            .order_by(desc(EtlRun.started_at))
+            .limit(500)
+        )
+        runs: list[EtlRun] = []
+        for run in self.db.scalars(statement).all():
+            details = run.details if isinstance(run.details, dict) else {}
+            if details.get("hidden_from_history") is True:
+                continue
+            if details.get("public_dashboard_sync") is True or details.get("public_dashboard_current_sync") is True:
+                continue
+            runs.append(run)
+            if len(runs) >= limit:
+                break
+        return runs
+
+    def clear_user_remmaq_run_history(self) -> int:
+        statement = select(EtlRun).where(EtlRun.trigger_type == "automatic").order_by(desc(EtlRun.started_at))
+        cleared = 0
+        for run in self.db.scalars(statement).all():
+            details = dict(run.details or {})
+            if details.get("hidden_from_history") is True:
+                continue
+            if details.get("public_dashboard_sync") is True or details.get("public_dashboard_current_sync") is True:
+                continue
+            details["hidden_from_history"] = True
+            details["hidden_from_history_at"] = ecuador_now_iso()
+            run.details = details
+            self.db.add(run)
+            cleared += 1
+        if cleared:
+            self.db.commit()
+        return cleared
+
+    def _latest_non_public_run(self) -> EtlRun | None:
+        statement = select(EtlRun).order_by(desc(EtlRun.started_at)).limit(500)
+        for run in self.db.scalars(statement).all():
+            details = run.details if isinstance(run.details, dict) else {}
+            if details.get("hidden_from_history") is True:
+                continue
+            if details.get("public_dashboard_sync") is True or details.get("public_dashboard_current_sync") is True:
+                continue
+            return run
+        return None
 
     def sync_remmaq(
         self,
@@ -141,6 +190,7 @@ class EtlService:
         max_archives: int | None = None,
         observed_from: date | None = None,
         observed_to: date | None = None,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> EtlRun:
         (
             run,
@@ -163,6 +213,7 @@ class EtlService:
             force_reprocess=run_force_reprocess,
             observed_from=run_observed_from,
             observed_to=run_observed_to,
+            data_origin=data_origin,
         )
 
     def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
@@ -186,6 +237,7 @@ class EtlService:
         rows: Iterable[NormalizedMeasurementRow],
         source_type: str = "manual",
         source_url: str | None = None,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> EtlRun:
         run = self.create_manual_run(filename=filename)
         checksum = compute_sha256(content)
@@ -210,10 +262,10 @@ class EtlService:
         self.db.refresh(source_file)
 
         try:
-            inserted, updated, skipped = self._load_rows(rows, source_file.id)
+            inserted, updated, skipped = self._load_rows(rows, source_file.id, data_origin=data_origin)
             source_file.row_count = inserted + updated
             source_file.status = "completed"
-            source_file.processed_at = datetime.utcnow()
+            source_file.processed_at = ecuador_now_naive()
 
             run.archives_discovered = 1
             run.archives_processed = 1
@@ -221,7 +273,7 @@ class EtlService:
             run.records_updated = updated
             run.records_skipped = skipped
             run.status = "completed"
-            run.finished_at = datetime.utcnow()
+            run.finished_at = ecuador_now_naive()
             self.db.add(source_file)
             self.db.add(run)
             self.db.commit()
@@ -370,11 +422,16 @@ class EtlService:
         force_reprocess: bool,
         observed_from: date | None,
         observed_to: date | None,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> EtlRun:
         run = self._get_run_or_raise(run_id)
+        # Hereda data_origin del run si fue preparado por el pipeline del dashboard público
+        # (prepare_public_remmaq_sync guarda "data_origin": "public" en details).
+        resolved_origin = str((run.details or {}).get("data_origin") or data_origin)
         normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
         observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
         effective_force_reprocess = force_reprocess
+
         try:
             self._set_run_progress(
                 run,
@@ -454,10 +511,11 @@ class EtlService:
                     current_variable=variable_code,
                     observed_from=observed_from_dt,
                     observed_to=observed_to_dt,
+                    data_origin=resolved_origin,
                 )
 
             run.status = "completed"
-            run.finished_at = datetime.utcnow()
+            run.finished_at = ecuador_now_naive()
             self.db.add(run)
             self.db.commit()
             self._set_run_progress(
@@ -512,10 +570,11 @@ class EtlService:
                 archives_total=1,
                 selected_variables=[],
                 current_variable="MANUAL",
+                data_origin=DATA_ORIGIN_USER,
             )
 
             run.status = "completed"
-            run.finished_at = datetime.utcnow()
+            run.finished_at = ecuador_now_naive()
             self.db.add(run)
             self.db.commit()
             self._set_run_progress(
@@ -547,7 +606,7 @@ class EtlService:
         if run is None:
             return
         run.status = "failed"
-        run.finished_at = datetime.utcnow()
+        run.finished_at = ecuador_now_naive()
         self.db.add(run)
         self.db.commit()
         self._set_run_progress(
@@ -572,7 +631,7 @@ class EtlService:
         details["stage"] = stage
         details["stage_label"] = stage_label
         details["progress_percent"] = max(0, min(100, int(progress_percent)))
-        details["updated_at"] = datetime.now(UTC).isoformat()
+        details["updated_at"] = ecuador_now_iso()
         run.details = details
         self.db.add(run)
         self.db.commit()
@@ -620,7 +679,12 @@ class EtlService:
         if not variable_ids:
             return 0
 
-        statement = delete(Measurement).where(Measurement.variable_id.in_(variable_ids))
+        # Solo borra mediciones del usuario (data_origin='user').
+        # Las mediciones del dashboard público (data_origin='public') nunca se tocan.
+        statement = delete(Measurement).where(
+            Measurement.variable_id.in_(variable_ids),
+            Measurement.data_origin == DATA_ORIGIN_USER,
+        )
         if observed_from is not None:
             statement = statement.where(Measurement.observed_at >= observed_from.astimezone(UTC).replace(tzinfo=None))
         if observed_to is not None:
@@ -769,7 +833,7 @@ class EtlService:
                 filename = basic_match.group(1)
 
         if not filename:
-            filename = Path(httpx.URL(url).path).name or f"download-{datetime.utcnow().timestamp()}"
+            filename = Path(httpx.URL(url).path).name or f"download-{ecuador_now_naive().timestamp()}"
 
         clean_name = Path(filename).name
         suffix = Path(clean_name).suffix.lower()
@@ -804,6 +868,7 @@ class EtlService:
         current_variable: str,
         observed_from: datetime | None = None,
         observed_to: datetime | None = None,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> None:
         checksum = compute_sha256(content)
 
@@ -879,14 +944,20 @@ class EtlService:
             source_file.checksum_sha256 = checksum
             source_file.status = "downloaded"
             source_file.error_message = None
-            source_file.downloaded_at = datetime.utcnow()
+            source_file.downloaded_at = ecuador_now_naive()
             source_file.processed_at = None
             self.db.add(source_file)
             self.db.commit()
             self.db.refresh(source_file)
 
         if force_reprocess:
-            self.db.execute(delete(Measurement).where(Measurement.source_file_id == source_file.id))
+            # Solo borra mediciones del mismo origen para no contaminar el otro.
+            self.db.execute(
+                delete(Measurement).where(
+                    Measurement.source_file_id == source_file.id,
+                    Measurement.data_origin == data_origin,
+                )
+            )
             source_file.row_count = 0
             self.db.add(source_file)
             self.db.commit()
@@ -980,11 +1051,12 @@ class EtlService:
             observed_from=observed_from,
             observed_to=observed_to,
             progress_callback=_on_insert_progress,
+            data_origin=data_origin,
         )
 
         source_file.row_count = self._count_measurements_for_source_file(source_file.id)
         source_file.status = "completed"
-        source_file.processed_at = datetime.utcnow()
+        source_file.processed_at = ecuador_now_naive()
 
         etl_run.archives_processed += 1
         etl_run.records_inserted += inserted
@@ -1344,6 +1416,7 @@ class EtlService:
         observed_from: datetime | None = None,
         observed_to: datetime | None = None,
         progress_callback: Callable[[int, int, int], None] | None = None,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> tuple[int, int, int]:
         total_inserted = 0
         total_updated = 0
@@ -1362,7 +1435,7 @@ class EtlService:
 
             chunk.append(row)
             if len(chunk) >= chunk_size:
-                inserted, updated, skipped = self._load_rows_chunk(chunk, source_file_id)
+                inserted, updated, skipped = self._load_rows_chunk(chunk, source_file_id, data_origin=data_origin)
                 total_inserted += inserted
                 total_updated += updated
                 total_skipped += skipped
@@ -1371,7 +1444,7 @@ class EtlService:
                 chunk = []
 
         if chunk:
-            inserted, updated, skipped = self._load_rows_chunk(chunk, source_file_id)
+            inserted, updated, skipped = self._load_rows_chunk(chunk, source_file_id, data_origin=data_origin)
             total_inserted += inserted
             total_updated += updated
             total_skipped += skipped
@@ -1380,7 +1453,13 @@ class EtlService:
 
         return total_inserted, total_updated, total_skipped
 
-    def _load_rows_chunk(self, rows: list[NormalizedMeasurementRow], source_file_id: int) -> tuple[int, int, int]:
+    def _load_rows_chunk(
+        self,
+        rows: list[NormalizedMeasurementRow],
+        source_file_id: int,
+        *,
+        data_origin: str = DATA_ORIGIN_USER,
+    ) -> tuple[int, int, int]:
         inserted = 0
         updated = 0
         skipped = 0
@@ -1419,7 +1498,7 @@ class EtlService:
             return inserted, updated, skipped
 
         try:
-            existing_map = self._load_existing_measurements(keys)
+            existing_map = self._load_existing_measurements(keys, data_origin=data_origin)
 
             to_insert: list[Measurement] = []
             for row, station_id, variable_id, observed_at in prepared_rows:
@@ -1436,6 +1515,7 @@ class EtlService:
                             unit=row.unit,
                             source_file_id=source_file_id,
                             record_hash=compute_record_hash(row.station_code, row.variable_code, observed_at),
+                            data_origin=data_origin,
                         )
                     )
                     inserted += 1
@@ -1462,6 +1542,8 @@ class EtlService:
     def _load_existing_measurements(
         self,
         keys: list[tuple[int, int, datetime]],
+        *,
+        data_origin: str = DATA_ORIGIN_USER,
     ) -> dict[tuple[int, int, datetime], Measurement]:
         unique_keys = list(dict.fromkeys(keys))
         if not unique_keys:
@@ -1472,8 +1554,11 @@ class EtlService:
 
         for offset in range(0, len(unique_keys), lookup_chunk_size):
             key_batch = unique_keys[offset : offset + lookup_chunk_size]
+            # Filtra por data_origin para que upserts de 'user' no colisionen
+            # con filas de 'public' que comparten (station, variable, observed_at).
             statement = select(Measurement).where(
-                tuple_(Measurement.station_id, Measurement.variable_id, Measurement.observed_at).in_(key_batch)
+                tuple_(Measurement.station_id, Measurement.variable_id, Measurement.observed_at).in_(key_batch),
+                Measurement.data_origin == data_origin,
             )
             batch_rows = self.db.scalars(statement).all()
             for measurement in batch_rows:
@@ -1540,11 +1625,17 @@ class EtlService:
         return "other"
 
     def get_metrics(self) -> dict[str, int | str]:
-        total_measurements = self.db.scalar(select(func.count()).select_from(Measurement)) or 0
+        # Solo cuenta mediciones del usuario (excluye datos del dashboard público).
+        total_measurements = (
+            self.db.scalar(
+                select(func.count()).select_from(Measurement).where(Measurement.data_origin == DATA_ORIGIN_USER)
+            )
+            or 0
+        )
         total_stations = self.db.scalar(select(func.count()).select_from(Station)) or 0
         total_variables = self.db.scalar(select(func.count()).select_from(Variable)) or 0
 
-        latest_run = self.db.scalar(select(EtlRun).order_by(desc(EtlRun.started_at)).limit(1))
+        latest_run = next(iter(self.list_user_remmaq_runs(limit=1)), None)
 
         return {
             "total_measurements": int(total_measurements),
@@ -1556,7 +1647,7 @@ class EtlService:
     def get_preview(self, *, run_id: str | None = None, limit: int = 100) -> dict[str, object]:
         target_run_id = run_id
         if target_run_id is None:
-            latest_run = self.db.scalar(select(EtlRun).order_by(desc(EtlRun.started_at)).limit(1))
+            latest_run = self._latest_non_public_run()
             if latest_run is None:
                 return {"run_id": None, "rows": []}
             target_run_id = latest_run.id

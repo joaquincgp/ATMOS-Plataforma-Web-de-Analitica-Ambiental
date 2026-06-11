@@ -12,8 +12,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.time import ecuador_now_naive
 from app.models.etl_run import EtlRun
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_PUBLIC, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
 from app.models.variable import Variable
@@ -22,6 +23,7 @@ from app.services.station_reference import resolve_station_reference
 CURRENT_REMMQA_SITES_URL = "https://aireambiente.quito.gob.ec/Modules/Maps/GoogleMap.aspx/GetSitesInfo"
 REMMQA_PUBLIC_ROOT_URL = "https://aireambiente.quito.gob.ec/"
 REMMQA_REPORT_HANDLER_URL = "https://aireambiente.quito.gob.ec/DXXRDV.axd"
+PUBLIC_DASHBOARD_SOURCE_TYPE = "public_dashboard"
 
 LAYER_TO_PUBLIC_VARIABLE: dict[str, tuple[str, str, str, str]] = {
     "CO_mg": ("CO", "Monoxido de carbono", "pollutant", "mg/m3"),
@@ -181,7 +183,7 @@ def should_sync_current_remmaq_snapshot(
 ) -> bool:
     if force_sync:
         return True
-    current_time = now or datetime.utcnow()
+    current_time = now or ecuador_now_naive()
     recent_runs = list(
         db.scalars(
             select(EtlRun)
@@ -231,7 +233,7 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
     if not isinstance(sites, list):
         raise RuntimeError("La fuente oficial vigente no devolvio el arreglo esperado de estaciones.")
 
-    now = datetime.utcnow()
+    now = ecuador_now_naive()
     run = EtlRun(
         id=str(uuid.uuid4()),
         trigger_type="automatic",
@@ -249,7 +251,7 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
     checksum = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
     source = SourceFile(
         etl_run_id=run.id,
-        source_type="automatic",
+        source_type=PUBLIC_DASHBOARD_SOURCE_TYPE,
         source_url=CURRENT_REMMQA_SITES_URL,
         original_name="aireambiente-current-public-map.json",
         local_archive_path="remote://aireambiente-current-public-map.json",
@@ -296,6 +298,7 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
                     Measurement.station_id == station.id,
                     Measurement.variable_id == variable.id,
                     Measurement.observed_at == observed_at,
+                    Measurement.data_origin == DATA_ORIGIN_PUBLIC,
                 )
             )
             if existing is None:
@@ -308,6 +311,7 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
                         unit=_normalize_unit(str(layer.get("UnitName") or variable.default_unit or "")),
                         source_file_id=source.id,
                         record_hash=record_hash,
+                        data_origin=DATA_ORIGIN_PUBLIC,
                     )
                 )
                 inserted += 1
@@ -339,7 +343,7 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
         )
 
     source.status = "completed"
-    source.processed_at = datetime.utcnow()
+    source.processed_at = ecuador_now_naive()
     source.row_count = inserted + updated + skipped
     run.status = "completed"
     run.finished_at = source.processed_at
@@ -408,7 +412,7 @@ def _sync_current_month_reports(
             ).hexdigest()
             source = SourceFile(
                 etl_run_id=run.id,
-                source_type="automatic",
+                source_type=PUBLIC_DASHBOARD_SOURCE_TYPE,
                 source_url=report_url,
                 original_name=f"aireambiente-current-month-{code}.json",
                 local_archive_path=f"remote://aireambiente-current-month-{code}.json",
@@ -440,6 +444,7 @@ def _sync_current_month_reports(
                             Measurement.station_id == station.id,
                             Measurement.variable_id == variable.id,
                             Measurement.observed_at == observed_at,
+                            Measurement.data_origin == DATA_ORIGIN_PUBLIC,
                         )
                     )
                     if existing is None:
@@ -452,6 +457,7 @@ def _sync_current_month_reports(
                                 unit=unit,
                                 source_file_id=source.id,
                                 record_hash=record_hash,
+                                data_origin=DATA_ORIGIN_PUBLIC,
                             )
                         )
                         inserted += 1
@@ -467,7 +473,7 @@ def _sync_current_month_reports(
                         skipped += 1
 
             source.status = "completed"
-            source.processed_at = datetime.utcnow()
+            source.processed_at = ecuador_now_naive()
             source.row_count = source_rows
 
     return inserted, updated, skipped, latest_observed_at

@@ -42,6 +42,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { formatEcuadorDateTime, formatEcuadorShortDateTime } from '@/shared/lib/datetime';
 
 interface PublicDashboardProps {
   onGoToLogin: () => void;
@@ -206,20 +207,12 @@ const formatVariableValue = (
 
 const formatDateTime = (value: string | null | undefined) => {
   if (!value) {
-    return 'Sin actualización';
+    return 'Sin actualizacion';
   }
-  return new Intl.DateTimeFormat('es-EC', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
+  return formatEcuadorDateTime(value);
 };
 
-const formatShortTime = (value: string) =>
-  new Intl.DateTimeFormat('es-EC', {
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-  }).format(new Date(value));
+const formatShortTime = (value: string) => formatEcuadorShortDateTime(value);
 
 const getVariableLabel = (code: string) => {
   if (code === 'PM25') return 'PM2.5';
