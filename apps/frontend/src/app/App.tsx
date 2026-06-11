@@ -7,8 +7,6 @@ import { Login } from '@/features/auth/components/login';
 import { ResetPassword } from '@/features/auth/components/reset-password';
 import { SignUp } from '@/features/auth/components/sign-up';
 import { DataSources } from '@/features/data-sources/components/data-sources';
-import { WorkspaceDashboardBuilder } from '@/features/dashboard/components/workspace-dashboard-builder';
-import { AdvancedHomeDashboard } from '@/features/dashboard/components/advanced-home-dashboard';
 import { MLExperimentRunner } from '@/features/modeling/components/ml-experiment-runner';
 import { ModelViewer } from '@/features/modeling/components/model-viewer';
 import { Projects } from '@/features/projects/components/projects';
@@ -134,12 +132,7 @@ function App() {
   const privateView = useMemo(() => {
     switch (activeView) {
       case 'home':
-        return (
-          <div className="p-6 space-y-6">
-            {activeWorkspaceId && <WorkspaceDashboardBuilder workspaceId={activeWorkspaceId} />}
-            <AdvancedHomeDashboard />
-          </div>
-        );
+        return <PublicDashboard embedded showLoginAction={false} />;
       case 'projects':
         return <Projects onSelectProject={handleSelectWorkspace} />;
       case 'data-sources':
@@ -163,7 +156,7 @@ function App() {
       case 'settings':
         return <SettingsPanel />;
       default:
-        return <AdvancedHomeDashboard />;
+        return <PublicDashboard embedded showLoginAction={false} />;
     }
   }, [activeView, activeWorkspaceId, handleSelectWorkspace]);
 

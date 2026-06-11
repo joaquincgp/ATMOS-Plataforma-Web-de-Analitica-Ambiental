@@ -20,7 +20,7 @@ from app.core.config import Settings, get_settings
 from app.core.time import ecuador_now_iso, ecuador_now_naive
 from app.db.init_db import init_db
 from app.models.etl_run import EtlRun
-from app.models.measurement import DATA_ORIGIN_PUBLIC, DATA_ORIGIN_USER, Measurement
+from app.models.measurement import DATA_ORIGIN_USER, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
 from app.models.variable import Variable

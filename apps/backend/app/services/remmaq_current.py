@@ -402,7 +402,7 @@ def _sync_current_month_reports(
             favorite_id, code, _name, _category, _default_unit = variable_info
             report_url = f"{REMMQA_PUBLIC_ROOT_URL}Public/Viewer.aspx?GuiFavoriteID={favorite_id}"
             try:
-                pages = _fetch_current_month_report_pages(client, report_url)
+                pages = _fetch_current_month_report_pages(client, report_url, variable_info)
             except Exception:  # noqa: BLE001
                 skipped += 1
                 continue
@@ -479,7 +479,11 @@ def _sync_current_month_reports(
     return inserted, updated, skipped, latest_observed_at
 
 
-def _fetch_current_month_report_pages(client: httpx.Client, report_url: str) -> list[dict[str, Any]]:
+def _fetch_current_month_report_pages(
+    client: httpx.Client,
+    report_url: str,
+    variable_info: tuple[str, str, str, str, str] | None = None,
+) -> list[dict[str, Any]]:
     viewer_response = client.get(report_url)
     viewer_response.raise_for_status()
     action_match = re.search(r'<form[^>]+action="([^"]+)"', viewer_response.text, flags=re.IGNORECASE)
@@ -507,6 +511,13 @@ def _fetch_current_month_report_pages(client: httpx.Client, report_url: str) -> 
     pages_with_month = [(month, page) for page in pages if (month := _report_current_month(page)) is not None]
     if not pages_with_month:
         return pages
+
+    if variable_info is not None:
+        months = sorted({month for month, _page in pages_with_month}, reverse=True)
+        for month in months:
+            month_pages = [page for page_month, page in pages_with_month if page_month == month]
+            if any(_parse_report_page_rows(page, variable_info) for page in month_pages):
+                return month_pages
 
     latest_month = max(month for month, _page in pages_with_month)
     return [page for month, page in pages_with_month if month == latest_month]

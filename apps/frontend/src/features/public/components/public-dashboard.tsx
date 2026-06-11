@@ -10,11 +10,12 @@ import {
   Info,
   LogIn,
   MapPin,
-  RefreshCw,
   Thermometer,
   Waves,
   Wind,
+  X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import L from 'leaflet';
 import {
   Area,
@@ -22,7 +23,12 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Legend,
   Line,
+  PolarAngleAxis,
+  PolarGrid,
+  Radar,
+  RadarChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -45,7 +51,9 @@ import { Switch } from '@/components/ui/switch';
 import { formatEcuadorDateTime, formatEcuadorShortDateTime } from '@/shared/lib/datetime';
 
 interface PublicDashboardProps {
-  onGoToLogin: () => void;
+  onGoToLogin?: () => void;
+  embedded?: boolean;
+  showLoginAction?: boolean;
 }
 
 type RangePreset = 'latest' | 'today' | '72h' | 'week' | 'month';
@@ -80,6 +88,13 @@ interface VariableCoveragePoint {
   samples: number;
   stations: number;
 }
+
+const METEO_CELLS: { code: string; icon: LucideIcon; label: string }[] = [
+  { code: 'TMP', icon: Thermometer, label: 'Temp' },
+  { code: 'HUM', icon: CloudRain, label: 'Hum' },
+  { code: 'VEL', icon: Wind, label: 'Viento' },
+  { code: 'LLU', icon: CloudRain, label: 'Lluvia' },
+];
 
 interface IdwLegendData {
   min: number | null;
@@ -179,6 +194,14 @@ const RANGE_LABELS: Record<RangePreset, string> = {
   week: 'Ultima semana',
   month: 'Mes en curso',
 };
+
+const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
+  { value: 'latest', label: '1h' },
+  { value: 'today', label: 'Hoy' },
+  { value: '72h', label: '72h' },
+  { value: 'week', label: '7d' },
+  { value: 'month', label: 'Mes' },
+];
 
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => hour);
 
@@ -627,12 +650,14 @@ function updateMapLayers({
   }
 }
 
-export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
+export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction = true }: PublicDashboardProps) {
   const [snapshot, setSnapshot] = useState<PublicAirQualityResponse | null>(null);
+  const [trendSnapshot, setTrendSnapshot] = useState<PublicAirQualityResponse | null>(null);
   const [selectedVariable, setSelectedVariable] = useState(DEFAULT_VARIABLE);
   const [rangePreset, setRangePreset] = useState<RangePreset>('latest');
   const [selectedStation, setSelectedStation] = useState(ALL_STATIONS);
   const [selectedHour, setSelectedHour] = useState<string>(ALL_STATIONS);
+  const [expandedVariableInfo, setExpandedVariableInfo] = useState<string | null>(null);
   const [stationOptions, setStationOptions] = useState<{ code: string; name: string }[]>([]);
   const [showSurface, setShowSurface] = useState(true);
   const [showStations, setShowStations] = useState(true);
@@ -744,6 +769,32 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
   }, [loadSnapshot]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadTrendSnapshot() {
+      try {
+        const response = await getPublicAirQuality({
+          variable_code: selectedVariable,
+          period: '72h',
+          station_code: selectedStation !== ALL_STATIONS ? selectedStation : undefined,
+          sync: false,
+          force_sync: false,
+        });
+        if (!cancelled) {
+          setTrendSnapshot(response);
+        }
+      } catch {
+        if (!cancelled) {
+          setTrendSnapshot(null);
+        }
+      }
+    }
+    void loadTrendSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedStation, selectedVariable]);
+
+  useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) {
       return;
     }
@@ -790,15 +841,16 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
   const periodUnit = periodSummary?.unit ?? snapshot?.unit;
   const displayMean = periodSummary?.avg_value ?? cityMean;
   const cityBand = displayMean !== null && displayMean !== undefined && snapshot ? getQualityBand(snapshot.variable_code, displayMean, values) : null;
+  const chartSource = trendSnapshot?.variable_code === (snapshot?.variable_code ?? selectedVariable) ? trendSnapshot : snapshot;
   const chartData: ChartPoint[] = useMemo(
     () =>
-      snapshot?.time_series.map((point) => ({
+      chartSource?.time_series.map((point) => ({
         time: formatShortTime(point.timestamp),
         mean: Number(point.mean_value.toFixed(2)),
         min: Number(point.min_value.toFixed(2)),
         max: Number(point.max_value.toFixed(2)),
       })) ?? [],
-    [snapshot],
+    [chartSource],
   );
   const variableOptions = useMemo(() => {
     const options = snapshot?.variables ?? [];
@@ -874,6 +926,515 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
         })),
     [snapshot, stationMatrixCodes],
   );
+  const selectedStationDetail = selectedStation === ALL_STATIONS ? null : (snapshot?.stations[0] ?? null);
+  const selectedStationBand = selectedStationDetail
+    ? getQualityBand(snapshot?.variable_code ?? selectedVariable, selectedStationDetail.latest_value, values)
+    : null;
+
+  return (
+    <div className={`relative w-full overflow-hidden bg-[#dbe5ef] ${embedded ? 'h-full' : 'h-screen'}`}>
+      <style>{`
+        .public-glass-panel {
+          background: rgba(255,255,255,0.93);
+          backdrop-filter: blur(22px);
+          -webkit-backdrop-filter: blur(22px);
+          border: 1px solid rgba(255,255,255,0.7);
+          box-shadow: 0 12px 36px rgba(15,23,42,0.14);
+        }
+        .public-station-popup .leaflet-popup-content-wrapper {
+          border: 1px solid #dce5f1;
+          border-radius: 8px;
+          box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+        }
+        .public-station-popup .leaflet-popup-content {
+          margin: 14px;
+        }
+        .public-station-popup .leaflet-popup-tip {
+          border: 1px solid #dce5f1;
+        }
+        .public-station-value-label {
+          border: 1px solid #dce5f1;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.94);
+          color: #0f172a;
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.14);
+          font-size: 11px;
+          font-weight: 700;
+          padding: 2px 6px;
+        }
+        .public-station-value-label::before {
+          display: none;
+        }
+        .leaflet-control-zoom {
+          border: none !important;
+          box-shadow: none !important;
+        }
+        .leaflet-control-zoom a {
+          background: rgba(255,255,255,0.94) !important;
+          border: 1px solid rgba(220,229,241,0.9) !important;
+          color: #334155 !important;
+        }
+        @media (max-width: 1023px) {
+          .public-dashboard-shell {
+            overflow: auto;
+          }
+          .public-map-canvas {
+            position: relative !important;
+            height: 62vh !important;
+          }
+          .public-left-panel,
+          .public-right-panel,
+          .public-legend-panel {
+            position: relative !important;
+            inset: auto !important;
+            width: auto !important;
+            transform: none !important;
+            margin: 12px;
+          }
+        }
+      `}</style>
+
+      <div ref={mapContainerRef} className="public-map-canvas absolute inset-0 z-0 h-full w-full" />
+
+      <div className="public-dashboard-shell pointer-events-none absolute inset-0 z-[500]">
+        <aside className="public-left-panel public-glass-panel pointer-events-auto absolute bottom-4 left-4 top-4 flex w-[316px] flex-col overflow-x-hidden overflow-y-auto rounded-[20px]">
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#509EE3]">
+                <Activity className="h-5 w-5 text-white" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-sm font-extrabold tracking-tight text-slate-950">ATMOS · REMMAQ</h1>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">Quito Air Quality</p>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+              <span>Consulta: {formatDateTime(lastFetchedAt)}</span>
+              <Button variant="ghost" size="sm" onClick={() => void loadSnapshot(true)} disabled={loading} className="h-7 gap-1 px-2 text-xs">
+                {loading ? 'Actualizando...' : 'Actualizar'}
+              </Button>
+            </div>
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4 text-center">
+            <SemiGauge
+              value={displayMean}
+              variableCode={snapshot?.variable_code ?? selectedVariable}
+              unit={snapshot?.unit}
+              band={cityBand}
+            />
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Condiciones actuales</div>
+            <div className="grid grid-cols-4 gap-2">
+              {METEO_CELLS.map(({ code, icon: Icon, label }) => {
+                const meteo = snapshot?.meteorology.find((item) => item.variable_code === code);
+                return (
+                  <div key={code} className="flex min-w-0 flex-col items-center gap-1 rounded-lg bg-[#F9FBFC] px-1 py-2 text-center">
+                    <Icon className="h-4 w-4 text-[#509EE3]" />
+                    <div className="max-w-full truncate text-sm font-bold text-slate-950">
+                      {formatVariableValue(meteo?.latest_value ?? meteo?.mean_value, code, meteo?.unit)}
+                    </div>
+                    <div className="text-[9px] text-slate-400">{label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 flex items-center gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Alertas relativas</span>
+              <Badge className="ml-auto bg-red-50 text-red-600 hover:bg-red-50">{topRelativeStations.length}</Badge>
+            </div>
+            <div className="space-y-2">
+              {topRelativeStations.length > 0 ? (
+                topRelativeStations.map((station) => {
+                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.mean_value, values);
+                  return (
+                    <button
+                      key={station.station_code}
+                      type="button"
+                      onClick={() => setSelectedStation(station.station_code)}
+                      className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs"
+                      style={{ backgroundColor: band.background, color: band.color }}
+                    >
+                      <span className="font-medium">{station.station_name}</span>
+                      <span className="font-bold">{formatVariableValue(station.mean_value, snapshot?.variable_code, snapshot?.unit)}</span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500">Sin estaciones para evaluar.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-auto px-5 py-4">
+            <div className="mb-3 flex items-center gap-2">
+              <Gauge className="h-3.5 w-3.5 text-[#509EE3]" />
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Controles</span>
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label className="text-[11px] text-slate-500">Variable</Label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(variableOptions.length > 0 ? variableOptions : [{ code: DEFAULT_VARIABLE, name: DEFAULT_VARIABLE, category: 'pollutant', unit: null }]).map((variable) => (
+                    <button
+                      key={variable.code}
+                      type="button"
+                      onClick={() => setSelectedVariable(variable.code)}
+                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${
+                        selectedVariable === variable.code
+                          ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
+                          : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
+                      }`}
+                    >
+                      {getVariableLabel(variable.code)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[11px] text-slate-500">Rango</Label>
+                <div className="grid grid-cols-5 gap-1.5">
+                  {RANGE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setRangePreset(option.value)}
+                      title={RANGE_LABELS[option.value]}
+                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${
+                        rangePreset === option.value
+                          ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
+                          : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {rangePreset === 'today' ? (
+                <div className="space-y-2">
+                  <Label className="text-[11px] text-slate-500">Hora</Label>
+                  <div className="grid max-h-20 grid-cols-6 gap-1 overflow-y-auto pr-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedHour(ALL_STATIONS)}
+                      className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${
+                        selectedHour === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                      }`}
+                    >
+                      Todas
+                    </button>
+                    {HOUR_OPTIONS.map((hour) => (
+                      <button
+                        key={hour}
+                        type="button"
+                        onClick={() => setSelectedHour(String(hour))}
+                        className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${
+                          selectedHour === String(hour) ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                        }`}
+                      >
+                        {String(hour).padStart(2, '0')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <div className="space-y-2">
+                <Label className="text-[11px] text-slate-500">Estacion</Label>
+                <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStation(ALL_STATIONS)}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                      selectedStation === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                    }`}
+                  >
+                    Todas
+                  </button>
+                  {stationOptions.map((station) => (
+                    <button
+                      key={station.code}
+                      type="button"
+                      onClick={() => setSelectedStation(station.code)}
+                      className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
+                        selectedStation === station.code ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                      }`}
+                    >
+                      {station.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-2 rounded-lg bg-white/70 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="surface-layer" className="text-xs text-slate-600">Mapa de calor IDW</Label>
+                  <Switch id="surface-layer" checked={showSurface} onCheckedChange={setShowSurface} />
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="station-layer" className="text-xs text-slate-600">Estaciones observadas</Label>
+                  <Switch id="station-layer" checked={showStations} onCheckedChange={setShowStations} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <aside className="public-right-panel public-glass-panel pointer-events-auto absolute bottom-4 right-4 top-4 flex w-[360px] flex-col overflow-y-auto rounded-[20px]">
+          {selectedStationDetail ? (
+            <StationDetailPanel
+              station={selectedStationDetail}
+              selectedVariable={snapshot?.variable_code ?? selectedVariable}
+              unit={snapshot?.unit}
+              band={selectedStationBand}
+              onClose={() => setSelectedStation(ALL_STATIONS)}
+            />
+          ) : (
+            <>
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-extrabold text-slate-950">Resumen operativo</h2>
+                <p className="mt-1 text-[11px] text-slate-400">{RANGE_LABELS[rangePreset]} · {snapshot?.station_count ?? 0} estaciones</p>
+              </div>
+              {showLoginAction && onGoToLogin ? (
+                <Button onClick={onGoToLogin} size="sm" className="h-8 gap-1 bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
+                  <LogIn className="h-3.5 w-3.5" />
+                  Ingresar
+                </Button>
+              ) : null}
+            </div>
+            {error ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Trazabilidad de carga</div>
+            <div className="grid gap-2 text-xs text-slate-600">
+              <TraceRow label="Estado sync" value={snapshot?.sync?.status ?? 'unknown'} />
+              <TraceRow label="Corrida inicio" value={formatDateTime(snapshot?.sync?.latest_run_started_at)} />
+              <TraceRow label="Corrida fin" value={formatDateTime(snapshot?.sync?.latest_run_finished_at)} />
+              <TraceRow label="Fuente descargada" value={formatDateTime(snapshot?.sync?.latest_source_downloaded_at)} />
+              <TraceRow label="Fuente procesada" value={formatDateTime(snapshot?.sync?.latest_source_processed_at)} />
+              <TraceRow label="Ultima ingesta" value={formatDateTime(latestIngestedAt)} />
+              <TraceRow label="Registros hoy" value={`${snapshot?.sync?.records_today ?? snapshot?.today_observation_count ?? 0}`} />
+              <TraceRow label="Insertados / actualizados" value={`${snapshot?.sync?.records_inserted ?? 0} / ${snapshot?.sync?.records_updated ?? 0}`} />
+            </div>
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Tendencia y ranking</div>
+            <div className="h-40">
+              {chartData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ left: -18, right: 6, top: 4, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="publicTrendMean" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#509EE3" stopOpacity={0.22} />
+                        <stop offset="95%" stopColor="#509EE3" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(203,213,225,0.55)" />
+                    <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#94a3b8' }} minTickGap={28} />
+                    <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="mean" stroke="#509EE3" strokeWidth={2} fill="url(#publicTrendMean)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-xs text-slate-500">
+                  Sin serie disponible para este rango.
+                </div>
+              )}
+            </div>
+            <div className="mt-4 space-y-3">
+              {stationComparison.slice(0, 5).map((station) => {
+                const width = selectedMax && selectedMax > 0 ? Math.min((station.mean / selectedMax) * 100, 100) : 0;
+                return (
+                  <div key={station.station}>
+                    <div className="mb-1 flex justify-between text-[11px] text-slate-500">
+                      <span>{station.station}</span>
+                      <strong className="text-slate-800">{station.mean}</strong>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                      <div className="h-full rounded-full bg-[#509EE3]" style={{ width: `${width}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Variables REMMAQ</span>
+              <Badge className={coveragePercent === 100 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}>
+                {coveragePercent}%
+              </Badge>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">{summarizeAvailability(variableSummaries)}</p>
+            <div className="grid gap-2">
+              {variableSummaries.map((summary) => (
+                <div
+                  key={summary.variable_code}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${
+                    selectedVariable === summary.variable_code ? 'border-[#509EE3] bg-[#EDF6FF]' : 'border-slate-200 bg-white/70'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedVariable(summary.variable_code)}
+                      className="min-w-0 text-left"
+                    >
+                      <span className="block truncate text-xs font-bold text-slate-900">{getVariableLabel(summary.variable_code)}</span>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge className={summary.sample_count > 0 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}>
+                        {summary.sample_count > 0 ? 'datos' : 'sin datos'}
+                      </Badge>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedVariableInfo((current) => (current === summary.variable_code ? null : summary.variable_code))}
+                        className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                        aria-label={`Informacion de ${getVariableLabel(summary.variable_code)}`}
+                      >
+                        <Info className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedVariable(summary.variable_code)}
+                    className="mt-1 block w-full text-left text-[11px] text-slate-500"
+                  >
+                    {summary.sample_count > 0
+                      ? `${formatVariableValue(summary.mean_value, summary.variable_code, summary.unit)} ${getUnitLabel(summary.unit)} | ${summary.station_count} estaciones`
+                      : 'Sin datos'}
+                  </button>
+                  <p className="mt-1 text-[10px] text-slate-400">
+                    Ultima presencia: {formatDateTime(summary.latest_observed_at ?? summary.latest_available_at)}
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Hoy: {summary.today_sample_count} | Total historico: {summary.total_sample_count}
+                  </p>
+                  {expandedVariableInfo === summary.variable_code ? (
+                    <div className="mt-2 rounded-md bg-white/75 p-2 text-[11px] leading-relaxed text-slate-600">
+                      <p>{VARIABLE_HELP[summary.variable_code] ?? summary.variable_name}</p>
+                      <p className="mt-1 font-medium text-slate-700">
+                        {VARIABLE_RECOMMENDATIONS[summary.variable_code] ?? 'Use esta variable para interpretar el contexto REMMAQ seleccionado.'}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+            {missingVariableSummaries.length > 0 ? (
+              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{coverageMessage}</p>
+            ) : null}
+          </div>
+
+          <div className="border-b border-slate-200/80 px-5 py-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Snapshot de estaciones</div>
+            <div className="space-y-2">
+              {stationSnapshot.length > 0 ? (
+                stationSnapshot.map((station) => {
+                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value, values);
+                  return (
+                    <button
+                      key={station.station_code}
+                      type="button"
+                      onClick={() => setSelectedStation(station.station_code)}
+                      className="w-full rounded-lg border border-slate-200 bg-white/70 p-3 text-left"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold text-slate-950">{station.station_name}</p>
+                          <p className="text-[10px] uppercase text-slate-400">{station.station_code}</p>
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: band.color }}>
+                          {formatVariableValue(station.latest_value, snapshot?.variable_code, station.unit)}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[10px] text-slate-500">Ultima lectura: {formatDateTime(station.latest_observed_at)}</p>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">No hay estaciones para el rango seleccionado.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="px-5 py-4">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Resumen tecnico</div>
+            <div className="grid grid-cols-3 gap-2">
+              <MiniStat label="MAX" value={formatVariableValue(periodSummary?.max_value, snapshot?.variable_code, periodUnit)} />
+              <MiniStat label="AVG" value={formatVariableValue(periodSummary?.avg_value, snapshot?.variable_code, periodUnit)} />
+              <MiniStat label="RDS" value={`${periodSummary?.rds ?? 0}`} />
+            </div>
+            <div className="mt-3 grid gap-3">
+              <div className="h-32 rounded-lg bg-white/60 p-2">
+                {histogramData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={histogramData} margin={{ left: -18, right: 4, top: 4, bottom: 0 }}>
+                      <XAxis dataKey="range" tick={{ fontSize: 8, fill: '#94a3b8' }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 8, fill: '#94a3b8' }} />
+                      <Tooltip />
+                      <Bar dataKey="stations" fill="#509EE3" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center text-xs text-slate-500">Sin distribucion.</div>
+                )}
+              </div>
+              <div className="max-h-44 overflow-auto rounded-lg bg-white/60 p-2">
+                <table className="w-full text-[10px]">
+                  <thead className="text-left text-slate-400">
+                    <tr>
+                      <th className="py-1">Estacion</th>
+                      {stationMatrixCodes.slice(0, 4).map((code) => (
+                        <th key={code} className="py-1">{getVariableLabel(code)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stationMatrixRows.slice(0, 5).map(({ station, values: rowValues }) => (
+                      <tr key={station.station_code} className="border-t border-slate-100">
+                        <td className="py-1 pr-2 font-medium text-slate-700">{station.station_name}</td>
+                        {rowValues.slice(0, 4).map((item, index) => (
+                          <td key={item?.variable_code ?? index} className="py-1 text-slate-500">
+                            {item ? formatVariableValue(item.value, item.variable_code, item.unit) : '-'}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+            </>
+          )}
+        </aside>
+
+        <div className="public-legend-panel public-glass-panel pointer-events-auto absolute bottom-6 left-1/2 z-[520] w-[min(760px,calc(100%-2rem))] -translate-x-1/2 rounded-full px-5 py-3">
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <span className="mr-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">{idwLegend.scaleLabel}</span>
+            <div className="h-2 w-40 rounded-full bg-[linear-gradient(90deg,#2e7d32,#fde047,#b91c1c)]" />
+            <span className="text-[11px] text-slate-500">{idwLegend.lowLabel}</span>
+            <span className="text-[11px] text-slate-500">{idwLegend.midLabel}</span>
+            <span className="text-[11px] text-slate-500">{idwLegend.highLabel}</span>
+          </div>
+          <p className="mt-1 text-center text-[10px] text-slate-400">{idwLegend.description}</p>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-[#F7FAFC]">
@@ -913,8 +1474,7 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="outline" onClick={() => void loadSnapshot(true)} disabled={loading} className="gap-2">
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              Actualizar
+              {loading ? 'Actualizando...' : 'Actualizar'}
             </Button>
             <Button onClick={onGoToLogin} className="gap-2 bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
               <LogIn className="h-4 w-4" />
@@ -937,7 +1497,7 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
                 <span className="text-sm font-normal">{getUnitLabel(snapshot?.unit)}</span>
               </p>
               <p className="text-xs text-muted-foreground">Promedio actual de {getVariableLabel(snapshot?.variable_code ?? selectedVariable)}</p>
-              {cityBand ? <p className="mt-2 text-xs font-medium" style={{ color: cityBand.color }}>{cityBand.label}</p> : null}
+              {cityBand ? <p className="mt-2 text-xs font-medium" style={{ color: cityBand?.color ?? '#509EE3' }}>{cityBand?.label}</p> : null}
             </CardContent>
           </Card>
 
@@ -1188,9 +1748,13 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
                   {cityBand ? (
                     <Badge
                       className="mt-3 border"
-                      style={{ color: cityBand.color, backgroundColor: cityBand.background, borderColor: cityBand.color }}
+                      style={{
+                        color: cityBand?.color ?? '#509EE3',
+                        backgroundColor: cityBand?.background ?? '#EDF6FF',
+                        borderColor: cityBand?.color ?? '#509EE3',
+                      }}
                     >
-                      {cityBand.label}
+                      {cityBand?.label}
                     </Badge>
                   ) : null}
                 </CardContent>
@@ -1466,7 +2030,7 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
               {(snapshot?.meteorology ?? []).map((item) => (
                 <MeteorologyItem key={item.variable_code} item={item} />
               ))}
-              {!snapshot || snapshot.meteorology.length === 0 ? (
+              {(snapshot?.meteorology.length ?? 0) === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   {error ? 'Conecta el backend actualizado para ver meteorologia.' : 'La base local no tiene variables meteorologicas cargadas para este rango.'}
                 </p>
@@ -1622,6 +2186,223 @@ export function PublicDashboard({ onGoToLogin }: PublicDashboardProps) {
           <VariableGroupCard title="Meteorología" summaries={meteorologySummaries} />
         </section>
       </main>
+    </div>
+  );
+}
+
+function TraceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-lg bg-white/60 px-3 py-2">
+      <span className="text-slate-400">{label}</span>
+      <span className="text-right font-semibold text-slate-700">{value}</span>
+    </div>
+  );
+}
+
+function gaugeMaxForVariable(variableCode: string) {
+  if (variableCode === 'PM25') return 50;
+  if (variableCode === 'PM10') return 150;
+  if (variableCode === 'NO2') return 200;
+  if (variableCode === 'O3') return 200;
+  if (variableCode === 'SO2') return 100;
+  if (variableCode === 'CO') return 10;
+  return 100;
+}
+
+function SemiGauge({
+  value,
+  variableCode,
+  unit,
+  band,
+}: {
+  value: number | null | undefined;
+  variableCode: string;
+  unit: string | null | undefined;
+  band: QualityBand | null;
+}) {
+  const numericValue = Number.isFinite(value ?? NaN) ? Number(value) : 0;
+  const max = gaugeMaxForVariable(variableCode);
+  const pct = Math.max(0, Math.min(numericValue / max, 1));
+  const cx = 88;
+  const cy = 86;
+  const radius = 68;
+  const toPoint = (angle: number, r = radius) => ({
+    x: cx + r * Math.cos(angle),
+    y: cy + r * Math.sin(angle),
+  });
+  const arcPath = (start: number, end: number, r = radius) => {
+    const startPoint = toPoint(start, r);
+    const endPoint = toPoint(end, r);
+    return `M ${startPoint.x} ${startPoint.y} A ${r} ${r} 0 ${end - start > Math.PI ? 1 : 0} 1 ${endPoint.x} ${endPoint.y}`;
+  };
+  const startAngle = Math.PI;
+  const endAngle = Math.PI * 2;
+  const valueAngle = startAngle + pct * Math.PI;
+  const color = band?.color ?? '#EAB308';
+  const segmentColors = ['#BDECCF', '#FDE7B9', '#FED3BF', '#E8C7F4', '#D7B5B4'];
+
+  return (
+    <div className="flex flex-col items-center">
+      <svg width="176" height="112" viewBox="0 0 176 112" aria-hidden="true">
+        {segmentColors.map((segmentColor, index) => {
+          const segmentStart = startAngle + (index / segmentColors.length) * Math.PI;
+          const segmentEnd = startAngle + ((index + 0.78) / segmentColors.length) * Math.PI;
+          const dot = toPoint(segmentStart + 0.08, radius + 9);
+          return (
+            <g key={segmentColor}>
+              <path
+                d={arcPath(segmentStart, segmentEnd, radius + 9)}
+                fill="none"
+                stroke={segmentColor}
+                strokeWidth="7"
+                strokeLinecap="round"
+                opacity="0.72"
+              />
+              <circle cx={dot.x} cy={dot.y} r="3.5" fill={segmentColor} opacity="0.95" />
+            </g>
+          );
+        })}
+        <path d={arcPath(startAngle, endAngle)} fill="none" stroke="#E5E7EB" strokeWidth="16" strokeLinecap="round" />
+        {numericValue > 0 ? (
+          <path d={arcPath(startAngle, valueAngle)} fill="none" stroke={color} strokeWidth="16" strokeLinecap="round" />
+        ) : null}
+        <line
+          x1={cx}
+          y1={cy}
+          x2={cx + (radius - 18) * Math.cos(valueAngle)}
+          y2={cy + (radius - 18) * Math.sin(valueAngle)}
+          stroke={color}
+          strokeWidth="4"
+          strokeLinecap="round"
+        />
+        <circle cx={cx} cy={cy} r="8" fill={color} />
+      </svg>
+      <div className="-mt-2 text-center">
+        <div className="text-5xl font-extrabold leading-none" style={{ color }}>
+          {formatVariableValue(value, variableCode, unit)}
+        </div>
+        <div className="mt-1 text-sm font-extrabold uppercase tracking-[0.08em]" style={{ color }}>
+          {band?.label ?? 'Sin datos'}
+        </div>
+        <div className="mt-2 text-xs font-semibold text-slate-400">
+          {getVariableLabel(variableCode)} — Quito Metropolitano
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StationDetailPanel({
+  station,
+  selectedVariable,
+  unit,
+  band,
+  onClose,
+}: {
+  station: PublicStationObservation;
+  selectedVariable: string;
+  unit: string | null | undefined;
+  band: QualityBand | null;
+  onClose: () => void;
+}) {
+  const pollutantValues = (station.variables ?? []).filter((item) => item.category === 'pollutant');
+  const meteorologyValues = (station.variables ?? []).filter((item) => item.category === 'meteorological');
+  const limits: Record<string, number> = { PM25: 25, PM10: 50, NO2: 40, O3: 70, CO: 10, SO2: 20 };
+  const radarData = ['PM25', 'PM10', 'NO2', 'O3', 'CO', 'SO2']
+    .map((code) => {
+      const item = pollutantValues.find((candidate) => candidate.variable_code === code);
+      if (!item) return null;
+      const current = code === 'CO' ? item.value * 10 : item.value;
+      return {
+        subject: code === 'CO' ? 'CO×10' : getVariableLabel(code),
+        current,
+        limit: limits[code] ?? current,
+      };
+    })
+    .filter((item): item is { subject: string; current: number; limit: number } => item !== null);
+
+  return (
+    <>
+      <div className="border-b border-slate-200/80 px-5 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-extrabold text-slate-950">{station.station_name}</h2>
+            <p className="mt-1 flex items-center gap-2 text-sm font-bold" style={{ color: band?.color ?? '#509EE3' }}>
+              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: band?.color ?? '#509EE3' }} />
+              {getVariableLabel(selectedVariable)} {formatVariableValue(station.latest_value, selectedVariable, unit)} · {band?.label ?? 'Sin clasificar'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 hover:bg-slate-200"
+            aria-label="Volver a todas las estaciones"
+          >
+            <X className="h-6 w-6" />
+          </button>
+        </div>
+      </div>
+
+      <div className="border-b border-slate-200/80 px-5 py-4">
+        <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Pollutant profile</div>
+        <div className="h-56">
+          {radarData.length > 2 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <RadarChart data={radarData} outerRadius={78}>
+                <PolarGrid stroke="#E5E7EB" />
+                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
+                <Radar name="Current" dataKey="current" stroke="#509EE3" fill="#509EE3" fillOpacity={0.22} strokeWidth={2} />
+                <Radar name="Limit" dataKey="limit" stroke="#EF4444" fill="transparent" strokeWidth={1.5} strokeDasharray="4 3" />
+                <Legend iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+              </RadarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-xs text-slate-500">
+              Sin suficientes contaminantes para el perfil.
+            </div>
+          )}
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {pollutantValues.map((item) => (
+            <div key={item.variable_code} className="rounded-xl bg-[#F9FBFC] p-3">
+              <div className="text-xs font-bold text-slate-400">{getVariableLabel(item.variable_code)}</div>
+              <div className="mt-2 text-2xl font-extrabold leading-none text-slate-950">
+                {formatVariableValue(item.value, item.variable_code, item.unit)}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-300">{getUnitLabel(item.unit)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="px-5 py-4">
+        <div className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Meteorology</div>
+        <div className="grid grid-cols-2 gap-2">
+          {meteorologyValues.map((item) => (
+            <div key={item.variable_code} className="rounded-xl bg-[#F9FBFC] p-4">
+              <div className="text-sm text-slate-400">{item.variable_name}</div>
+              <div className="mt-2 text-xl font-extrabold text-slate-700">
+                {formatVariableValue(item.value, item.variable_code, item.unit)} {getUnitLabel(item.unit)}
+              </div>
+            </div>
+          ))}
+          {meteorologyValues.length === 0 ? (
+            <p className="col-span-2 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">Sin meteorologia reciente para esta estacion.</p>
+          ) : null}
+        </div>
+        <div className="mt-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-500">
+          Ultima lectura de {getVariableLabel(selectedVariable)}: {formatDateTime(station.latest_observed_at)} · {station.sample_count} muestras en el rango.
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white/70 px-3 py-2 text-center">
+      <div className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">{label}</div>
+      <div className="mt-1 truncate text-sm font-extrabold text-slate-900">{value}</div>
     </div>
   );
 }

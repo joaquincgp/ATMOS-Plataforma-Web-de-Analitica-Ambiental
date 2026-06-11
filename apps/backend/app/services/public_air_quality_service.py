@@ -381,7 +381,7 @@ def _resolve_window(
         if normalized_period == "latest":
             return _hour_window(anchor)
         if normalized_period == "today":
-            anchor_day = datetime.now(PUBLIC_LOCAL_TZ).date()
+            anchor_day = anchor.date()
             if hour is not None:
                 bounded_hour = max(0, min(23, hour))
                 start = datetime.combine(anchor_day, time(hour=bounded_hour))
@@ -440,9 +440,6 @@ def _load_anchor_observed_at(
         anchor_statement = _apply_selector(anchor_statement, selector)
     anchor_statement = _apply_station_filter(anchor_statement, station_ids)
     anchor = db.scalar(anchor_statement)
-    if anchor is None and selector is not None:
-        fallback = _apply_station_filter(select(func.max(Measurement.observed_at)), station_ids)
-        anchor = db.scalar(fallback)
     return anchor
 
 
@@ -817,6 +814,9 @@ def _load_variable_summaries(
         variable_window = window
         if normalized_period == "latest" and global_latest_row is not None:
             variable_window = _hour_window(global_latest_row.observed_at)
+        elif normalized_period == "today" and global_latest_row is not None:
+            start = datetime.combine(global_latest_row.observed_at.date(), time.min)
+            variable_window = PublicAirQualityWindow(start=start, end=start + timedelta(days=1))
         elif normalized_period == "72h" and global_latest_row is not None:
             variable_window = PublicAirQualityWindow(
                 start=global_latest_row.observed_at - timedelta(hours=72) + timedelta(seconds=1),
