@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
+import atmosLogo from '@/assets/brand/atmos-logo.png';
 import { LogIn } from 'lucide-react';
 
 interface LandingPageProps {
@@ -79,7 +80,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
         this.amplitude = Math.random() * 50 + 30;
         this.frequency = Math.random() * 0.01 + 0.005;
         this.opacity = Math.random() * 0.2 + 0.1;
-        
+
         // Create initial points
         for (let x = 0; x <= canvasEl.width; x += 20) {
           this.points.push({
@@ -106,7 +107,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(this.points[0].x, this.points[0].y);
-        
+
         for (let i = 1; i < this.points.length; i++) {
           ctx.lineTo(this.points[i].x, this.points[i].y);
         }
@@ -163,11 +164,17 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
 
       {/* Navigation Header */}
       <header className="relative z-10 px-8 py-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-black text-foreground tracking-tight">ATMOS</h1>
-          <p className="text-[9pt] font-light text-[#6B7280] mt-0.5">
-            Environmental Research and Data Analytics Platform
-          </p>
+        <div className="flex items-center gap-3">
+          <img src={atmosLogo} alt="ATMOS" className="h-14 w-14 object-contain" decoding="async" />
+          <div>
+            <h1 className="text-3xl font-black text-foreground tracking-tight">ATMOS</h1>
+            <p className="text-[12pt] font-light text-[#6B7280] mt-0.5">
+              Atmospheric Time-Series Modeling and Observation System
+            </p>
+            <p className="text-[10pt] font-light text-[#6B7280] mt-0.5">
+              Plataforma de Investigación Ambiental Académica y Analítica de Datos
+            </p>
+          </div>
         </div>
 
         <Button
@@ -202,7 +209,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
               className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white text-lg px-12 py-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105"
               size="lg"
             >
-              Explorar
+              Explorar mapa
             </Button>
           </div>
 
@@ -216,7 +223,7 @@ export function LandingPage({ onExplore, onLogin }: LandingPageProps) {
               </div>
               <h3 className="font-semibold text-foreground mb-2">Datos en Vivo</h3>
               <p className="text-sm text-muted-foreground">
-                Mediciones actualizadas de estaciones de monitoreo en Quito
+                Mediciones actualizadas de estaciones de la Red Metropolitana de Monitoreo de la Calidad del Aire de Quito
               </p>
             </div>
 

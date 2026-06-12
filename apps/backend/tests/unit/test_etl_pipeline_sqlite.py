@@ -139,7 +139,7 @@ def test_extract_remmaq_dataframe_filters_rows_and_reports_empty_ranges(db_sessi
     )
     monkeypatch.setattr(service, "_download_binary", lambda _url: (b"station,value\nA,1\n", "pm25.csv"))
     monkeypatch.setattr(service, "_extract_input_file", lambda _path, _checksum: extracted_dir)
-    monkeypatch.setattr(service, "_extract_rows_from_directory", lambda _path: rows)
+    monkeypatch.setattr(service, "_extract_rows_from_directory", lambda _path, **_kwargs: rows)
 
     frame, archives = service.extract_remmaq_dataframe(
         variable_codes=["PM25"],

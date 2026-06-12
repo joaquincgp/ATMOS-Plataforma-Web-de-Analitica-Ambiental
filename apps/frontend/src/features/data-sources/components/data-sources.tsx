@@ -36,6 +36,7 @@ import { useWorkspace } from '@/contexts/workspace-context';
 import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import { ManualDataIngestionWizard } from '@/features/data-sources/components/manual-data-ingestion-wizard';
 import { useEtl } from '@/hooks/use-etl';
+import { formatEcuadorDateTime, parseBackendDateInEcuador } from '@/shared/lib/datetime';
 
 const MAX_REMMAQ_VARIABLES = 3;
 
@@ -135,8 +136,10 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
   const [manualDatasetsError, setManualDatasetsError] = useState<string | null>(null);
   const [selectedExistingDatasetId, setSelectedExistingDatasetId] = useState<string | null>(null);
   const [deletingDatasetId, setDeletingDatasetId] = useState<string | null>(null);
+  const [clearingRunHistory, setClearingRunHistory] = useState(false);
 
-  const { runs, currentRun, metrics, previewRows, loading, refreshing, error, triggerRemmaqSync } = useEtl();
+  const { runs, currentRun, metrics, previewRows, loading, refreshing, error, triggerRemmaqSync, clearRunHistory } =
+    useEtl();
   const { activeWorkspaceId } = useWorkspace();
   const {
     setSelectedSourceIds,
@@ -180,7 +183,8 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
     setManualDatasets((current) => {
       const withoutCurrent = current.filter((dataset) => dataset.id !== nextDataset.id);
       return [nextDataset, ...withoutCurrent].sort(
-        (left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+        (left, right) =>
+          parseBackendDateInEcuador(right.updated_at).getTime() - parseBackendDateInEcuador(left.updated_at).getTime(),
       );
     });
   }, []);
@@ -530,6 +534,27 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
     }
   };
 
+  const handleClearRunHistory = async () => {
+    const confirmed = window.confirm('Clear REMMAQ sync history from Data Manager? Loaded data will not be deleted.');
+    if (!confirmed) {
+      return;
+    }
+
+    setClearingRunHistory(true);
+    setActionMessage(null);
+    try {
+      const cleared = await clearRunHistory();
+      setActionMessage({ type: 'success', text: `Cleared ${cleared.toLocaleString()} history entries.` });
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Could not clear ETL history.',
+      });
+    } finally {
+      setClearingRunHistory(false);
+    }
+  };
+
   return (
     <div className="h-full overflow-y-auto bg-[#F9FBFC]">
       <div className="px-6 py-5">
@@ -638,6 +663,8 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
               runs={runs}
               latestRun={latestRun}
               loading={loading}
+              clearingRunHistory={clearingRunHistory}
+              onClearRunHistory={handleClearRunHistory}
               previewRows={previewRows}
               existingRows={managerRows}
             />
@@ -1029,6 +1056,8 @@ function SummaryContent({
   runs,
   latestRun,
   loading,
+  clearingRunHistory,
+  onClearRunHistory,
   previewRows,
   existingRows,
 }: {
@@ -1038,6 +1067,8 @@ function SummaryContent({
   runs: EtlRunResponse[];
   latestRun: EtlRunResponse | null;
   loading: boolean;
+  clearingRunHistory: boolean;
+  onClearRunHistory: () => Promise<void>;
   previewRows: EtlPreviewRowResponse[];
   existingRows: AnalyticsDataRow[];
 }) {
@@ -1050,7 +1081,16 @@ function SummaryContent({
   }
 
   if (sourceType === 'sync') {
-    return <RunSummaryStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />;
+    return (
+      <RunSummaryStep
+        runs={runs}
+        latestRun={latestRun}
+        loading={loading}
+        clearingRunHistory={clearingRunHistory}
+        onClearRunHistory={onClearRunHistory}
+        previewRows={previewRows}
+      />
+    );
   }
 
   if (sourceType === 'existing' && existingDataset) {
@@ -1061,7 +1101,16 @@ function SummaryContent({
     return <ExistingQuerySummary rows={existingRows} />;
   }
 
-  return <RunSummaryStep runs={runs} latestRun={latestRun} loading={loading} previewRows={previewRows} />;
+  return (
+    <RunSummaryStep
+      runs={runs}
+      latestRun={latestRun}
+      loading={loading}
+      clearingRunHistory={clearingRunHistory}
+      onClearRunHistory={onClearRunHistory}
+      previewRows={previewRows}
+    />
+  );
 }
 
 function SourceCard({
@@ -1320,7 +1369,7 @@ function ExistingDataPanel({
               ) : (
                 rows.map((row, index) => (
                   <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b last:border-0">
-                    <td className="whitespace-nowrap px-3 py-2">{new Date(row.observed_at).toLocaleString()}</td>
+                    <td className="whitespace-nowrap px-3 py-2">{formatEcuadorDateTime(row.observed_at)}</td>
                     <td className="px-3 py-2">{row.station_code}</td>
                     <td className="px-3 py-2">{row.variable_name || row.variable_code}</td>
                     <td className="px-3 py-2">{row.value}</td>
@@ -1438,23 +1487,73 @@ function MetricCard({ label, value, hint }: { label: string; value: string; hint
   );
 }
 
+const getRunDetailString = (run: EtlRunResponse, key: string) => {
+  const value = run.details[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+};
+
+const getRunVariables = (run: EtlRunResponse) => {
+  const value = run.details.selected_variables;
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+};
+
+const formatRunVariables = (run: EtlRunResponse) => {
+  const variables = getRunVariables(run);
+  return variables.length > 0 ? variables.join(', ') : '-';
+};
+
+const formatRunDateRange = (run: EtlRunResponse) => {
+  const observedFrom = getRunDetailString(run, 'observed_from');
+  const observedTo = getRunDetailString(run, 'observed_to');
+  if (observedFrom && observedTo) return `${observedFrom} to ${observedTo}`;
+  if (observedFrom) return `From ${observedFrom}`;
+  if (observedTo) return `Until ${observedTo}`;
+  return 'All available dates';
+};
+
 function RunSummaryStep({
   runs,
   latestRun,
   loading,
+  clearingRunHistory,
+  onClearRunHistory,
   previewRows,
 }: {
   runs: EtlRunResponse[];
   latestRun: EtlRunResponse | null;
   loading: boolean;
+  clearingRunHistory: boolean;
+  onClearRunHistory: () => Promise<void>;
   previewRows: EtlPreviewRowResponse[];
 }) {
+  const latestRunVariables = latestRun ? formatRunVariables(latestRun) : '-';
+  const latestRunDateRange = latestRun ? formatRunDateRange(latestRun) : '-';
+
   return (
     <div className="space-y-6">
       <Card className="bg-white">
         <CardHeader>
-          <CardTitle>Summary</CardTitle>
-          <CardDescription>Review recent runs and preview rows.</CardDescription>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle>Summary</CardTitle>
+              <CardDescription>Review user REMMAQ syncs and preview rows.</CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void onClearRunHistory()}
+              disabled={clearingRunHistory || loading || runs.length === 0}
+              className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              {clearingRunHistory ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+              Clear history
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loading && <p className="text-sm text-muted-foreground">Loading runs...</p>}
@@ -1478,6 +1577,14 @@ function RunSummaryStep({
                 Inserted: {latestRun.records_inserted} | Updated: {latestRun.records_updated} | Skipped:{' '}
                 {latestRun.records_skipped}
               </p>
+              <div className="mt-3 grid gap-3 text-xs text-muted-foreground md:grid-cols-2">
+                <div>
+                  <span className="font-medium text-foreground">Variables:</span> {latestRunVariables}
+                </div>
+                <div>
+                  <span className="font-medium text-foreground">Date range:</span> {latestRunDateRange}
+                </div>
+              </div>
             </div>
           )}
 
@@ -1488,6 +1595,8 @@ function RunSummaryStep({
                   <tr>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Run ID</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Started</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Variables</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Date range</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Inserted</th>
                     <th className="px-4 py-3 text-left font-medium text-muted-foreground">Updated</th>
@@ -1498,7 +1607,9 @@ function RunSummaryStep({
                   {runs.map((run) => (
                     <tr key={run.id} className="border-b border-border hover:bg-[#F9FBFC]/50">
                       <td className="px-4 py-3 font-mono text-xs">{run.id.slice(0, 8)}...</td>
-                      <td className="px-4 py-3">{new Date(run.started_at).toLocaleString()}</td>
+                      <td className="px-4 py-3">{formatEcuadorDateTime(run.started_at)}</td>
+                      <td className="max-w-[180px] px-4 py-3 text-xs">{formatRunVariables(run)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs">{formatRunDateRange(run)}</td>
                       <td className="px-4 py-3">
                         <Badge variant={run.status === 'completed' ? 'outline' : 'destructive'}>{run.status}</Badge>
                       </td>
@@ -2084,8 +2195,8 @@ function MeasurementRowsTable({
             ) : (
               rows.map((row, index) => (
                 <tr key={`${row.observed_at}-${row.station_code}-${row.variable_code}-${index}`} className="border-b border-border">
-                  <td className="truncate whitespace-nowrap px-3 py-2" title={new Date(row.observed_at).toLocaleString()}>
-                    {new Date(row.observed_at).toLocaleString()}
+                  <td className="truncate whitespace-nowrap px-3 py-2" title={formatEcuadorDateTime(row.observed_at)}>
+                    {formatEcuadorDateTime(row.observed_at)}
                   </td>
                   <td className="truncate px-3 py-2" title={row.station_code}>{row.station_code}</td>
                   <td className="truncate px-3 py-2" title={row.variable_code}>{row.variable_code}</td>

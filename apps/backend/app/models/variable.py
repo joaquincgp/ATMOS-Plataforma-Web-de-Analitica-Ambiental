@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import ecuador_now_naive
 from app.models.base import Base
 
 
@@ -16,5 +17,5 @@ class Variable(Base):
     display_name: Mapped[str] = mapped_column(String(255))
     category: Mapped[str] = mapped_column(String(64), default="other")
     default_unit: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive, onupdate=ecuador_now_naive)

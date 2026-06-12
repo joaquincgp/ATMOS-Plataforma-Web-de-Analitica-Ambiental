@@ -27,6 +27,10 @@ class EtlRunResponse(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
 
+class EtlRunHistoryClearResponse(BaseModel):
+    cleared: int
+
+
 class EtlMetricsResponse(BaseModel):
     total_measurements: int
     total_stations: int

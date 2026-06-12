@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_USER, Measurement
 from app.models.source_file import SourceFile
 from app.models.user import User
 from app.models.workspace import Workspace
@@ -262,7 +262,12 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         etl_run = self.db.get(EtlRun, dataset.etl_run_id) if dataset.etl_run_id else None
 
         if source_file is not None:
-            self.db.execute(delete(Measurement).where(Measurement.source_file_id == source_file.id))
+            self.db.execute(
+                delete(Measurement).where(
+                    Measurement.source_file_id == source_file.id,
+                    Measurement.data_origin == DATA_ORIGIN_USER,
+                )
+            )
             self.db.delete(source_file)
 
         self.db.delete(dataset)

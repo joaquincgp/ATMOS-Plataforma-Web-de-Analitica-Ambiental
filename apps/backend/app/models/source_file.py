@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.time import ecuador_now_naive
 from app.models.base import Base
 
 
@@ -20,7 +21,7 @@ class SourceFile(Base):
     extracted_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     checksum_sha256: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(32), index=True)
-    downloaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    downloaded_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     row_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)

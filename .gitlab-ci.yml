@@ -5,15 +5,14 @@
 # - feat/*
 # - merge requests targeting the project
 #
-# Deployment is intentionally not enabled yet. The pipeline validates quality,
-# tests, coverage and build artifacts so Azure deployment can be added later
-# without changing the quality gates.
+# Azure deployment runs only from main. feat/* branches run validation, tests,
+# build, and package jobs so changes are visible before merging.
 
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH =~ /^feat\/.+$/'
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+    - if: '$CI_COMMIT_REF_NAME =~ /^feat\/.*$/'
     - when: never
 
 stages:
@@ -21,6 +20,7 @@ stages:
   - test
   - build
   - package
+  - deploy
 
 default:
   interruptible: true
@@ -37,12 +37,20 @@ variables:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   BACKEND_REPORT_DIR: "$CI_PROJECT_DIR/reports/quality/backend"
   FRONTEND_REPORT_DIR: "$CI_PROJECT_DIR/reports/quality/frontend"
+  BACKEND_IMAGE_NAME: "atmos-backend"
 
 .rules_main_feat_mr:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_BRANCH =~ /^feat\/.+$/'
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+    - if: '$CI_COMMIT_REF_NAME =~ /^feat\/.*$/'
+    - when: never
+
+.rules_deploy_main:
+  rules:
+    - if: '$CI_COMMIT_REF_NAME == "main"'
+      when: on_success
+    - when: never
 
 .cache_pip:
   cache:
@@ -228,58 +236,85 @@ frontend:package:
       - reports/quality/frontend/frontend-dist.tar.gz
     expire_in: 14 days
 
-# -----------------------------------------------------------------------------
-# Future Azure deployment jobs
-# -----------------------------------------------------------------------------
-# Deployment is intentionally disabled for now because Azure credentials are not
-# available yet. When ready, add a `deploy` stage to `stages`, uncomment the jobs
-# below and configure these GitLab CI/CD variables:
-#
-# - AZURE_CLIENT_ID
-# - AZURE_CLIENT_SECRET
-# - AZURE_TENANT_ID
-# - AZURE_SUBSCRIPTION_ID
-# - AZURE_RESOURCE_GROUP
-# - AZURE_BACKEND_APP_NAME
-# - AZURE_FRONTEND_APP_NAME
-# - VITE_API_BASE_URL
-#
-# deploy:backend:
-#   stage: deploy
-#   image: mcr.microsoft.com/azure-cli:latest
-#   needs:
-#     - job: backend:package
-#       artifacts: true
-#   rules:
-#     - if: '$CI_COMMIT_BRANCH == "main"'
-#       when: manual
-#       allow_failure: false
-#   environment:
-#     name: production/backend
-#     url: https://$AZURE_BACKEND_APP_NAME.azurewebsites.net
-#   before_script:
-#     - az login --service-principal --username "$AZURE_CLIENT_ID" --password "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" --output none
-#     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-#   script:
-#     - az webapp deploy --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_BACKEND_APP_NAME" --src-path reports/quality/backend/backend-package.zip --type zip --async false
-#
-# deploy:frontend:
-#   stage: deploy
-#   image: mcr.microsoft.com/azure-cli:latest
-#   needs:
-#     - job: frontend:build
-#       artifacts: true
-#   rules:
-#     - if: '$CI_COMMIT_BRANCH == "main"'
-#       when: manual
-#       allow_failure: false
-#   environment:
-#     name: production/frontend
-#     url: https://$AZURE_FRONTEND_APP_NAME.azurewebsites.net
-#   before_script:
-#     - az login --service-principal --username "$AZURE_CLIENT_ID" --password "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" --output none
-#     - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-#   script:
-#     - cd apps/frontend/dist
-#     - zip -r "$CI_PROJECT_DIR/frontend-deploy.zip" .
-#     - az webapp deploy --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_FRONTEND_APP_NAME" --src-path "$CI_PROJECT_DIR/frontend-deploy.zip" --type zip --async false
+deploy:backend:azure:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:latest
+  extends: .rules_deploy_main
+  needs:
+    - job: backend:package
+      artifacts: true
+  environment:
+    name: production/backend
+  before_script:
+    - az login --service-principal --username "$AZURE_CLIENT_ID" --password "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" --output none
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+    - az extension add --name containerapp --upgrade
+  script:
+    - ACR_LOGIN_SERVER="$(az acr show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_ACR_NAME" --query loginServer --output tsv)"
+    - IMAGE="$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA"
+    - az acr build --registry "$AZURE_ACR_NAME" --image "$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA" --image "$BACKEND_IMAGE_NAME:$CI_COMMIT_REF_SLUG" apps/backend
+    - |
+      if az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONTAINER_APP_NAME" >/dev/null 2>&1; then
+        az containerapp secret set \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --name "$AZURE_CONTAINER_APP_NAME" \
+          --secrets database-url="$DATABASE_URL" jwt-secret-key="$JWT_SECRET_KEY"
+        az containerapp update \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --name "$AZURE_CONTAINER_APP_NAME" \
+          --image "$IMAGE" \
+          --set-env-vars \
+            ENVIRONMENT=production \
+            API_V1_PREFIX=/api/v1 \
+            AUTO_INIT_DB_ON_STARTUP=true \
+            ETL_SYNC_DEFAULT_MAX_ARCHIVES=2 \
+            DATABASE_URL=secretref:database-url \
+            JWT_SECRET_KEY=secretref:jwt-secret-key \
+            CORS_ORIGINS="$CORS_ORIGINS"
+      else
+        az containerapp create \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --name "$AZURE_CONTAINER_APP_NAME" \
+          --environment "$AZURE_CONTAINER_ENV_NAME" \
+          --image "$IMAGE" \
+          --target-port 8000 \
+          --ingress external \
+          --min-replicas 0 \
+          --max-replicas 1 \
+          --cpu 0.5 \
+          --memory 1Gi \
+          --registry-server "$ACR_LOGIN_SERVER" \
+          --registry-username "$ACR_USERNAME" \
+          --registry-password "$ACR_PASSWORD" \
+          --secrets database-url="$DATABASE_URL" jwt-secret-key="$JWT_SECRET_KEY" \
+          --env-vars \
+            ENVIRONMENT=production \
+            API_V1_PREFIX=/api/v1 \
+            AUTO_INIT_DB_ON_STARTUP=true \
+            ETL_SYNC_DEFAULT_MAX_ARCHIVES=2 \
+            DATABASE_URL=secretref:database-url \
+            JWT_SECRET_KEY=secretref:jwt-secret-key \
+            CORS_ORIGINS="$CORS_ORIGINS"
+      fi
+    - BACKEND_FQDN="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONTAINER_APP_NAME" --query properties.configuration.ingress.fqdn --output tsv)"
+    - echo "AZURE_BACKEND_URL=https://$BACKEND_FQDN" > deploy.env
+  artifacts:
+    reports:
+      dotenv: deploy.env
+    expire_in: 1 day
+
+deploy:frontend:azure:
+  stage: deploy
+  image: node:20-bullseye
+  extends: .rules_deploy_main
+  needs:
+    - job: deploy:backend:azure
+      artifacts: true
+  environment:
+    name: production/frontend
+    url: $AZURE_STATIC_WEB_APP_URL
+  before_script:
+    - npm ci --prefer-offline
+  script:
+    - VITE_API_BASE_URL="$AZURE_BACKEND_URL" npm run build --workspace @atmos/frontend
+    - npx -y @azure/static-web-apps-cli deploy apps/frontend/dist --deployment-token "$AZURE_STATIC_WEB_APPS_API_TOKEN" --env production

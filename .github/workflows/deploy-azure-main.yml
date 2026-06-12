@@ -1,0 +1,152 @@
+name: Deploy Azure Main
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BACKEND_IMAGE_NAME: atmos-backend
+
+jobs:
+  backend:
+    name: Backend container app
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      api_base_url: ${{ steps.backend-url.outputs.api_base_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Ensure Azure CLI extensions
+        run: az extension add --name containerapp --upgrade
+
+      - name: Build backend image
+        env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+        run: |
+          docker build apps/backend \
+            --tag "$ACR_LOGIN_SERVER/${BACKEND_IMAGE_NAME}:${GITHUB_SHA}" \
+            --tag "$ACR_LOGIN_SERVER/${BACKEND_IMAGE_NAME}:main"
+
+      - name: Push backend image
+        env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+        run: |
+          az acr login --name "$ACR_NAME"
+          docker push "$ACR_LOGIN_SERVER/${BACKEND_IMAGE_NAME}:${GITHUB_SHA}"
+          docker push "$ACR_LOGIN_SERVER/${BACKEND_IMAGE_NAME}:main"
+
+      - name: Deploy backend container app
+        env:
+          ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+          AZURE_CONTAINER_ENV_NAME: ${{ vars.AZURE_CONTAINER_ENV_NAME }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+        run: |
+          IMAGE="$ACR_LOGIN_SERVER/${BACKEND_IMAGE_NAME}:${GITHUB_SHA}"
+          if az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AZURE_CONTAINER_APP_NAME" >/dev/null 2>&1; then
+            az containerapp secret set \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --secrets database-url="$DATABASE_URL" jwt-secret-key="$JWT_SECRET_KEY"
+            az containerapp update \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --image "$IMAGE" \
+              --set-env-vars \
+                ENVIRONMENT=production \
+                API_V1_PREFIX=/api/v1 \
+                AUTO_INIT_DB_ON_STARTUP=true \
+                ETL_SYNC_DEFAULT_MAX_ARCHIVES=2 \
+                DATABASE_URL=secretref:database-url \
+                JWT_SECRET_KEY=secretref:jwt-secret-key \
+                CORS_ORIGINS="$CORS_ORIGINS"
+          else
+            az containerapp create \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --name "$AZURE_CONTAINER_APP_NAME" \
+              --environment "$AZURE_CONTAINER_ENV_NAME" \
+              --image "$IMAGE" \
+              --target-port 8000 \
+              --ingress external \
+              --min-replicas 0 \
+              --max-replicas 1 \
+              --cpu 0.5 \
+              --memory 1Gi \
+              --registry-server "$ACR_LOGIN_SERVER" \
+              --registry-username "$ACR_USERNAME" \
+              --registry-password "$ACR_PASSWORD" \
+              --secrets database-url="$DATABASE_URL" jwt-secret-key="$JWT_SECRET_KEY" \
+              --env-vars \
+                ENVIRONMENT=production \
+                API_V1_PREFIX=/api/v1 \
+                AUTO_INIT_DB_ON_STARTUP=true \
+                ETL_SYNC_DEFAULT_MAX_ARCHIVES=2 \
+                DATABASE_URL=secretref:database-url \
+                JWT_SECRET_KEY=secretref:jwt-secret-key \
+                CORS_ORIGINS="$CORS_ORIGINS"
+          fi
+
+      - name: Resolve backend URL
+        id: backend-url
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+        run: |
+          FQDN="$(az containerapp show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)"
+          echo "api_base_url=https://$FQDN" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    name: Frontend static web app
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        env:
+          VITE_API_BASE_URL: ${{ needs.backend.outputs.api_base_url }}
+        run: npm run build --workspace @atmos/frontend
+
+      - name: Deploy frontend
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: apps/frontend/dist
+          skip_app_build: true

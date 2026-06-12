@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AdvancedSidebar } from '@/components/layout/advanced-sidebar';
 import { TopBar } from '@/components/layout/top-bar';
@@ -7,8 +7,7 @@ import { Login } from '@/features/auth/components/login';
 import { ResetPassword } from '@/features/auth/components/reset-password';
 import { SignUp } from '@/features/auth/components/sign-up';
 import { DataSources } from '@/features/data-sources/components/data-sources';
-import { WorkspaceDashboardBuilder } from '@/features/dashboard/components/workspace-dashboard-builder';
-import { AdvancedHomeDashboard } from '@/features/dashboard/components/advanced-home-dashboard';
+import { ProjectAnalyticsWorkspace } from '@/features/dashboard/components/project-analytics-workspace';
 import { MLExperimentRunner } from '@/features/modeling/components/ml-experiment-runner';
 import { ModelViewer } from '@/features/modeling/components/model-viewer';
 import { Projects } from '@/features/projects/components/projects';
@@ -18,12 +17,8 @@ import { SettingsPanel } from '@/features/settings/components/settings-panel';
 import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { AnalyticalWorkspaceProvider } from '@/features/analysis/contexts/analytical-workspace-context';
+import { DashboardProvider } from '@/features/dashboard/contexts/dashboard-context';
 import type { AppView } from '@/store/app-store';
-
-const AnalyticalWorkspace = lazy(async () => {
-  const module = await import('@/features/analysis/components/analytical-workspace');
-  return { default: module.AnalyticalWorkspace };
-});
 
 function normalizePath(path: string): string {
   if (!path) {
@@ -134,12 +129,7 @@ function App() {
   const privateView = useMemo(() => {
     switch (activeView) {
       case 'home':
-        return (
-          <div className="p-6 space-y-6">
-            {activeWorkspaceId && <WorkspaceDashboardBuilder workspaceId={activeWorkspaceId} />}
-            <AdvancedHomeDashboard />
-          </div>
-        );
+        return <PublicDashboard embedded showLoginAction={false} onGoToLanding={() => navigate('/')} />;
       case 'projects':
         return <Projects onSelectProject={handleSelectWorkspace} />;
       case 'data-sources':
@@ -149,23 +139,13 @@ function App() {
       case 'ml-experiments':
         return activeWorkspaceId ? <MLExperimentRunner /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'analytical-workspace':
-        return (
-          <Suspense
-            fallback={
-              <div className="p-6 text-sm text-muted-foreground">
-                Loading analytical workspace...
-              </div>
-            }
-          >
-            <AnalyticalWorkspace />
-          </Suspense>
-        );
+        return activeWorkspaceId ? <ProjectAnalyticsWorkspace /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'settings':
         return <SettingsPanel />;
       default:
-        return <AdvancedHomeDashboard />;
+        return <PublicDashboard embedded showLoginAction={false} onGoToLanding={() => navigate('/')} />;
     }
-  }, [activeView, activeWorkspaceId, handleSelectWorkspace]);
+  }, [activeView, activeWorkspaceId, handleSelectWorkspace, navigate]);
 
   if (isLoading) {
     return (
@@ -180,7 +160,7 @@ function App() {
   }
 
   if (path === '/public-dashboard') {
-    return <PublicDashboard onGoToLogin={() => navigate('/login')} />;
+    return <PublicDashboard onGoToLanding={() => navigate('/')} onGoToLogin={() => navigate('/login')} />;
   }
 
   if (!isAuthenticated) {
@@ -190,6 +170,7 @@ function App() {
           onRegister={async (payload) => {
             await register(payload);
           }}
+          onBackToLanding={() => navigate('/')}
           onBackToLogin={() => navigate('/login')}
         />
       );
@@ -230,6 +211,7 @@ function App() {
             navigate('/app', true);
           }
         }}
+        onBackToLanding={() => navigate('/')}
         onOpenRegister={() => navigate('/register')}
         onOpenForgotPassword={() => navigate('/forgot-password')}
       />
@@ -239,6 +221,7 @@ function App() {
   if (isGenericUser) {
     return (
       <PublicDashboard
+        onGoToLanding={() => navigate('/')}
         onGoToLogin={() => {
           void (async () => {
             await logout();
@@ -255,7 +238,8 @@ function App() {
 
   return (
     <AnalyticalWorkspaceProvider>
-      <div className="flex h-screen bg-background">
+      <DashboardProvider projectId={activeWorkspaceId}>
+        <div className="flex h-screen bg-background">
         <AdvancedSidebar
           activeView={activeView}
           onNavigate={setActiveView}
@@ -269,6 +253,7 @@ function App() {
           <main className="min-h-0 flex-1 overflow-y-auto">{privateView}</main>
         </div>
       </div>
+      </DashboardProvider>
     </AnalyticalWorkspaceProvider>
   );
 }

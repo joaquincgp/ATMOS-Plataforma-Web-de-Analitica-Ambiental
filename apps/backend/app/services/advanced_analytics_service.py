@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_USER, Measurement
 from app.models.station import Station
 from app.models.user import User
 from app.models.variable import Variable
@@ -189,6 +189,8 @@ class AdvancedAnalyticsService:
         return int(row.station_count or 0), int(row.variable_count or 0), label
 
     def _apply_measurement_filters(self, statement: Any, payload: AdvancedAnalyticsRequest) -> Any:
+        # Solo opera sobre mediciones del usuario (excluye datos del dashboard público).
+        statement = statement.where(Measurement.data_origin == DATA_ORIGIN_USER)
         if payload.source_file_ids:
             statement = statement.where(Measurement.source_file_id.in_(payload.source_file_ids))
         if payload.station_codes:

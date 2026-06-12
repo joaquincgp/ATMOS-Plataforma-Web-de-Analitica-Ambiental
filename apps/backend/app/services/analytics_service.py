@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
-from app.models.measurement import Measurement
+from app.models.measurement import DATA_ORIGIN_USER, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
 from app.models.variable import Variable
@@ -38,6 +38,8 @@ FORBIDDEN_SQL_PATTERN = re.compile(
 )
 
 DEFAULT_ANALYTICS_LIMIT = 5000
+EXCLUDED_ANALYTICS_SOURCE_TYPES = {"public_dashboard"}
+EXCLUDED_ANALYTICS_SOURCE_SUFFIXES = (".json",)
 
 
 def _canonicalize_variable_code(code: str | None) -> str:
@@ -59,6 +61,18 @@ def _normalized_variable_sql_expr(column: Any) -> Any:
     return expression
 
 
+def _analytics_source_filter() -> Any:
+    return (
+        SourceFile.source_type.notin_(EXCLUDED_ANALYTICS_SOURCE_TYPES),
+        func.lower(SourceFile.original_name).not_like(f"%{EXCLUDED_ANALYTICS_SOURCE_SUFFIXES[0]}"),
+    )
+
+
+def _user_measurement_filter() -> Any:
+    """Filtra measurements exclusivamente de origen usuario (excluye datos públicos)."""
+    return Measurement.data_origin == DATA_ORIGIN_USER
+
+
 def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
     sync_station_reference_metadata(db)
 
@@ -74,6 +88,8 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         )
         .join(Measurement, Measurement.source_file_id == SourceFile.id)
         .where(SourceFile.status == "completed")
+        .where(*_analytics_source_filter())
+        .where(_user_measurement_filter())
         .group_by(
             SourceFile.id,
             SourceFile.original_name,
@@ -95,12 +111,15 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         .join(Variable, Variable.id == Measurement.variable_id)
         .join(SourceFile, SourceFile.id == Measurement.source_file_id)
         .where(SourceFile.status == "completed")
+        .where(*_analytics_source_filter())
+        .where(_user_measurement_filter())
         .group_by(Measurement.source_file_id, Variable.code)
         .order_by(Measurement.source_file_id.asc(), Variable.code.asc())
     ).all()
 
     min_observed_at, max_observed_at = db.execute(
         select(func.min(Measurement.observed_at), func.max(Measurement.observed_at))
+        .where(_user_measurement_filter())
     ).one()
 
     source_variable_codes: dict[int, set[str]] = {}
@@ -178,6 +197,8 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
         .join(Station, Station.id == Measurement.station_id)
         .join(Variable, Variable.id == Measurement.variable_id)
         .join(SourceFile, SourceFile.id == Measurement.source_file_id)
+        .where(*_analytics_source_filter())
+        .where(_user_measurement_filter())
     )
 
     if payload.source_file_ids:
