@@ -17,9 +17,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import atmosLogo from '@/assets/brand/atmos-logo.png';
+import udlaLogo from '@/assets/brand/udla-logo.png';
 
 interface SignUpProps {
   onRegister: (payload: { full_name: string; email: string; password: string }) => Promise<void>;
+  onBackToLanding?: () => void;
   onBackToLogin?: () => void;
 }
 
@@ -34,7 +37,7 @@ const floatingIcons = [
   { Icon: Waves, delay: 1, x: '80%', y: '85%', duration: 20, scale: 0.95 },
 ] as const;
 
-export function SignUp({ onRegister, onBackToLogin }: SignUpProps) {
+export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpProps) {
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -107,6 +110,17 @@ export function SignUp({ onRegister, onBackToLogin }: SignUpProps) {
 
   return (
     <div className="min-h-screen bg-[#F9FBFC] flex items-center justify-center p-4 relative overflow-hidden">
+      {onBackToLanding ? (
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onBackToLanding}
+          className="absolute left-5 top-5 z-20 border-[#509EE3] bg-white/90 text-[#509EE3] hover:bg-[#509EE3]/10"
+        >
+          Volver al inicio
+        </Button>
+      ) : null}
+
       {floatingIcons.map(({ Icon, delay, x, y, duration, scale }, index) => (
         <motion.div
           key={index}
@@ -139,23 +153,29 @@ export function SignUp({ onRegister, onBackToLogin }: SignUpProps) {
         <Card className="bg-white shadow-xl border-0">
           <CardHeader className="space-y-6 text-center pb-6 pt-8">
             <motion.div
-              className="flex items-center justify-center gap-4"
+              className="flex items-center justify-center gap-5"
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ delay: 0.2, duration: 0.5 }}
             >
-              <div className="w-14 h-14 rounded-xl bg-[#509EE3] flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-2xl">A</span>
-              </div>
-              <div className="w-14 h-14 rounded-xl bg-gray-800 flex items-center justify-center shadow-lg">
-                <span className="text-white font-bold text-base">UDLA</span>
-              </div>
+              <img
+                src={atmosLogo}
+                alt="ATMOS"
+                className="h-24 w-28 object-contain"
+                decoding="async"
+              />
+              <img
+                src={udlaLogo}
+                alt="Universidad de Las Americas"
+                className="h-12 max-w-[220px] object-contain"
+                decoding="async"
+              />
             </motion.div>
 
             <div>
-              <CardTitle className="text-3xl font-bold text-foreground mb-2">Join ATMOS</CardTitle>
+              <CardTitle className="text-3xl font-bold text-foreground mb-2">Únete a ATMOS</CardTitle>
               <CardDescription className="text-sm text-muted-foreground">
-                Create your researcher account
+                Crea tu cuenta como investigador
               </CardDescription>
             </div>
           </CardHeader>

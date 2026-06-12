@@ -7,6 +7,7 @@ import {
   CalendarClock,
   CloudRain,
   Gauge,
+  Home,
   Info,
   LogIn,
   MapPin,
@@ -49,10 +50,14 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { formatEcuadorDateTime, formatEcuadorShortDateTime } from '@/shared/lib/datetime';
+import atmosLogo from '@/assets/brand/atmos-logo.png';
+import quitoLogo from '@/assets/brand/quito-logo.png';
 
 interface PublicDashboardProps {
   onGoToLogin?: () => void;
+  onGoToLanding?: () => void;
   embedded?: boolean;
+  showLandingAction?: boolean;
   showLoginAction?: boolean;
 }
 
@@ -650,7 +655,13 @@ function updateMapLayers({
   }
 }
 
-export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction = true }: PublicDashboardProps) {
+export function PublicDashboard({
+  onGoToLogin,
+  onGoToLanding,
+  embedded = false,
+  showLandingAction = true,
+  showLoginAction = true,
+}: PublicDashboardProps) {
   const [snapshot, setSnapshot] = useState<PublicAirQualityResponse | null>(null);
   const [trendSnapshot, setTrendSnapshot] = useState<PublicAirQualityResponse | null>(null);
   const [selectedVariable, setSelectedVariable] = useState(DEFAULT_VARIABLE);
@@ -1000,19 +1011,27 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
         <aside className="public-left-panel public-glass-panel pointer-events-auto absolute bottom-4 left-4 top-4 flex w-[316px] flex-col overflow-x-hidden overflow-y-auto rounded-[20px]">
           <div className="border-b border-slate-200/80 px-5 py-4">
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[#509EE3]">
-                <Activity className="h-5 w-5 text-white" />
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[10px] bg-white shadow-sm ring-1 ring-slate-200/80">
+                <img src={atmosLogo} alt="ATMOS" className="h-10 w-10 object-contain" decoding="async" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-sm font-extrabold tracking-tight text-slate-950">ATMOS · REMMAQ</h1>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">Quito Air Quality</p>
+                <h1 className="text-md font-extrabold tracking-tight text-slate-950">ATMOS</h1>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">Monitoreo de Calidad de Aire</p>
               </div>
             </div>
-            <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-slate-500">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
               <span>Consulta: {formatDateTime(lastFetchedAt)}</span>
-              <Button variant="ghost" size="sm" onClick={() => void loadSnapshot(true)} disabled={loading} className="h-7 gap-1 px-2 text-xs">
-                {loading ? 'Actualizando...' : 'Actualizar'}
-              </Button>
+              <div className="flex items-center gap-1">
+                {showLandingAction && onGoToLanding ? (
+                  <Button variant="ghost" size="sm" onClick={onGoToLanding} className="h-7 gap-1 px-2 text-xs">
+                    <Home className="h-3.5 w-3.5" />
+                    Inicio
+                  </Button>
+                ) : null}
+                <Button variant="ghost" size="sm" onClick={() => void loadSnapshot(true)} disabled={loading} className="h-7 gap-1 px-2 text-xs">
+                  {loading ? 'Actualizando...' : 'Actualizar'}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1026,7 +1045,7 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
           </div>
 
           <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Condiciones actuales</div>
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Estados actuales</div>
             <div className="grid grid-cols-4 gap-2">
               {METEO_CELLS.map(({ code, icon: Icon, label }) => {
                 const meteo = snapshot?.meteorology.find((item) => item.variable_code === code);
@@ -1046,7 +1065,7 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
           <div className="border-b border-slate-200/80 px-5 py-4">
             <div className="mb-3 flex items-center gap-2">
               <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Alertas relativas</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Alertas</span>
               <Badge className="ml-auto bg-red-50 text-red-600 hover:bg-red-50">{topRelativeStations.length}</Badge>
             </div>
             <div className="space-y-2">
@@ -1086,11 +1105,10 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                       key={variable.code}
                       type="button"
                       onClick={() => setSelectedVariable(variable.code)}
-                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${
-                        selectedVariable === variable.code
+                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${selectedVariable === variable.code
                           ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
                           : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
-                      }`}
+                        }`}
                     >
                       {getVariableLabel(variable.code)}
                     </button>
@@ -1106,11 +1124,10 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                       type="button"
                       onClick={() => setRangePreset(option.value)}
                       title={RANGE_LABELS[option.value]}
-                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${
-                        rangePreset === option.value
+                      className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${rangePreset === option.value
                           ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
                           : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
-                      }`}
+                        }`}
                     >
                       {option.label}
                     </button>
@@ -1124,9 +1141,8 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                     <button
                       type="button"
                       onClick={() => setSelectedHour(ALL_STATIONS)}
-                      className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${
-                        selectedHour === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
-                      }`}
+                      className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${selectedHour === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                        }`}
                     >
                       Todas
                     </button>
@@ -1135,9 +1151,8 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                         key={hour}
                         type="button"
                         onClick={() => setSelectedHour(String(hour))}
-                        className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${
-                          selectedHour === String(hour) ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
-                        }`}
+                        className={`rounded-md border px-1.5 py-1 text-[10px] font-bold ${selectedHour === String(hour) ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                          }`}
                       >
                         {String(hour).padStart(2, '0')}
                       </button>
@@ -1151,9 +1166,8 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                   <button
                     type="button"
                     onClick={() => setSelectedStation(ALL_STATIONS)}
-                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
-                      selectedStation === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
-                    }`}
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${selectedStation === ALL_STATIONS ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                      }`}
                   >
                     Todas
                   </button>
@@ -1162,9 +1176,8 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                       key={station.code}
                       type="button"
                       onClick={() => setSelectedStation(station.code)}
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${
-                        selectedStation === station.code ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
-                      }`}
+                      className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${selectedStation === station.code ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]' : 'border-slate-200 bg-white/75 text-slate-600'
+                        }`}
                     >
                       {station.name}
                     </button>
@@ -1196,228 +1209,228 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
             />
           ) : (
             <>
-          <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-sm font-extrabold text-slate-950">Resumen operativo</h2>
-                <p className="mt-1 text-[11px] text-slate-400">{RANGE_LABELS[rangePreset]} · {snapshot?.station_count ?? 0} estaciones</p>
-              </div>
-              {showLoginAction && onGoToLogin ? (
-                <Button onClick={onGoToLogin} size="sm" className="h-8 gap-1 bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
-                  <LogIn className="h-3.5 w-3.5" />
-                  Ingresar
-                </Button>
-              ) : null}
-            </div>
-            {error ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
-          </div>
-
-          <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Trazabilidad de carga</div>
-            <div className="grid gap-2 text-xs text-slate-600">
-              <TraceRow label="Estado sync" value={snapshot?.sync?.status ?? 'unknown'} />
-              <TraceRow label="Corrida inicio" value={formatDateTime(snapshot?.sync?.latest_run_started_at)} />
-              <TraceRow label="Corrida fin" value={formatDateTime(snapshot?.sync?.latest_run_finished_at)} />
-              <TraceRow label="Fuente descargada" value={formatDateTime(snapshot?.sync?.latest_source_downloaded_at)} />
-              <TraceRow label="Fuente procesada" value={formatDateTime(snapshot?.sync?.latest_source_processed_at)} />
-              <TraceRow label="Ultima ingesta" value={formatDateTime(latestIngestedAt)} />
-              <TraceRow label="Registros hoy" value={`${snapshot?.sync?.records_today ?? snapshot?.today_observation_count ?? 0}`} />
-              <TraceRow label="Insertados / actualizados" value={`${snapshot?.sync?.records_inserted ?? 0} / ${snapshot?.sync?.records_updated ?? 0}`} />
-            </div>
-          </div>
-
-          <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Tendencia y ranking</div>
-            <div className="h-40">
-              {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ left: -18, right: 6, top: 4, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="publicTrendMean" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#509EE3" stopOpacity={0.22} />
-                        <stop offset="95%" stopColor="#509EE3" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(203,213,225,0.55)" />
-                    <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#94a3b8' }} minTickGap={28} />
-                    <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="mean" stroke="#509EE3" strokeWidth={2} fill="url(#publicTrendMean)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-xs text-slate-500">
-                  Sin serie disponible para este rango.
-                </div>
-              )}
-            </div>
-            <div className="mt-4 space-y-3">
-              {stationComparison.slice(0, 5).map((station) => {
-                const width = selectedMax && selectedMax > 0 ? Math.min((station.mean / selectedMax) * 100, 100) : 0;
-                return (
-                  <div key={station.station}>
-                    <div className="mb-1 flex justify-between text-[11px] text-slate-500">
-                      <span>{station.station}</span>
-                      <strong className="text-slate-800">{station.mean}</strong>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
-                      <div className="h-full rounded-full bg-[#509EE3]" style={{ width: `${width}%` }} />
-                    </div>
+              <div className="border-b border-slate-200/80 px-5 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-extrabold text-slate-950">Resumen operativo</h2>
+                    <p className="mt-1 text-[11px] text-slate-400">{RANGE_LABELS[rangePreset]} · {snapshot?.station_count ?? 0} estaciones</p>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Variables REMMAQ</span>
-              <Badge className={coveragePercent === 100 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}>
-                {coveragePercent}%
-              </Badge>
-            </div>
-            <p className="mb-3 text-xs text-slate-500">{summarizeAvailability(variableSummaries)}</p>
-            <div className="grid gap-2">
-              {variableSummaries.map((summary) => (
-                <div
-                  key={summary.variable_code}
-                  className={`rounded-lg border px-3 py-2 text-left transition ${
-                    selectedVariable === summary.variable_code ? 'border-[#509EE3] bg-[#EDF6FF]' : 'border-slate-200 bg-white/70'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedVariable(summary.variable_code)}
-                      className="min-w-0 text-left"
-                    >
-                      <span className="block truncate text-xs font-bold text-slate-900">{getVariableLabel(summary.variable_code)}</span>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <Badge className={summary.sample_count > 0 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}>
-                        {summary.sample_count > 0 ? 'datos' : 'sin datos'}
-                      </Badge>
-                      <button
-                        type="button"
-                        onClick={() => setExpandedVariableInfo((current) => (current === summary.variable_code ? null : summary.variable_code))}
-                        className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                        aria-label={`Informacion de ${getVariableLabel(summary.variable_code)}`}
-                      >
-                        <Info className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedVariable(summary.variable_code)}
-                    className="mt-1 block w-full text-left text-[11px] text-slate-500"
-                  >
-                    {summary.sample_count > 0
-                      ? `${formatVariableValue(summary.mean_value, summary.variable_code, summary.unit)} ${getUnitLabel(summary.unit)} | ${summary.station_count} estaciones`
-                      : 'Sin datos'}
-                  </button>
-                  <p className="mt-1 text-[10px] text-slate-400">
-                    Ultima presencia: {formatDateTime(summary.latest_observed_at ?? summary.latest_available_at)}
-                  </p>
-                  <p className="text-[10px] text-slate-400">
-                    Hoy: {summary.today_sample_count} | Total historico: {summary.total_sample_count}
-                  </p>
-                  {expandedVariableInfo === summary.variable_code ? (
-                    <div className="mt-2 rounded-md bg-white/75 p-2 text-[11px] leading-relaxed text-slate-600">
-                      <p>{VARIABLE_HELP[summary.variable_code] ?? summary.variable_name}</p>
-                      <p className="mt-1 font-medium text-slate-700">
-                        {VARIABLE_RECOMMENDATIONS[summary.variable_code] ?? 'Use esta variable para interpretar el contexto REMMAQ seleccionado.'}
-                      </p>
-                    </div>
+                  {showLoginAction && onGoToLogin ? (
+                    <Button onClick={onGoToLogin} size="sm" className="h-8 gap-1 bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
+                      <LogIn className="h-3.5 w-3.5" />
+                      Ingresar
+                    </Button>
                   ) : null}
                 </div>
-              ))}
-            </div>
-            {missingVariableSummaries.length > 0 ? (
-              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{coverageMessage}</p>
-            ) : null}
-          </div>
+                {error ? <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p> : null}
+              </div>
 
-          <div className="border-b border-slate-200/80 px-5 py-4">
-            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Snapshot de estaciones</div>
-            <div className="space-y-2">
-              {stationSnapshot.length > 0 ? (
-                stationSnapshot.map((station) => {
-                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value, values);
-                  return (
-                    <button
-                      key={station.station_code}
-                      type="button"
-                      onClick={() => setSelectedStation(station.station_code)}
-                      className="w-full rounded-lg border border-slate-200 bg-white/70 p-3 text-left"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-bold text-slate-950">{station.station_name}</p>
-                          <p className="text-[10px] uppercase text-slate-400">{station.station_code}</p>
+              <div className="border-b border-slate-200/80 px-5 py-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Trazabilidad de carga</div>
+                <div className="grid gap-2 text-xs text-slate-600">
+                  <TraceRow label="Estado sync" value={snapshot?.sync?.status ?? 'unknown'} />
+                  <TraceRow label="Corrida inicio" value={formatDateTime(snapshot?.sync?.latest_run_started_at)} />
+                  <TraceRow label="Corrida fin" value={formatDateTime(snapshot?.sync?.latest_run_finished_at)} />
+                  <TraceRow label="Fuente descargada" value={formatDateTime(snapshot?.sync?.latest_source_downloaded_at)} />
+                  <TraceRow label="Fuente procesada" value={formatDateTime(snapshot?.sync?.latest_source_processed_at)} />
+                  <TraceRow label="Ultima ingesta" value={formatDateTime(latestIngestedAt)} />
+                  <TraceRow label="Registros hoy" value={`${snapshot?.sync?.records_today ?? snapshot?.today_observation_count ?? 0}`} />
+                  <TraceRow label="Insertados / actualizados" value={`${snapshot?.sync?.records_inserted ?? 0} / ${snapshot?.sync?.records_updated ?? 0}`} />
+                </div>
+              </div>
+
+              <div className="border-b border-slate-200/80 px-5 py-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Tendencia y ranking</div>
+                <div className="h-40">
+                  {chartData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={chartData} margin={{ left: -18, right: 6, top: 4, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="publicTrendMean" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#509EE3" stopOpacity={0.22} />
+                            <stop offset="95%" stopColor="#509EE3" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(203,213,225,0.55)" />
+                        <XAxis dataKey="time" tick={{ fontSize: 9, fill: '#94a3b8' }} minTickGap={28} />
+                        <YAxis tick={{ fontSize: 9, fill: '#94a3b8' }} />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="mean" stroke="#509EE3" strokeWidth={2} fill="url(#publicTrendMean)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full items-center justify-center rounded-lg bg-slate-50 text-xs text-slate-500">
+                      Sin serie disponible para este rango.
+                    </div>
+                  )}
+                </div>
+                <div className="mt-4 space-y-3">
+                  {stationComparison.slice(0, 5).map((station) => {
+                    const width = selectedMax && selectedMax > 0 ? Math.min((station.mean / selectedMax) * 100, 100) : 0;
+                    return (
+                      <div key={station.station}>
+                        <div className="mb-1 flex justify-between text-[11px] text-slate-500">
+                          <span>{station.station}</span>
+                          <strong className="text-slate-800">{station.mean}</strong>
                         </div>
-                        <span className="text-xs font-bold" style={{ color: band.color }}>
-                          {formatVariableValue(station.latest_value, snapshot?.variable_code, station.unit)}
-                        </span>
+                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-200">
+                          <div className="h-full rounded-full bg-[#509EE3]" style={{ width: `${width}%` }} />
+                        </div>
                       </div>
-                      <p className="mt-2 text-[10px] text-slate-500">Ultima lectura: {formatDateTime(station.latest_observed_at)}</p>
-                    </button>
-                  );
-                })
-              ) : (
-                <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">No hay estaciones para el rango seleccionado.</p>
-              )}
-            </div>
-          </div>
+                    );
+                  })}
+                </div>
+              </div>
 
-          <div className="px-5 py-4">
-            <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Resumen tecnico</div>
-            <div className="grid grid-cols-3 gap-2">
-              <MiniStat label="MAX" value={formatVariableValue(periodSummary?.max_value, snapshot?.variable_code, periodUnit)} />
-              <MiniStat label="AVG" value={formatVariableValue(periodSummary?.avg_value, snapshot?.variable_code, periodUnit)} />
-              <MiniStat label="RDS" value={`${periodSummary?.rds ?? 0}`} />
-            </div>
-            <div className="mt-3 grid gap-3">
-              <div className="h-32 rounded-lg bg-white/60 p-2">
-                {histogramData.length > 0 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={histogramData} margin={{ left: -18, right: 4, top: 4, bottom: 0 }}>
-                      <XAxis dataKey="range" tick={{ fontSize: 8, fill: '#94a3b8' }} />
-                      <YAxis allowDecimals={false} tick={{ fontSize: 8, fill: '#94a3b8' }} />
-                      <Tooltip />
-                      <Bar dataKey="stations" fill="#509EE3" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="flex h-full items-center justify-center text-xs text-slate-500">Sin distribucion.</div>
-                )}
+              <div className="border-b border-slate-200/80 px-5 py-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Variables REMMAQ</span>
+                  <img src={quitoLogo} alt="Municipio de Quito" className="h-6 max-w-[104px] object-contain" decoding="async" />
+                  <Badge className={coveragePercent === 100 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}>
+                    {coveragePercent}%
+                  </Badge>
+                </div>
+                <p className="mb-3 text-xs text-slate-500">{summarizeAvailability(variableSummaries)}</p>
+                <div className="grid gap-2">
+                  {variableSummaries.map((summary) => (
+                    <div
+                      key={summary.variable_code}
+                      className={`rounded-lg border px-3 py-2 text-left transition ${selectedVariable === summary.variable_code ? 'border-[#509EE3] bg-[#EDF6FF]' : 'border-slate-200 bg-white/70'
+                        }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedVariable(summary.variable_code)}
+                          className="min-w-0 text-left"
+                        >
+                          <span className="block truncate text-xs font-bold text-slate-900">{getVariableLabel(summary.variable_code)}</span>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge className={summary.sample_count > 0 ? 'bg-green-50 text-green-700' : 'bg-slate-100 text-slate-500'}>
+                            {summary.sample_count > 0 ? 'datos' : 'sin datos'}
+                          </Badge>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedVariableInfo((current) => (current === summary.variable_code ? null : summary.variable_code))}
+                            className="rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                            aria-label={`Informacion de ${getVariableLabel(summary.variable_code)}`}
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedVariable(summary.variable_code)}
+                        className="mt-1 block w-full text-left text-[11px] text-slate-500"
+                      >
+                        {summary.sample_count > 0
+                          ? `${formatVariableValue(summary.mean_value, summary.variable_code, summary.unit)} ${getUnitLabel(summary.unit)} | ${summary.station_count} estaciones`
+                          : 'Sin datos'}
+                      </button>
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        Ultima presencia: {formatDateTime(summary.latest_observed_at ?? summary.latest_available_at)}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        Hoy: {summary.today_sample_count} | Total historico: {summary.total_sample_count}
+                      </p>
+                      {expandedVariableInfo === summary.variable_code ? (
+                        <div className="mt-2 rounded-md bg-white/75 p-2 text-[11px] leading-relaxed text-slate-600">
+                          <p>{VARIABLE_HELP[summary.variable_code] ?? summary.variable_name}</p>
+                          <p className="mt-1 font-medium text-slate-700">
+                            {VARIABLE_RECOMMENDATIONS[summary.variable_code] ?? 'Use esta variable para interpretar el contexto REMMAQ seleccionado.'}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+                {missingVariableSummaries.length > 0 ? (
+                  <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{coverageMessage}</p>
+                ) : null}
               </div>
-              <div className="max-h-44 overflow-auto rounded-lg bg-white/60 p-2">
-                <table className="w-full text-[10px]">
-                  <thead className="text-left text-slate-400">
-                    <tr>
-                      <th className="py-1">Estacion</th>
-                      {stationMatrixCodes.slice(0, 4).map((code) => (
-                        <th key={code} className="py-1">{getVariableLabel(code)}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stationMatrixRows.slice(0, 5).map(({ station, values: rowValues }) => (
-                      <tr key={station.station_code} className="border-t border-slate-100">
-                        <td className="py-1 pr-2 font-medium text-slate-700">{station.station_name}</td>
-                        {rowValues.slice(0, 4).map((item, index) => (
-                          <td key={item?.variable_code ?? index} className="py-1 text-slate-500">
-                            {item ? formatVariableValue(item.value, item.variable_code, item.unit) : '-'}
-                          </td>
+
+              <div className="border-b border-slate-200/80 px-5 py-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Estaciones</div>
+                <div className="space-y-2">
+                  {stationSnapshot.length > 0 ? (
+                    stationSnapshot.map((station) => {
+                      const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value, values);
+                      return (
+                        <button
+                          key={station.station_code}
+                          type="button"
+                          onClick={() => setSelectedStation(station.station_code)}
+                          className="w-full rounded-lg border border-slate-200 bg-white/70 p-3 text-left"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-xs font-bold text-slate-950">{station.station_name}</p>
+                              <p className="text-[10px] uppercase text-slate-400">{station.station_code}</p>
+                            </div>
+                            <span className="text-xs font-bold" style={{ color: band.color }}>
+                              {formatVariableValue(station.latest_value, snapshot?.variable_code, station.unit)}
+                            </span>
+                          </div>
+                          <p className="mt-2 text-[10px] text-slate-500">Ultima lectura: {formatDateTime(station.latest_observed_at)}</p>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-500">No hay estaciones para el rango seleccionado.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="px-5 py-4">
+                <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">Resumen tecnico</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <MiniStat label="MAX" value={formatVariableValue(periodSummary?.max_value, snapshot?.variable_code, periodUnit)} />
+                  <MiniStat label="AVG" value={formatVariableValue(periodSummary?.avg_value, snapshot?.variable_code, periodUnit)} />
+                  <MiniStat label="RDS" value={`${periodSummary?.rds ?? 0}`} />
+                </div>
+                <div className="mt-3 grid gap-3">
+                  <div className="h-32 rounded-lg bg-white/60 p-2">
+                    {histogramData.length > 0 ? (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={histogramData} margin={{ left: -18, right: 4, top: 4, bottom: 0 }}>
+                          <XAxis dataKey="range" tick={{ fontSize: 8, fill: '#94a3b8' }} />
+                          <YAxis allowDecimals={false} tick={{ fontSize: 8, fill: '#94a3b8' }} />
+                          <Tooltip />
+                          <Bar dataKey="stations" fill="#509EE3" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-xs text-slate-500">Sin distribucion.</div>
+                    )}
+                  </div>
+                  <div className="max-h-44 overflow-auto rounded-lg bg-white/60 p-2">
+                    <table className="w-full text-[10px]">
+                      <thead className="text-left text-slate-400">
+                        <tr>
+                          <th className="py-1">Estacion</th>
+                          {stationMatrixCodes.slice(0, 4).map((code) => (
+                            <th key={code} className="py-1">{getVariableLabel(code)}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {stationMatrixRows.slice(0, 5).map(({ station, values: rowValues }) => (
+                          <tr key={station.station_code} className="border-t border-slate-100">
+                            <td className="py-1 pr-2 font-medium text-slate-700">{station.station_name}</td>
+                            {rowValues.slice(0, 4).map((item, index) => (
+                              <td key={item?.variable_code ?? index} className="py-1 text-slate-500">
+                                {item ? formatVariableValue(item.value, item.variable_code, item.unit) : '-'}
+                              </td>
+                            ))}
+                          </tr>
                         ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
             </>
           )}
         </aside>
@@ -1844,9 +1857,8 @@ export function PublicDashboard({ onGoToLogin, embedded = false, showLoginAction
                       key={summary.variable_code}
                       type="button"
                       onClick={() => setSelectedVariable(summary.variable_code)}
-                      className={`rounded-md border px-3 py-2 text-left transition hover:border-[#509EE3] ${
-                        selectedVariable === summary.variable_code ? 'border-[#509EE3] bg-[#EDF6FF]' : 'bg-white'
-                      }`}
+                      className={`rounded-md border px-3 py-2 text-left transition hover:border-[#509EE3] ${selectedVariable === summary.variable_code ? 'border-[#509EE3] bg-[#EDF6FF]' : 'bg-white'
+                        }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="flex items-center gap-2 text-sm font-medium">
@@ -2285,7 +2297,7 @@ function SemiGauge({
           {band?.label ?? 'Sin datos'}
         </div>
         <div className="mt-2 text-xs font-semibold text-slate-400">
-          {getVariableLabel(variableCode)} — Quito Metropolitano
+          {getVariableLabel(variableCode)} — Quito
         </div>
       </div>
     </div>
@@ -2459,20 +2471,19 @@ function InfoHint({ label, text }: { label: string; text: string }) {
       <Info className="h-3.5 w-3.5 text-muted-foreground" aria-label={`Informacion de ${label}`} />
       {tooltip
         ? createPortal(
-            <span
-              className={`pointer-events-none fixed z-[3000] w-80 -translate-x-1/2 rounded-md border border-[#dce5f1] bg-white p-3 text-xs font-normal leading-relaxed text-muted-foreground shadow-xl ${
-                tooltip.placement === 'top' ? '-translate-y-full' : ''
+          <span
+            className={`pointer-events-none fixed z-[3000] w-80 -translate-x-1/2 rounded-md border border-[#dce5f1] bg-white p-3 text-xs font-normal leading-relaxed text-muted-foreground shadow-xl ${tooltip.placement === 'top' ? '-translate-y-full' : ''
               }`}
-              style={{ left: tooltip.left, top: tooltip.top }}
-              role="tooltip"
-            >
-              <span className="mb-1 block text-sm font-semibold text-foreground">{label}</span>
-              {text}
-            </span>,
-            document.body,
-          )
+            style={{ left: tooltip.left, top: tooltip.top }}
+            role="tooltip"
+          >
+            <span className="mb-1 block text-sm font-semibold text-foreground">{label}</span>
+            {text}
+          </span>,
+          document.body,
+        )
         : null}
-      </span>
+    </span>
   );
 }
 
