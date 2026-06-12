@@ -1,6 +1,6 @@
 # ATMOS Frontend
 
-Frontend SPA de ATMOS (React + TypeScript + Vite).
+Frontend SPA de ATMOS — Atmospheric Time-series Modeling & Observation System (React + TypeScript + Vite).
 
 ## Estructura base
 

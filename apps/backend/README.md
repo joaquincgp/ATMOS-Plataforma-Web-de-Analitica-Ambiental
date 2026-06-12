@@ -1,6 +1,6 @@
 # ATMOS Backend
 
-Backend de ATMOS con FastAPI organizado por capas para facilitar ETL, analitica y seguridad.
+Backend de ATMOS — Atmospheric Time-series Modeling & Observation System — con FastAPI organizado por capas para facilitar ETL, analitica y seguridad.
 
 ## Setup local
 

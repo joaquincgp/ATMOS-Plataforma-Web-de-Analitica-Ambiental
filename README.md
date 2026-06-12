@@ -1,4 +1,4 @@
-# ATMOS (Analytics Time-Series Modeling Operational System)
+# ATMOS (Atmospheric Time-series Modeling & Observation System)
 
 ATMOS es una plataforma web diseñada para la ingestión, transformación (ETL), analítica, monitoreo y predicción de calidad de aire basada en series temporales. El sistema está orientado a la gestión de áreas de investigación (workspaces) completamente aisladas, permitiendo que distintos equipos o proyectos analicen datos ambientales de forma independiente, reproducible y segura. 
 
