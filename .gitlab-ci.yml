@@ -251,7 +251,7 @@ deploy:backend:azure:
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   script:
-    - docker login "$ACR_LOGIN_SERVER" --username "$ACR_USERNAME" --password "$ACR_PASSWORD"
+    - echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" --username "$ACR_USERNAME" --password-stdin
     - docker build apps/backend -t "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA" -t "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:main"
     - docker push "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA"
     - docker push "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:main"
