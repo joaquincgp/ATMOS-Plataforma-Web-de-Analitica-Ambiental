@@ -241,7 +241,7 @@ def test_get_or_create_station_variable_and_load_chunk_rollback(db_session, tmp_
     monkeypatch.setattr(
         failing_service,
         "_load_existing_measurements",
-        lambda _keys: (_ for _ in ()).throw(RuntimeError("lookup failed")),
+        lambda _keys, **_: (_ for _ in ()).throw(RuntimeError("lookup failed")),
     )
 
     with pytest.raises(RuntimeError, match="lookup failed"):

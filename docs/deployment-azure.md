@@ -1,42 +1,14 @@
-# Despliegue en Azure App Service
+# Despliegue en Azure
 
-## Objetivo
+La estrategia vigente de despliegue esta documentada en `infra/azure/README.md`.
 
-Desplegar frontend (React build estatico) y backend (FastAPI) como apps separadas para mantener desacoplamiento.
+Resumen:
 
-## Recursos recomendados
+- Frontend: Azure Storage Static Website.
+- Backend: Azure Container Apps con escala a cero.
+- Imagen backend: Azure Container Registry Basic.
+- Base de datos: Azure Database for PostgreSQL Flexible Server `Standard_B1ms`.
+- Despliegue automatico: GitLab CI/CD solo desde `main`.
+- Ramas `feat/...`: validan, prueban, compilan y empaquetan, pero no despliegan.
 
-- 1 Resource Group
-- 1 App Service Plan (Linux)
-- 2 Web Apps:
-  - `atmos-frontend-prod`
-  - `atmos-backend-prod`
-- 1 Azure Database for PostgreSQL Flexible Server (+ PostGIS)
-
-## Variables backend (App Settings)
-
-- `APP_NAME=ATMOS API`
-- `ENVIRONMENT=production`
-- `API_V1_PREFIX=/api/v1`
-- `CORS_ORIGINS=https://<frontend-domain>`
-- `DATABASE_URL=postgresql+psycopg://...`
-- `JWT_SECRET_KEY=<secure-secret>`
-- `JWT_ALGORITHM=HS256`
-- `ACCESS_TOKEN_EXPIRE_MINUTES=60`
-
-## Variables frontend (build-time)
-
-- `VITE_API_BASE_URL=https://<backend-domain>`
-
-## Flujo GitHub Actions recomendado
-
-1. CI valida build frontend + lint/test backend.
-2. CD despliega frontend y backend por separado via publish profiles.
-
-Archivo base de workflow incluido: `.github/workflows/deploy-azure-appservice.yml`.
-
-## Verificacion post-despliegue
-
-1. Backend health: `GET https://<backend-domain>/api/v1/health`
-2. OpenAPI: `https://<backend-domain>/docs`
-3. Frontend carga sin errores y consume API correcta.
+La configuracion anterior con App Service queda descartada para este proyecto porque mantiene mas recursos activos y no es la opcion mas eficiente para creditos limitados.

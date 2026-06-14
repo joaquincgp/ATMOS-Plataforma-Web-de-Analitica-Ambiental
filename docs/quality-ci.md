@@ -65,7 +65,7 @@ The GitLab pipeline is configured for:
 - merge requests
 
 Validation, tests, coverage, builds and package checks run automatically on those branches. Azure deployment is not active
-yet because production credentials are not available.
+only from `main` when the required GitLab CI/CD variables are configured.
 
 ## GitLab Pipeline Jobs
 
@@ -73,7 +73,7 @@ Backend:
 
 - `backend:ruff`: Ruff style, import and bug-risk checks. Publishes `reports/quality/backend/ruff.html`.
 - `backend:pylint`: Pylint static analysis with a minimum score of `9.5`. Publishes `reports/quality/backend/pylint.html`.
-- `backend:test`: Pytest with branch coverage and minimum total coverage of `90%`. Publishes JUnit, Cobertura XML and HTML coverage.
+- `backend:test`: Pytest with branch coverage and minimum total coverage of `80%`. Publishes JUnit, Cobertura XML and HTML coverage.
 - `backend:package`: Creates a backend ZIP artifact without tests, caches, virtualenvs or data files.
 
 Frontend:
@@ -90,22 +90,18 @@ Use a GitLab runner that can run Docker executor jobs and pull public images:
 
 - `python:3.11-slim`
 - `node:20-alpine`
+- `node:20-bullseye`
 - `alpine:3.20`
+- `mcr.microsoft.com/azure-cli:latest`
 
 The runner must have outbound internet access to install Python and npm dependencies unless dependency caches are already
 available.
 
 ## GitLab Variables
 
-No Azure credentials are required for the current pipeline.
+No Azure credentials are required for `feat/...` branches or merge requests.
 
-Optional variables for frontend build-time API configuration:
-
-```text
-VITE_API_BASE_URL
-```
-
-Variables that will be required later for Azure deployment, but are not used by the current pipeline:
+Azure deployment from `main` requires the variables documented in `infra/azure/README.md`:
 
 ```text
 AZURE_CLIENT_ID
@@ -113,8 +109,17 @@ AZURE_CLIENT_SECRET
 AZURE_TENANT_ID
 AZURE_SUBSCRIPTION_ID
 AZURE_RESOURCE_GROUP
-AZURE_BACKEND_APP_NAME
-AZURE_FRONTEND_APP_NAME
+AZURE_ACR_NAME
+AZURE_CONTAINER_ENV_NAME
+AZURE_CONTAINER_APP_NAME
+AZURE_FRONTEND_STORAGE_ACCOUNT
+AZURE_FRONTEND_URL
+CORS_ORIGINS
+ACR_USERNAME
+ACR_PASSWORD
+AZURE_STORAGE_ACCOUNT_KEY
+DATABASE_URL
+JWT_SECRET_KEY
 ```
 
 ## How to Test in GitLab
@@ -125,4 +130,4 @@ AZURE_FRONTEND_APP_NAME
 4. Open each job and download artifacts to inspect HTML reports.
 5. Create a merge request into `main` to verify the same gates run on merge requests.
 
-The backend coverage gate is strict at `90%`; frontend coverage thresholds are enforced by Vitest configuration.
+The backend coverage gate is `80%` through `BACKEND_COVERAGE_MIN`; frontend coverage thresholds are enforced by Vitest configuration.

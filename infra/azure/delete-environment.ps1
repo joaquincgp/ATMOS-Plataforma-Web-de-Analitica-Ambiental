@@ -9,7 +9,7 @@ if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "This deletes the full Azure resource group: $ResourceGroup"
-Write-Host "That stops PostgreSQL, Container Apps, Static Web Apps, ACR, logs, and their costs."
+Write-Host "That stops PostgreSQL, Container Apps, Storage Static Website, ACR, logs, and their costs."
 $confirmation = Read-Host "Type DELETE to continue"
 if ($confirmation -ne "DELETE") {
   Write-Host "Cancelled."
