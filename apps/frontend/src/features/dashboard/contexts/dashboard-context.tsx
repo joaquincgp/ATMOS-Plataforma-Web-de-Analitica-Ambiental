@@ -40,8 +40,8 @@ function storageKey(projectId: string | null) {
 function safeParseCards(value: string | null): DashboardCard[] {
   if (!value) return [];
   try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed: unknown = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? (parsed as DashboardCard[]) : [];
   } catch {
     return [];
   }
