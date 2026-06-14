@@ -39,6 +39,10 @@ def get_public_air_quality(
                     clear_public_snapshot_cache()
             except Exception:
                 logger.exception("Failed to sync current REMMAQ public map data.")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
         return get_public_air_quality_snapshot(
             db,
             variable_code=variable_code,
