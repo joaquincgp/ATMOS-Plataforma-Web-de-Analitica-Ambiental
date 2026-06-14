@@ -9,6 +9,7 @@ from datetime import UTC, date, datetime
 from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import httpx
 import pandas as pd
@@ -744,12 +745,13 @@ class EtlService:
         discovered_variables: set[str] = set()
         selected_set = set(selected_variables)
 
+        effective_root = self._rewrite_to_proxy(root_url)
         with httpx.Client(
             timeout=self.settings.etl_request_timeout_seconds,
             follow_redirects=True,
             headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
-            response = client.get(root_url)
+            response = client.get(effective_root)
             response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
@@ -761,6 +763,7 @@ class EtlService:
             text = anchor.get_text(separator=" ", strip=True)
 
             try:
+                # Use original root_url (not proxy) so datosambiente-based filters still apply.
                 candidate = httpx.URL(root_url).join(href)
             except ValueError:
                 continue
@@ -783,7 +786,7 @@ class EtlService:
 
             discovered.append(
                 {
-                    "url": normalized_url,
+                    "url": self._rewrite_to_proxy(normalized_url),
                     "label": text,
                     "variable_code": variable_code,
                 }
@@ -797,6 +800,17 @@ class EtlService:
             raise RuntimeError("No se encontraron enlaces REMMAQ válidos en la página estática.")
 
         return discovered
+
+    def _rewrite_to_proxy(self, url: str) -> str:
+        proxy_base = self.settings.remmaq_proxy_base_url.strip().rstrip("/")
+        if not proxy_base:
+            return url
+        remmaq_netloc = urlparse(self.settings.remmaq_base_url).netloc
+        parsed = urlparse(url)
+        if parsed.netloc != remmaq_netloc:
+            return url
+        proxy_parsed = urlparse(proxy_base)
+        return urlunparse((proxy_parsed.scheme, proxy_parsed.netloc, parsed.path, parsed.params, parsed.query, ""))
 
     def _match_remmaq_variable(self, *, text: str, href: str, full_url: str) -> str | None:
         lower_text = text.lower()

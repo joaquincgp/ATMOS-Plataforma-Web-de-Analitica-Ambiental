@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     password_reset_token_expire_minutes: int = 30
 
     remmaq_base_url: str = "https://datosambiente.quito.gob.ec/"
+    remmaq_proxy_base_url: str = ""
     etl_storage_dir: str = "./data/etl"
     workspace_storage_dir: str = "./data/workspaces"
     etl_request_timeout_seconds: int = 60
