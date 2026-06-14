@@ -50,12 +50,15 @@ The script prints secrets only to your terminal. Do not commit them.
 
 ## GitLab CI/CD Variables
 
-Set these in `Settings > CI/CD > Variables`. No Azure Service Principal is required — the pipeline uses ACR admin credentials to push images, and the Container App is configured once locally and then auto-updated via ACR continuous deployment.
+Set these in `Settings > CI/CD > Variables`. No Azure Service Principal or interactive login is required. The pipeline authenticates to Azure using Workload Identity Federation (OIDC) via a User-Assigned Managed Identity.
 
 Non-secret variables:
 
 - `AZURE_FRONTEND_URL` — full URL of the Storage Static Website, e.g. `https://atmosprodweb.z21.web.core.windows.net`
 - `AZURE_BACKEND_URL` — full URL of the Container App, e.g. `https://atmosprod-api.<hash>.southcentralus.azurecontainerapps.io`
+- `AZURE_CLIENT_ID` — Client ID of the User-Assigned Managed Identity `atmos-ci-identity`, e.g. `fadd7539-800e-4ddb-8c98-a1415c416926`
+- `AZURE_TENANT_ID` — Azure AD tenant ID, e.g. `ea72c11a-fbed-44c5-ba27-15f7261004a1`
+- `AZURE_SUBSCRIPTION_ID` — subscription ID, e.g. `5ea896c0-e847-4a38-b0a7-0b0ab8b4f972`
 
 Secret variables (mask in GitLab):
 
@@ -66,9 +69,6 @@ Secret variables (mask in GitLab):
 - `AZURE_STORAGE_ACCOUNT_KEY` — storage account key
 - `DATABASE_URL` — full connection string with SSL
 - `JWT_SECRET_KEY` — long random secret
-- `AZURE_USER` — Azure account email used to update the Container App
-- `AZURE_PASS` — password for that Azure account (protect + mask)
-- `AZURE_SUBSCRIPTION_ID` — subscription ID, e.g. `5ea896c0-e847-4a38-b0a7-0b0ab8b4f972`
 
 `DATABASE_URL` must include SSL:
 
@@ -123,7 +123,7 @@ On `main`, the pipeline:
 1. Runs backend and frontend quality gates.
 2. Builds and packages frontend and backend.
 3. Builds a new Docker image and pushes it to ACR with tags `:$CI_COMMIT_SHA` and `:main`.
-4. The ACR webhook auto-updates the Container App with the new `:main` image.
+4. Authenticates to Azure via Workload Identity Federation (OIDC) and updates the Container App to run the `:$CI_COMMIT_SHA` image.
 5. Rebuilds the frontend with `VITE_API_BASE_URL=$AZURE_BACKEND_URL` (static variable, already known).
 6. Uploads `apps/frontend/dist` to the Storage Static Website `$web` container.
 
