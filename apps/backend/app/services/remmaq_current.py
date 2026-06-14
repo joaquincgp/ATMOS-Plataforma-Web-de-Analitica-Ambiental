@@ -10,6 +10,7 @@ from urllib.parse import quote, urljoin
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.time import ecuador_now_naive
@@ -734,7 +735,19 @@ def _get_or_create_report_station(db: Session, station_name: str) -> Station:
         is_active=True,
     )
     db.add(station)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        existing = db.scalar(select(Station).where(Station.code == canonical_code))
+        if existing is not None:
+            if reference:
+                existing.name = reference.name
+                existing.latitude = existing.latitude if existing.latitude is not None else reference.latitude
+                existing.longitude = existing.longitude if existing.longitude is not None else reference.longitude
+            existing.is_active = True
+            return existing
+        raise
     return station
 
 
@@ -750,8 +763,9 @@ def _get_or_create_station(db: Session, site: dict[str, Any]) -> Station:
             _update_station_location(station, site, reference.name if reference else site_name)
             return station
 
+    canonical_code = (reference.name if reference else site_name).replace(" ", "").upper()
     station = Station(
-        code=(reference.name if reference else site_name).replace(" ", "").upper(),
+        code=canonical_code,
         name=reference.name if reference else site_name,
         latitude=float(site["Latitude"])
         if site.get("Latitude") is not None
@@ -762,7 +776,15 @@ def _get_or_create_station(db: Session, site: dict[str, Any]) -> Station:
         is_active=True,
     )
     db.add(station)
-    db.flush()
+    try:
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        existing = db.scalar(select(Station).where(Station.code == canonical_code))
+        if existing is not None:
+            _update_station_location(existing, site, reference.name if reference else site_name)
+            return existing
+        raise
     return station
 
 
