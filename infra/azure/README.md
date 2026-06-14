@@ -56,8 +56,8 @@ Non-secret variables:
 
 - `AZURE_FRONTEND_URL` — full URL of the Storage Static Website, e.g. `https://atmosprodweb.z21.web.core.windows.net`
 - `AZURE_BACKEND_URL` — full URL of the Container App, e.g. `https://atmosprod-api.<hash>.southcentralus.azurecontainerapps.io`
-- `AZURE_CLIENT_ID` — Client ID of the User-Assigned Managed Identity `atmos-ci-identity`, e.g. `fadd7539-800e-4ddb-8c98-a1415c416926`
-- `AZURE_TENANT_ID` — Azure AD tenant ID, e.g. `ea72c11a-fbed-44c5-ba27-15f7261004a1`
+- `AZURE_CLIENT_ID` — Client ID of the User-Assigned Managed Identity `atmos-ci-identity` (visible en el portal bajo la identidad o con `az identity show`)
+- `AZURE_TENANT_ID` — Azure AD tenant ID (visible en `az account show --query tenantId`)
 - `AZURE_SUBSCRIPTION_ID` — subscription ID, e.g. `5ea896c0-e847-4a38-b0a7-0b0ab8b4f972`
 
 Secret variables (mask in GitLab):
