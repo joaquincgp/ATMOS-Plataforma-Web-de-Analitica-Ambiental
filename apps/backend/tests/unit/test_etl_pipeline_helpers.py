@@ -264,7 +264,7 @@ def test_row_loading_filters_range_and_reports_progress(tmp_path: Path) -> None:
         NormalizedMeasurementRow("A", datetime(2025, 1, 3, tzinfo=UTC), "PM25", 3.0, "ug/m3", "s", 3, "w"),
     ]
 
-    service._load_rows_chunk = lambda chunk, source_file_id: (len(chunk), 0, 0)
+    service._load_rows_chunk = lambda chunk, source_file_id, **_: (len(chunk), 0, 0)
 
     inserted, updated, skipped = service._load_rows(
         rows,
