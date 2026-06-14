@@ -241,7 +241,8 @@ deploy:backend:azure:
   stage: deploy
   image: docker:24
   services:
-    - docker:24-dind
+    - name: docker:24-dind
+      alias: docker
   extends: .rules_deploy_main
   needs:
     - job: backend:package
@@ -249,7 +250,10 @@ deploy:backend:azure:
   environment:
     name: production/backend
   variables:
+    DOCKER_HOST: tcp://docker:2376
     DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: "/certs/client"
   script:
     - echo "$ACR_PASSWORD" | docker login "$ACR_LOGIN_SERVER" --username "$ACR_USERNAME" --password-stdin
     - docker build apps/backend -t "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA" -t "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:main"
