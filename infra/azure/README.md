@@ -66,6 +66,9 @@ Secret variables (mask in GitLab):
 - `AZURE_STORAGE_ACCOUNT_KEY` — storage account key
 - `DATABASE_URL` — full connection string with SSL
 - `JWT_SECRET_KEY` — long random secret
+- `AZURE_USER` — Azure account email used to update the Container App
+- `AZURE_PASS` — password for that Azure account (protect + mask)
+- `AZURE_SUBSCRIPTION_ID` — subscription ID, e.g. `5ea896c0-e847-4a38-b0a7-0b0ab8b4f972`
 
 `DATABASE_URL` must include SSL:
 

@@ -265,6 +265,22 @@ deploy:backend:azure:
       dotenv: deploy.env
     expire_in: 1 day
 
+deploy:containerapp:azure:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli
+  extends: .rules_deploy_main
+  needs:
+    - job: deploy:backend:azure
+      artifacts: true
+  script:
+    - az login -u "$AZURE_USER" -p "$AZURE_PASS" --output none
+    - az account set --subscription "$AZURE_SUBSCRIPTION_ID" --output none
+    - az containerapp update
+        --resource-group "rg-atmos-prod"
+        --name "atmosprod-api"
+        --image "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA"
+        --output none
+
 deploy:frontend:azure:
   stage: deploy
   image: node:20-bullseye
