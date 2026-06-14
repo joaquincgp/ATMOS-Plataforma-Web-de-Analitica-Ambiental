@@ -1,6 +1,6 @@
 from functools import lru_cache
+import json
 
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,14 +8,16 @@ class Settings(BaseSettings):
     app_name: str = "ATMOS API"
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
-    cors_origins: list[str] = [
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ]
+    # Stored as a string to avoid pydantic-settings JSON-parsing errors on plain
+    # URL env vars.  Use .cors_origins_list to get the parsed list.
+    cors_origins: str = (
+        "http://localhost:5173,"
+        "http://127.0.0.1:5173,"
+        "http://localhost:5174,"
+        "http://127.0.0.1:5174,"
+        "http://localhost:4173,"
+        "http://127.0.0.1:4173"
+    )
 
     database_url: str = "postgresql+psycopg://atmos:atmos_dev_password@localhost:5432/atmos"
 
@@ -38,12 +40,22 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, value: str | list[str]) -> list[str]:
+    @staticmethod
+    def parse_cors_origins(value: str | list[str]) -> list[str]:
+        """Parse CORS origins from a JSON array string or a comma-separated string."""
         if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            except (json.JSONDecodeError, ValueError):
+                pass
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return self.parse_cors_origins(self.cors_origins)
 
 
 @lru_cache

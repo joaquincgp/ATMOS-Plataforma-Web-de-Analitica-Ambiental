@@ -9,6 +9,13 @@ def test_settings_parse_cors_origins_from_comma_separated_string() -> None:
     ]
 
 
+def test_settings_parse_cors_origins_from_json_array_string() -> None:
+    assert Settings.parse_cors_origins('["http://a.test", "http://b.test"]') == [
+        "http://a.test",
+        "http://b.test",
+    ]
+
+
 def test_settings_parse_cors_origins_preserves_existing_list() -> None:
     origins = ["http://localhost:5173"]
 
