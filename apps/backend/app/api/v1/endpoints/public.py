@@ -35,7 +35,7 @@ def get_public_air_quality(
         if sync:
             try:
                 if should_sync_current_remmaq_snapshot(db, force_sync=force_sync):
-                    sync_current_remmaq_snapshot(db)
+                    sync_current_remmaq_snapshot(db, include_monthly_reports=not force_sync)
                     clear_public_snapshot_cache()
             except Exception:
                 logger.exception("Failed to sync current REMMAQ public map data.")

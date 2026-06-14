@@ -228,7 +228,12 @@ def latest_current_remmaq_sync_started_at(db: Session) -> datetime | None:
     return latest_run.started_at if latest_run is not None else None
 
 
-def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) -> CurrentRemmaqSyncResult:
+def sync_current_remmaq_snapshot(
+    db: Session,
+    *,
+    timeout_seconds: float = 30.0,
+    include_monthly_reports: bool = True,
+) -> CurrentRemmaqSyncResult:
     payload = _fetch_current_sites(timeout_seconds=timeout_seconds)
     sites = payload.get("d") if isinstance(payload, dict) else None
     if not isinstance(sites, list):
@@ -329,19 +334,20 @@ def sync_current_remmaq_snapshot(db: Session, *, timeout_seconds: float = 30.0) 
             else:
                 skipped += 1
 
-    report_inserted, report_updated, report_skipped, report_observed_at = _sync_current_month_reports(
-        db,
-        run=run,
-        timeout_seconds=timeout_seconds,
-        now=now,
-    )
-    inserted += report_inserted
-    updated += report_updated
-    skipped += report_skipped
-    if report_observed_at is not None:
-        latest_observed_at = (
-            report_observed_at if latest_observed_at is None else max(latest_observed_at, report_observed_at)
+    if include_monthly_reports:
+        report_inserted, report_updated, report_skipped, report_observed_at = _sync_current_month_reports(
+            db,
+            run=run,
+            timeout_seconds=timeout_seconds,
+            now=now,
         )
+        inserted += report_inserted
+        updated += report_updated
+        skipped += report_skipped
+        if report_observed_at is not None:
+            latest_observed_at = (
+                report_observed_at if latest_observed_at is None else max(latest_observed_at, report_observed_at)
+            )
 
     source.status = "completed"
     source.processed_at = ecuador_now_naive()
