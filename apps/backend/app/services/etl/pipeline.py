@@ -111,6 +111,19 @@ VARIABLE_COLUMNS = ("variable", "pollutant", "contaminante", "parametro", "param
 VALUE_COLUMNS = ("value", "valor", "measurement", "medicion", "concentracion")
 UNIT_COLUMNS = ("unit", "unidad", "units", "unidades")
 
+_REMMAQ_BROWSER_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "es-EC,es;q=0.9,en-US;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
+
 
 class EtlService:
     def __init__(self, db: Session, settings: Settings | None = None):
@@ -734,7 +747,7 @@ class EtlService:
         with httpx.Client(
             timeout=self.settings.etl_request_timeout_seconds,
             follow_redirects=True,
-            headers={"User-Agent": self.settings.etl_user_agent},
+            headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
             response = client.get(root_url)
             response.raise_for_status()
@@ -812,7 +825,7 @@ class EtlService:
         with httpx.Client(
             timeout=self.settings.etl_request_timeout_seconds,
             follow_redirects=True,
-            headers={"User-Agent": self.settings.etl_user_agent},
+            headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
             response = client.get(url)
             response.raise_for_status()
