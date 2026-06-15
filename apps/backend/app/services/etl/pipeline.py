@@ -754,7 +754,8 @@ class EtlService:
             headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
             response = client.get(effective_root)
-            print(f"[ETL-REMMAQ] status={response.status_code} len={len(response.text)} body={response.text[:300]!r}", flush=True)
+            body_preview = response.text[:300]
+            print(f"[ETL-REMMAQ] status={response.status_code} len={len(response.text)} body={body_preview!r}", flush=True)
             response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
