@@ -5,7 +5,7 @@ param(
   [string]$NamePrefix = "atmosprod",
   [string]$PostgresAdmin = "atmosadmin",
   [string]$PostgresPassword = "",
-  [string]$GitLabProjectPath = "gmarguello112.ma/atmos"
+  [string]$GitLabProjectPath = "gmarguello112.ma-group/atmos"
 )
 
 $ErrorActionPreference = "Stop"
