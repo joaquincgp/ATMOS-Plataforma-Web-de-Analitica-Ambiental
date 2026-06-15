@@ -231,6 +231,8 @@ if (Test-AzCommand { az identity show --resource-group $ResourceGroup --name $ua
     --name $uamiName `
     --location $Location | Out-Null
   } "Could not create Managed Identity $uamiName."
+  Write-Host "Waiting for identity to propagate in Azure AD..."
+  Start-Sleep 20
 }
 
 $uamiClientId    = az identity show --resource-group $ResourceGroup --name $uamiName --query clientId -o tsv
