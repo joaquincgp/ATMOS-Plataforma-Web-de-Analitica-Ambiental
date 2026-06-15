@@ -123,6 +123,9 @@ _REMMAQ_BROWSER_HEADERS: dict[str, str] = {
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
+    # Bypasses the ngrok browser-warning interstitial page when routing through
+    # an ngrok tunnel; ignored by all other hosts.
+    "ngrok-skip-browser-warning": "true",
 }
 
 
@@ -746,12 +749,14 @@ class EtlService:
         selected_set = set(selected_variables)
 
         effective_root = self._rewrite_to_proxy(root_url)
+        print(f"[ETL-REMMAQ] proxy={self.settings.remmaq_proxy_base_url!r} root={effective_root!r}", flush=True)
         with httpx.Client(
             timeout=self.settings.etl_request_timeout_seconds,
             follow_redirects=True,
             headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
             response = client.get(effective_root)
+            print(f"[ETL-REMMAQ] status={response.status_code} len={len(response.text)}", flush=True)
             response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
