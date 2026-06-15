@@ -49,6 +49,7 @@ def _settings(tmp_path: Path) -> SimpleNamespace:
         etl_lookup_chunk_size=100,
         etl_sync_default_max_archives=4,
         remmaq_base_url="https://datosambiente.quito.gob.ec/",
+        remmaq_proxy_base_url="",
     )
 
 
