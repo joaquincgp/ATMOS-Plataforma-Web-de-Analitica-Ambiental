@@ -123,8 +123,6 @@ _REMMAQ_BROWSER_HEADERS: dict[str, str] = {
     "Accept-Encoding": "gzip, deflate, br",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
-    # Bypasses the ngrok browser-warning interstitial page when routing through
-    # an ngrok tunnel; ignored by all other hosts.
     "ngrok-skip-browser-warning": "true",
 }
 
