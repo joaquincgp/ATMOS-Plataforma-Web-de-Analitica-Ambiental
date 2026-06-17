@@ -345,6 +345,11 @@ def reset_password(db: Session, payload: ResetPasswordRequest) -> MessageRespons
 
 def update_profile(db: Session, user: User, payload: UpdateProfileRequest) -> UserResponse:
     user.full_name = payload.full_name
+    user.institution = payload.institution
+    user.job_title = payload.job_title
+    user.department = payload.department
+    user.phone = payload.phone
+    user.country = payload.country
     user.updated_at = _utcnow()
     db.commit()
     db.refresh(user)

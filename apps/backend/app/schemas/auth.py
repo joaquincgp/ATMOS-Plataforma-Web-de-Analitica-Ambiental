@@ -43,6 +43,11 @@ class UserResponse(AuthBaseModel):
     id: str
     email: str
     full_name: str
+    institution: str | None = None
+    job_title: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    country: str | None = None
     role: UserRole
     status: UserStatus
     is_active: bool
@@ -108,3 +113,8 @@ class MessageResponse(AuthBaseModel):
 
 class UpdateProfileRequest(AuthBaseModel):
     full_name: str = Field(min_length=2, max_length=255)
+    institution: str | None = Field(default=None, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
+    department: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=64)
+    country: str | None = Field(default=None, max_length=128)
