@@ -1,553 +1,844 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { motion } from 'motion/react';
 import {
-  User,
-  Mail,
-  Building,
-  Shield,
-  Bell,
-  Palette,
-  Key,
-  LogOut,
-  Camera,
-  Save,
-  CheckCircle2,
+  Activity,
   AlertCircle,
+  BadgeCheck,
+  Ban,
+  BarChart3,
+  Building2,
+  CheckCircle2,
+  Clock,
+  Database,
+  Globe2,
+  Hash,
+  IdCard,
+  Phone,
+  RotateCcw,
+  Save,
+  Search,
+  Shield,
+  User,
+  Users,
+  Zap,
 } from 'lucide-react';
 
+import { getAppConfig, resetAppConfig, updateAppConfig, type AppConfigItem } from '@/api/modules/app-config';
+import {
+  deactivateAdminUser,
+  listAdminUsers,
+  updateAdminUser,
+  type AdminUserResponse,
+  type UserRole,
+  type UserStatus,
+} from '@/api/modules/auth';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
+import { cn } from '@/components/ui/utils';
 import { useAuth } from '@/contexts/auth-context';
 
 interface SettingsProps {
   onLogout?: () => void;
 }
 
-export function SettingsPanel({ onLogout }: SettingsProps) {
-  const { user, logout, updateUserProfile } = useAuth();
+type SaveStatus = 'idle' | 'saving' | 'saved';
+type AdminSection = 'users' | 'engine' | 'query' | 'workspace';
+
+const ENGINE_KEYS = [
+  'analytics.max_statsmodels_points',
+  'analytics.max_prophet_points',
+  'analytics.max_figure_points',
+  'analytics.min_series_length_sarima',
+  'analytics.min_series_length_arima',
+  'analytics.min_series_length_prophet',
+  'analytics.anomaly_iqr_multiplier',
+];
+
+const QUERY_KEYS = ['analytics.default_query_limit', 'analytics.source_list_limit'];
+
+const WORKSPACE_KEYS = [
+  'workspace.default_rolling_window',
+  'workspace.default_decomposition_window',
+  'workspace.default_forecast_horizon',
+  'workspace.default_changepoint_window',
+  'workspace.default_changepoint_sensitivity',
+  'workspace.default_histogram_bins',
+  'workspace.default_confidence_level',
+  'workspace.default_marker_opacity',
+  'workspace.default_marker_size',
+  'workspace.default_facet_columns',
+];
+
+const ADMIN_SECTIONS: Array<{
+  id: AdminSection;
+  label: string;
+  description: string;
+  icon: typeof Users;
+}> = [
+  { id: 'users', label: 'Users', description: 'Roles, access and last activity', icon: Users },
+  { id: 'engine', label: 'Analytics Engine', description: 'Model limits and anomaly rules', icon: Zap },
+  { id: 'query', label: 'Query Limits', description: 'Rows and filter list caps', icon: Database },
+  { id: 'workspace', label: 'Workspace Defaults', description: 'Initial chart controls', icon: BarChart3 },
+];
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  admin: 'Admin',
+  researcher: 'Researcher',
+  generic: 'Generic',
+};
+
+const STATUS_LABELS: Record<UserStatus, string> = {
+  active: 'Active',
+  pending_validation: 'Pending',
+  suspended: 'Suspended',
+};
+
+const PHONE_PATTERN = /^[0-9+()\-\s.]*$/;
+
+function indexConfig(items: AppConfigItem[]) {
+  return new Map(items.map((item) => [item.key, item]));
+}
+
+function nullable(value: string) {
+  const clean = value.trim();
+  return clean.length > 0 ? clean : null;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) {
+    return 'Never';
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(value));
+}
+
+function statusBadgeClass(status: UserStatus) {
+  if (status === 'active') {
+    return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  }
+  if (status === 'suspended') {
+    return 'bg-red-50 text-red-700 border-red-200';
+  }
+  return 'bg-amber-50 text-amber-700 border-amber-200';
+}
+
+function roleBadgeClass(role: UserRole) {
+  if (role === 'admin') {
+    return 'bg-[#E8F4FD] text-[#1F5A8A] border-[#B8DCF5]';
+  }
+  return 'bg-slate-50 text-slate-700 border-slate-200';
+}
+
+export function SettingsPanel({ onLogout: _onLogout }: SettingsProps) {
+  const { user, updateUserProfile } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const [profile, setProfile] = useState({
-    fullName: user?.full_name ?? 'Dr. María González',
-    email: user?.email ?? 'maria.gonzalez@udla.edu.ec',
-    institution: 'Environmental Sciences Department',
-    role: user?.role === 'admin' ? 'Administrator' : 'Principal Investigator',
-    bio: 'Environmental data scientist specializing in air quality monitoring and predictive analytics.',
-    phone: '+593 2 123 4567',
+    fullName: '',
+    institution: '',
+    jobTitle: '',
+    department: '',
+    phone: '',
+    country: '',
   });
+  const [profileStatus, setProfileStatus] = useState<SaveStatus>('idle');
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [profileFieldErrors, setProfileFieldErrors] = useState<Record<string, string>>({});
 
-  const [notifications, setNotifications] = useState({
-    emailAlerts: true,
-    dataUpdates: true,
-    experimentComplete: true,
-    weeklyReport: false,
-    securityAlerts: true,
-  });
+  const [activeAdminSection, setActiveAdminSection] = useState<AdminSection>('users');
+  const [users, setUsers] = useState<AdminUserResponse[]>([]);
+  const [userSearch, setUserSearch] = useState('');
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
-  const [appearance, setAppearance] = useState({
-    theme: 'light',
-    language: 'en',
-    dateFormat: 'MM/DD/YYYY',
-  });
-
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [configItems, setConfigItems] = useState<AppConfigItem[]>([]);
+  const [configValues, setConfigValues] = useState<Record<string, string>>({});
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configStatus, setConfigStatus] = useState<SaveStatus>('idle');
+  const [configError, setConfigError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) {
       return;
     }
-    setProfile((current) => ({
-      ...current,
-      fullName: user.full_name,
-      email: user.email,
-      role: user.role === 'admin' ? 'Administrator' : user.role === 'generic' ? 'Generic User' : 'Researcher',
-    }));
+    setProfile({
+      fullName: user.full_name ?? '',
+      institution: user.institution ?? '',
+      jobTitle: user.job_title ?? '',
+      department: user.department ?? '',
+      phone: user.phone ?? '',
+      country: user.country ?? '',
+    });
   }, [user]);
 
-  const handleProfileChange = (field: keyof typeof profile, value: string) => {
-    setProfile((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleNotificationChange = (field: keyof typeof notifications, value: boolean) => {
-    setNotifications((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const handleSaveProfile = async () => {
-    setSaveError(null);
-    setSaveStatus('saving');
-    try {
-      await updateUserProfile(profile.fullName);
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch (err) {
-      setSaveStatus('idle');
-      setSaveError(err instanceof Error ? err.message : 'Could not update profile.');
-    }
-  };
-
-  const handleLogout = () => {
-    if (onLogout) {
-      onLogout();
+  useEffect(() => {
+    if (!isAdmin) {
       return;
     }
-    void logout();
-  };
 
+    const loadConfig = async () => {
+      setConfigLoading(true);
+      setConfigError(null);
+      try {
+        const response = await getAppConfig();
+        setConfigItems(response.items);
+        setConfigValues(Object.fromEntries(response.items.map((item) => [item.key, String(item.value)])));
+      } catch (err) {
+        setConfigError(err instanceof Error ? err.message : 'Could not load admin configuration.');
+      } finally {
+        setConfigLoading(false);
+      }
+    };
+
+    const loadUsers = async () => {
+      setUsersLoading(true);
+      setUsersError(null);
+      try {
+        setUsers(await listAdminUsers());
+      } catch (err) {
+        setUsersError(err instanceof Error ? err.message : 'Could not load users.');
+      } finally {
+        setUsersLoading(false);
+      }
+    };
+
+    void loadConfig();
+    void loadUsers();
+  }, [isAdmin]);
+
+  const configByKey = useMemo(() => indexConfig(configItems), [configItems]);
+  const filteredUsers = useMemo(() => {
+    const query = userSearch.trim().toLowerCase();
+    if (!query) {
+      return users;
+    }
+    return users.filter((item) =>
+      [item.full_name, item.email, item.role, item.status, item.institution ?? ''].some((value) =>
+        value.toLowerCase().includes(query),
+      ),
+    );
+  }, [userSearch, users]);
   const roleBadge = user?.role === 'admin' ? 'Admin' : user?.role === 'generic' ? 'Generic' : 'Researcher';
 
-  return (
-    <div className="h-full bg-[#F9FBFC] overflow-y-auto">
-      <div className="max-w-5xl mx-auto p-8">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-8"
-        >
-          <h1 className="text-3xl font-bold text-foreground mb-2">Settings</h1>
-          <p className="text-muted-foreground">Manage your account and preferences</p>
-        </motion.div>
+  const handleSaveProfile = async () => {
+    setProfileError(null);
+    const errors: Record<string, string> = {};
 
-        <Tabs defaultValue="profile" className="space-y-6">
-          <TabsList className="bg-white border border-gray-200 p-1 h-auto">
-            <TabsTrigger value="profile" className="data-[state=active]:bg-[#509EE3] data-[state=active]:text-white">
-              <User className="w-4 h-4 mr-2" />
-              Profile
-            </TabsTrigger>
-            <TabsTrigger value="security" className="data-[state=active]:bg-[#509EE3] data-[state=active]:text-white">
-              <Shield className="w-4 h-4 mr-2" />
-              Security
-            </TabsTrigger>
-            <TabsTrigger
-              value="notifications"
-              className="data-[state=active]:bg-[#509EE3] data-[state=active]:text-white"
-            >
-              <Bell className="w-4 h-4 mr-2" />
-              Notifications
-            </TabsTrigger>
-            <TabsTrigger
-              value="appearance"
-              className="data-[state=active]:bg-[#509EE3] data-[state=active]:text-white"
-            >
-              <Palette className="w-4 h-4 mr-2" />
-              Appearance
-            </TabsTrigger>
-          </TabsList>
+    if (!profile.fullName.trim()) {
+      errors.fullName = 'Ingresa tu nombre completo.';
+    } else if (profile.fullName.trim().length < 2) {
+      errors.fullName = 'El nombre debe tener al menos 2 caracteres.';
+    } else if (profile.fullName.trim().length > 255) {
+      errors.fullName = 'El nombre no puede superar 255 caracteres.';
+    }
 
-          <TabsContent value="profile" className="space-y-6">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-              <Card className="bg-white border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Profile Information</CardTitle>
-                  <CardDescription>Update your personal details and public profile</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="flex items-center gap-6">
-                    <Avatar className="h-24 w-24">
-                      <AvatarImage src="" />
-                      <AvatarFallback className="bg-[#509EE3] text-white text-2xl">
-                        {profile.fullName
-                          .split(' ')
-                          .filter(Boolean)
-                          .slice(0, 2)
-                          .map((part) => part[0]?.toUpperCase())
-                          .join('') || 'U'}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="space-y-2">
-                      <Button variant="outline" className="border-[#509EE3] text-[#509EE3] hover:bg-[#509EE3]/10">
-                        <Camera className="w-4 h-4 mr-2" />
-                        Change Photo
-                      </Button>
-                      <p className="text-xs text-muted-foreground">JPG, PNG or GIF. Max size 2MB.</p>
-                    </div>
-                  </div>
+    for (const [field, value] of [
+      ['institution', profile.institution],
+      ['jobTitle', profile.jobTitle],
+      ['department', profile.department],
+    ] as const) {
+      if (value.trim().length > 255) {
+        errors[field] = 'Este campo no puede superar 255 caracteres.';
+      }
+    }
 
-                  <Separator />
+    if (profile.phone.trim().length > 64) {
+      errors.phone = 'El teléfono no puede superar 64 caracteres.';
+    } else if (!PHONE_PATTERN.test(profile.phone.trim())) {
+      errors.phone = 'Usa solo números, espacios, +, paréntesis, guiones o puntos.';
+    }
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <Label htmlFor="fullName" className="text-sm font-medium">
-                        <User className="w-4 h-4 inline mr-2" />
-                        Full Name
-                      </Label>
-                      <Input
-                        id="fullName"
-                        value={profile.fullName}
-                        onChange={(e) => handleProfileChange('fullName', e.target.value)}
-                        className="bg-[#F9FBFC] h-11"
-                      />
-                    </div>
+    if (profile.country.trim().length > 128) {
+      errors.country = 'El país no puede superar 128 caracteres.';
+    }
 
-                    <div className="space-y-2">
-                      <Label htmlFor="email" className="text-sm font-medium">
-                        <Mail className="w-4 h-4 inline mr-2" />
-                        Email
-                      </Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={profile.email}
-                        onChange={(e) => handleProfileChange('email', e.target.value)}
-                        className="bg-[#F9FBFC] h-11"
-                      />
-                    </div>
+    setProfileFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setProfileError('Revisa los campos marcados antes de guardar.');
+      return;
+    }
 
-                    <div className="space-y-2">
-                      <Label htmlFor="institution" className="text-sm font-medium">
-                        <Building className="w-4 h-4 inline mr-2" />
-                        Institution
-                      </Label>
-                      <Input
-                        id="institution"
-                        value={profile.institution}
-                        onChange={(e) => handleProfileChange('institution', e.target.value)}
-                        className="bg-[#F9FBFC] h-11"
-                      />
-                    </div>
+    setProfileStatus('saving');
+    try {
+      await updateUserProfile({
+        full_name: profile.fullName.trim(),
+        institution: nullable(profile.institution),
+        job_title: nullable(profile.jobTitle),
+        department: nullable(profile.department),
+        phone: nullable(profile.phone),
+        country: nullable(profile.country),
+      });
+      setProfileStatus('saved');
+      setTimeout(() => setProfileStatus('idle'), 2000);
+    } catch (err) {
+      setProfileStatus('idle');
+      setProfileError(err instanceof Error ? err.message : 'Could not update profile.');
+    }
+  };
 
-                    <div className="space-y-2">
-                      <Label htmlFor="phone" className="text-sm font-medium">
-                        Phone Number
-                      </Label>
-                      <Input
-                        id="phone"
-                        value={profile.phone}
-                        onChange={(e) => handleProfileChange('phone', e.target.value)}
-                        className="bg-[#F9FBFC] h-11"
-                      />
-                    </div>
-                  </div>
+  const handleSaveConfig = async () => {
+    setConfigError(null);
+    setConfigStatus('saving');
+    try {
+      const response = await updateAppConfig({
+        items: configItems.map((item) => ({
+          key: item.key,
+          value: Number(configValues[item.key] ?? item.value),
+        })),
+      });
+      setConfigItems(response.items);
+      setConfigValues(Object.fromEntries(response.items.map((item) => [item.key, String(item.value)])));
+      setConfigStatus('saved');
+      setTimeout(() => setConfigStatus('idle'), 2000);
+    } catch (err) {
+      setConfigStatus('idle');
+      setConfigError(err instanceof Error ? err.message : 'Could not save admin configuration.');
+    }
+  };
 
-                  <div className="space-y-2">
-                    <Label htmlFor="role" className="text-sm font-medium">
-                      Role
-                    </Label>
-                    <div className="flex items-center gap-3">
-                      <Input
-                        id="role"
-                        value={profile.role}
-                        onChange={(e) => handleProfileChange('role', e.target.value)}
-                        className="bg-[#F9FBFC] h-11"
-                      />
-                      <Badge className="bg-[#509EE3] text-white px-3 py-1">{roleBadge}</Badge>
-                    </div>
-                  </div>
+  const handleResetConfig = async () => {
+    setConfigError(null);
+    setConfigStatus('saving');
+    try {
+      const response = await resetAppConfig();
+      setConfigItems(response.items);
+      setConfigValues(Object.fromEntries(response.items.map((item) => [item.key, String(item.value)])));
+      setConfigStatus('saved');
+      setTimeout(() => setConfigStatus('idle'), 2000);
+    } catch (err) {
+      setConfigStatus('idle');
+      setConfigError(err instanceof Error ? err.message : 'Could not reset admin configuration.');
+    }
+  };
 
-                  <div className="space-y-2">
-                    <Label htmlFor="bio" className="text-sm font-medium">
-                      Bio
-                    </Label>
-                    <textarea
-                      id="bio"
-                      value={profile.bio}
-                      onChange={(e) => handleProfileChange('bio', e.target.value)}
-                      rows={4}
-                      className="w-full px-3 py-2 bg-[#F9FBFC] border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#509EE3] focus:border-transparent resize-none"
-                    />
-                  </div>
+  const handleUpdateUser = async (userId: string, payload: { role?: UserRole; status?: UserStatus }) => {
+    setUsersError(null);
+    setUpdatingUserId(userId);
+    try {
+      const updated = await updateAdminUser(userId, payload);
+      setUsers((current) => current.map((item) => (item.id === userId ? updated : item)));
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Could not update user.');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
 
-                  {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+  const handleDeactivateUser = async (userId: string) => {
+    setUsersError(null);
+    setUpdatingUserId(userId);
+    try {
+      await deactivateAdminUser(userId);
+      setUsers((current) =>
+        current.map((item) => (item.id === userId ? { ...item, status: 'suspended', is_active: false } : item)),
+      );
+    } catch (err) {
+      setUsersError(err instanceof Error ? err.message : 'Could not deactivate user.');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
 
-                  <div className="flex items-center gap-3 pt-4">
-                    <Button
-                      onClick={() => void handleSaveProfile()}
-                      disabled={saveStatus === 'saving'}
-                      className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white"
-                    >
-                      {saveStatus === 'saving' && <span className="mr-2">Saving...</span>}
-                      {saveStatus === 'saved' && <CheckCircle2 className="w-4 h-4 mr-2" />}
-                      {saveStatus === 'idle' && <Save className="w-4 h-4 mr-2" />}
-                      {saveStatus === 'saved' ? 'Saved!' : 'Save Changes'}
-                    </Button>
-                    {saveStatus === 'saved' && (
-                      <motion.span
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        className="text-sm text-green-600 flex items-center"
-                      >
-                        <CheckCircle2 className="w-4 h-4 mr-1" />
-                        Profile updated successfully
-                      </motion.span>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </TabsContent>
+  const renderConfigFields = (keys: string[]) => (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      {keys.map((key) => {
+        const item = configByKey.get(key);
+        if (!item) {
+          return null;
+        }
+        return (
+          <div key={key} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <Label htmlFor={key} className="text-sm font-semibold text-[#24384D]">
+                  {item.description}
+                </Label>
+                <p className="mt-1 truncate text-xs text-slate-500">{item.key}</p>
+              </div>
+              <Badge variant="outline" className="shrink-0 border-[#B8DCF5] bg-[#E8F4FD] text-[#1F5A8A]">
+                Default {item.default_value}
+              </Badge>
+            </div>
+            <div className="mt-4 flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-[#F1F8FE] text-[#509EE3]">
+                <Hash className="size-4" />
+              </div>
+              <Input
+                id={key}
+                type="number"
+                step={Number.isInteger(item.default_value) ? 1 : 0.01}
+                value={configValues[key] ?? ''}
+                onChange={(event) => setConfigValues((current) => ({ ...current, [key]: event.target.value }))}
+                className="h-11 bg-[#F9FBFC]"
+              />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
-          <TabsContent value="security" className="space-y-6">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-              <Card className="bg-white border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Security Settings</CardTitle>
-                  <CardDescription>Manage your password and account security</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold flex items-center">
-                      <Key className="w-5 h-5 mr-2 text-[#509EE3]" />
-                      Change Password
-                    </h3>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="currentPassword">Current Password</Label>
-                        <Input
-                          id="currentPassword"
-                          type="password"
-                          placeholder="••••••••"
-                          className="bg-[#F9FBFC] h-11"
-                        />
+  const renderUsersSection = () => (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h3 className="text-xl font-semibold text-[#24384D]">User Administration</h3>
+          <p className="text-sm text-slate-500">Promote admins, review access state and suspend accounts.</p>
+        </div>
+        <div className="relative w-full lg:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-400" />
+          <Input
+            value={userSearch}
+            onChange={(event) => setUserSearch(event.target.value)}
+            placeholder="Search users"
+            className="h-10 bg-[#F9FBFC] pl-9"
+          />
+        </div>
+      </div>
+
+      {usersError && (
+        <p className="flex items-center text-sm text-red-600">
+          <AlertCircle className="mr-2 size-4" />
+          {usersError}
+        </p>
+      )}
+
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <Table>
+          <TableHeader className="bg-[#F9FBFC]">
+            <TableRow>
+              <TableHead>User</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Last Access</TableHead>
+              <TableHead>Workspaces</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {usersLoading ? (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center text-slate-500">
+                  Loading users...
+                </TableCell>
+              </TableRow>
+            ) : filteredUsers.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={6} className="h-24 text-center text-slate-500">
+                  No users found.
+                </TableCell>
+              </TableRow>
+            ) : (
+              filteredUsers.map((item) => {
+                const isSelf = item.id === user?.id;
+                const isUpdating = updatingUserId === item.id;
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell className="min-w-[260px]">
+                      <div className="font-medium text-[#24384D]">{item.full_name}</div>
+                      <div className="text-xs text-slate-500">{item.email}</div>
+                      {item.institution && <div className="text-xs text-slate-400">{item.institution}</div>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={cn('capitalize', statusBadgeClass(item.status))}>
+                        {STATUS_LABELS[item.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={roleBadgeClass(item.role)}>
+                        {ROLE_LABELS[item.role]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center text-sm text-slate-600">
+                        <Clock className="mr-2 size-4 text-slate-400" />
+                        {formatDate(item.last_login_at)}
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="newPassword">New Password</Label>
-                        <Input id="newPassword" type="password" placeholder="••••••••" className="bg-[#F9FBFC] h-11" />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="confirmNewPassword">Confirm New Password</Label>
-                        <Input
-                          id="confirmNewPassword"
-                          type="password"
-                          placeholder="••••••••"
-                          className="bg-[#F9FBFC] h-11"
-                        />
-                      </div>
-                      <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">Update Password</Button>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold flex items-center">
-                      <Shield className="w-5 h-5 mr-2 text-[#509EE3]" />
-                      Two-Factor Authentication
-                    </h3>
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div>
-                        <p className="font-medium">Enable 2FA</p>
-                        <p className="text-sm text-muted-foreground">Add an extra layer of security to your account</p>
-                      </div>
-                      <Switch />
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Active Sessions</h3>
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                        <div>
-                          <p className="font-medium">Current Session</p>
-                          <p className="text-xs text-muted-foreground">Quito, Ecuador · Browser session · Active now</p>
-                        </div>
-                        <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Active</Badge>
-                      </div>
-                      <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                        <div>
-                          <p className="font-medium">Secondary Session</p>
-                          <p className="text-xs text-muted-foreground">Last active 2 days ago</p>
-                        </div>
-                        <Button variant="outline" size="sm">
-                          Revoke
+                    </TableCell>
+                    <TableCell>{item.workspace_count}</TableCell>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Select
+                          value={item.role}
+                          disabled={isUpdating || isSelf}
+                          onValueChange={(value) => void handleUpdateUser(item.id, { role: value as UserRole })}
+                        >
+                          <SelectTrigger className="h-9 w-[130px] bg-white">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="researcher">Researcher</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={item.status === 'pending_validation' ? undefined : item.status}
+                          disabled={isUpdating || isSelf}
+                          onValueChange={(value) => void handleUpdateUser(item.id, { status: value as UserStatus })}
+                        >
+                          <SelectTrigger className="h-9 w-[130px] bg-white">
+                            <SelectValue placeholder="Change status" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="suspended">Suspended</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          disabled={isUpdating || isSelf || item.status === 'suspended'}
+                          onClick={() => void handleDeactivateUser(item.id)}
+                          className="h-9 w-9 border-red-200 text-red-600 hover:bg-red-50"
+                          title="Deactivate access"
+                        >
+                          <Ban className="size-4" />
                         </Button>
                       </div>
-                    </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+
+  const renderAdminContent = () => {
+    if (activeAdminSection === 'users') {
+      return renderUsersSection();
+    }
+
+    const sectionMap = {
+      engine: {
+        title: 'Analytics Engine',
+        description: 'Controls model input size, chart rendering limits and anomaly sensitivity.',
+        keys: ENGINE_KEYS,
+      },
+      query: {
+        title: 'Query Limits',
+        description: 'Controls default row limits and filter source list size across data tools.',
+        keys: QUERY_KEYS,
+      },
+      workspace: {
+        title: 'Workspace Defaults',
+        description: 'Controls initial values used when a user opens the Analytical Workspace.',
+        keys: WORKSPACE_KEYS,
+      },
+    } satisfies Record<Exclude<AdminSection, 'users'>, { title: string; description: string; keys: string[] }>;
+
+    const section = sectionMap[activeAdminSection];
+    return (
+      <div className="space-y-5">
+        <div>
+          <h3 className="text-xl font-semibold text-[#24384D]">{section.title}</h3>
+          <p className="text-sm text-slate-500">{section.description}</p>
+        </div>
+        {configLoading ? <p className="text-sm text-slate-500">Loading configuration...</p> : renderConfigFields(section.keys)}
+      </div>
+    );
+  };
+
+  return (
+    <div className="h-full overflow-y-auto bg-[#F9FBFC]">
+      <div className="mx-auto w-full max-w-none px-4 py-5 lg:px-6 lg:py-6">
+        <div className="mx-auto w-full max-w-7xl">
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mb-8"
+          >
+            <h1 className="mb-2 text-3xl font-bold text-foreground">Settings</h1>
+            <p className="text-muted-foreground">Manage account details and operational configuration.</p>
+          </motion.div>
+        </div>
+
+        <Tabs defaultValue="profile" className="space-y-6">
+          <div className="mx-auto w-full max-w-7xl">
+            <TabsList className="h-auto rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
+              <TabsTrigger
+                value="profile"
+                className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-300 ease-out data-[state=active]:bg-[#509EE3] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#509EE3]/20"
+              >
+                <User className="mr-2 size-4" />
+                Profile
+              </TabsTrigger>
+              {isAdmin && (
+                <TabsTrigger
+                  value="admin"
+                  className="rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-300 ease-out data-[state=active]:bg-[#509EE3] data-[state=active]:text-white data-[state=active]:shadow-md data-[state=active]:shadow-[#509EE3]/20"
+                >
+                  <Shield className="mr-2 size-4" />
+                  Admin Panel
+                </TabsTrigger>
+              )}
+            </TabsList>
+          </div>
+
+          <TabsContent value="profile" className="mx-auto w-full max-w-6xl">
+            <Card className="w-full border-0 bg-white shadow-lg">
+              <CardHeader className="p-6 lg:p-8">
+                <CardTitle>Profile Information</CardTitle>
+                <CardDescription>Update the personal details stored for your account.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-7 p-6 pt-0 lg:p-8 lg:pt-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Badge className="bg-[#509EE3] px-3 py-1 text-white">
+                    <BadgeCheck className="mr-1 size-4" />
+                    {roleBadge}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">{user?.email}</span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName" className="text-sm font-medium">
+                      <User className="mr-2 inline size-4" />
+                      Full Name
+                    </Label>
+                    <Input
+                      id="fullName"
+                      value={profile.fullName}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, fullName: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, fullName: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.fullName)}
+                    />
+                    {profileFieldErrors.fullName && <p className="text-xs text-red-600">{profileFieldErrors.fullName}</p>}
                   </div>
 
-                  <Separator />
-
-                  <div className="space-y-4 border-2 border-red-200 rounded-lg p-4">
-                    <h3 className="text-lg font-semibold text-red-600 flex items-center">
-                      <AlertCircle className="w-5 h-5 mr-2" />
-                      Danger Zone
-                    </h3>
-                    <div className="space-y-3">
-                      <Button variant="outline" className="border-red-300 text-red-600 hover:bg-red-50" onClick={handleLogout}>
-                        <LogOut className="w-4 h-4 mr-2" />
-                        Log Out
-                      </Button>
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="institution" className="text-sm font-medium">
+                      <Building2 className="mr-2 inline size-4" />
+                      Institution
+                    </Label>
+                    <Input
+                      id="institution"
+                      value={profile.institution}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, institution: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, institution: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.institution)}
+                    />
+                    {profileFieldErrors.institution && (
+                      <p className="text-xs text-red-600">{profileFieldErrors.institution}</p>
+                    )}
                   </div>
-                </CardContent>
-              </Card>
-            </motion.div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="jobTitle" className="text-sm font-medium">
+                      <IdCard className="mr-2 inline size-4" />
+                      Job Title
+                    </Label>
+                    <Input
+                      id="jobTitle"
+                      value={profile.jobTitle}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, jobTitle: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, jobTitle: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.jobTitle)}
+                    />
+                    {profileFieldErrors.jobTitle && <p className="text-xs text-red-600">{profileFieldErrors.jobTitle}</p>}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="department" className="text-sm font-medium">
+                      Department
+                    </Label>
+                    <Input
+                      id="department"
+                      value={profile.department}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, department: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, department: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.department)}
+                    />
+                    {profileFieldErrors.department && (
+                      <p className="text-xs text-red-600">{profileFieldErrors.department}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="phone" className="text-sm font-medium">
+                      <Phone className="mr-2 inline size-4" />
+                      Phone
+                    </Label>
+                    <Input
+                      id="phone"
+                      value={profile.phone}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, phone: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, phone: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.phone)}
+                    />
+                    {profileFieldErrors.phone && <p className="text-xs text-red-600">{profileFieldErrors.phone}</p>}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="country" className="text-sm font-medium">
+                      <Globe2 className="mr-2 inline size-4" />
+                      Country
+                    </Label>
+                    <Input
+                      id="country"
+                      value={profile.country}
+                      onChange={(event) => {
+                        setProfile((current) => ({ ...current, country: event.target.value }));
+                        setProfileFieldErrors((current) => ({ ...current, country: '' }));
+                      }}
+                      className="h-11 bg-[#F9FBFC]"
+                      aria-invalid={Boolean(profileFieldErrors.country)}
+                    />
+                    {profileFieldErrors.country && <p className="text-xs text-red-600">{profileFieldErrors.country}</p>}
+                  </div>
+                </div>
+
+                {profileError && (
+                  <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{profileError}</span>
+                  </div>
+                )}
+
+                {profileStatus === 'saved' && (
+                  <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                    <span>Profile updated successfully.</span>
+                  </div>
+                )}
+
+                <Button
+                  onClick={() => void handleSaveProfile()}
+                  disabled={profileStatus === 'saving'}
+                  className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90"
+                >
+                  {profileStatus === 'saving' ? (
+                    <span className="mr-2">Saving...</span>
+                  ) : profileStatus === 'saved' ? (
+                    <CheckCircle2 className="mr-2 size-4" />
+                  ) : (
+                    <Save className="mr-2 size-4" />
+                  )}
+                  {profileStatus === 'saved' ? 'Saved' : 'Save Changes'}
+                </Button>
+              </CardContent>
+            </Card>
           </TabsContent>
 
-          <TabsContent value="notifications" className="space-y-6">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-              <Card className="bg-white border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Notification Preferences</CardTitle>
-                  <CardDescription>Choose what updates you want to receive</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium">Email Alerts</p>
-                        <p className="text-sm text-muted-foreground">Receive email notifications for important updates</p>
-                      </div>
-                      <Switch
-                        checked={notifications.emailAlerts}
-                        onCheckedChange={(checked) => handleNotificationChange('emailAlerts', checked)}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium">Data Updates</p>
-                        <p className="text-sm text-muted-foreground">Get notified when new data is available</p>
-                      </div>
-                      <Switch
-                        checked={notifications.dataUpdates}
-                        onCheckedChange={(checked) => handleNotificationChange('dataUpdates', checked)}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium">Experiment Completion</p>
-                        <p className="text-sm text-muted-foreground">Notify when ML experiments finish running</p>
-                      </div>
-                      <Switch
-                        checked={notifications.experimentComplete}
-                        onCheckedChange={(checked) => handleNotificationChange('experimentComplete', checked)}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium">Weekly Reports</p>
-                        <p className="text-sm text-muted-foreground">Receive weekly summaries of your research activity</p>
-                      </div>
-                      <Switch
-                        checked={notifications.weeklyReport}
-                        onCheckedChange={(checked) => handleNotificationChange('weeklyReport', checked)}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-[#F9FBFC] rounded-lg">
-                      <div className="flex-1">
-                        <p className="font-medium">Security Alerts</p>
-                        <p className="text-sm text-muted-foreground">Important security and account notifications</p>
-                      </div>
-                      <Switch
-                        checked={notifications.securityAlerts}
-                        onCheckedChange={(checked) => handleNotificationChange('securityAlerts', checked)}
-                      />
-                    </div>
-                  </div>
-
-                  <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Preferences
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </TabsContent>
-
-          <TabsContent value="appearance" className="space-y-6">
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-              <Card className="bg-white border-0 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Appearance Settings</CardTitle>
-                  <CardDescription>Customize how ATMOS looks to you</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-4">
-                    <div className="space-y-3">
-                      <Label className="text-base font-semibold">Theme</Label>
-                      <div className="grid grid-cols-3 gap-3">
+          {isAdmin && (
+            <TabsContent value="admin" className="w-full">
+              <div className="grid w-full gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <Card className="h-fit border-0 bg-white shadow-lg">
+                  <CardHeader className="p-5">
+                    <CardTitle className="flex items-center text-[#24384D]">
+                      <Activity className="mr-2 size-5 text-[#509EE3]" />
+                      Admin Panel
+                    </CardTitle>
+                    <CardDescription>System access and Analytical Workspace parameters.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 p-5 pt-0">
+                    {ADMIN_SECTIONS.map((section) => {
+                      const Icon = section.icon;
+                      const selected = activeAdminSection === section.id;
+                      return (
                         <button
-                          onClick={() => setAppearance({ ...appearance, theme: 'light' })}
-                          className={`p-4 rounded-lg border-2 transition-all ${
-                            appearance.theme === 'light'
-                              ? 'border-[#509EE3] bg-[#509EE3]/5'
-                              : 'border-gray-200 hover:border-gray-300'
-                          }`}
+                          key={section.id}
+                          type="button"
+                          onClick={() => setActiveAdminSection(section.id)}
+                          className={cn(
+                            'flex w-full items-center gap-3 rounded-lg border px-3.5 py-4 text-left transition-colors',
+                            selected
+                              ? 'border-[#B8DCF5] bg-[#E8F4FD] text-[#1F5A8A]'
+                              : 'border-transparent bg-white text-slate-600 hover:bg-[#F9FBFC]',
+                          )}
                         >
-                          <div className="w-full h-16 bg-white rounded border mb-2"></div>
-                          <p className="text-sm font-medium">Light</p>
+                          <span
+                            className={cn(
+                              'flex size-9 shrink-0 items-center justify-center rounded-md',
+                              selected ? 'bg-white text-[#509EE3]' : 'bg-slate-100 text-slate-500',
+                            )}
+                          >
+                            <Icon className="size-4" />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block font-medium">{section.label}</span>
+                            <span className="block text-xs leading-5 opacity-75">{section.description}</span>
+                          </span>
                         </button>
-                        <button
-                          onClick={() => setAppearance({ ...appearance, theme: 'dark' })}
-                          className={`p-4 rounded-lg border-2 transition-all ${
-                            appearance.theme === 'dark'
-                              ? 'border-[#509EE3] bg-[#509EE3]/5'
-                              : 'border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="w-full h-16 bg-gray-900 rounded border mb-2"></div>
-                          <p className="text-sm font-medium">Dark</p>
-                        </button>
-                        <button
-                          onClick={() => setAppearance({ ...appearance, theme: 'auto' })}
-                          className={`p-4 rounded-lg border-2 transition-all ${
-                            appearance.theme === 'auto'
-                              ? 'border-[#509EE3] bg-[#509EE3]/5'
-                              : 'border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="w-full h-16 bg-gradient-to-r from-white to-gray-900 rounded border mb-2"></div>
-                          <p className="text-sm font-medium">Auto</p>
-                        </button>
-                      </div>
-                    </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
 
-                    <Separator />
+                <Card className="min-w-0 border-0 bg-white shadow-lg">
+                  <CardContent className="p-4 lg:p-5">
+                    {renderAdminContent()}
 
-                    <div className="space-y-3">
-                      <Label htmlFor="language" className="text-base font-semibold">
-                        Language
-                      </Label>
-                      <select
-                        id="language"
-                        value={appearance.language}
-                        onChange={(e) => setAppearance({ ...appearance, language: e.target.value })}
-                        className="w-full px-3 py-2 bg-[#F9FBFC] border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#509EE3] h-11"
-                      >
-                        <option value="en">English</option>
-                        <option value="es">Español</option>
-                        <option value="pt">Português</option>
-                      </select>
-                    </div>
+                    {activeAdminSection !== 'users' && (
+                      <>
+                        {configError && (
+                          <p className="mt-5 flex items-center text-sm text-red-600">
+                            <AlertCircle className="mr-2 size-4" />
+                            {configError}
+                          </p>
+                        )}
 
-                    <div className="space-y-3">
-                      <Label htmlFor="dateFormat" className="text-base font-semibold">
-                        Date Format
-                      </Label>
-                      <select
-                        id="dateFormat"
-                        value={appearance.dateFormat}
-                        onChange={(e) => setAppearance({ ...appearance, dateFormat: e.target.value })}
-                        className="w-full px-3 py-2 bg-[#F9FBFC] border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#509EE3] h-11"
-                      >
-                        <option value="MM/DD/YYYY">MM/DD/YYYY</option>
-                        <option value="DD/MM/YYYY">DD/MM/YYYY</option>
-                        <option value="YYYY-MM-DD">YYYY-MM-DD</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <Button className="bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Preferences
-                  </Button>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </TabsContent>
+                        <div className="mt-6 flex flex-wrap items-center gap-3">
+                          <Button
+                            onClick={() => void handleSaveConfig()}
+                            disabled={configStatus === 'saving' || configLoading}
+                            className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90"
+                          >
+                            {configStatus === 'saving' ? (
+                              <span className="mr-2">Saving...</span>
+                            ) : configStatus === 'saved' ? (
+                              <CheckCircle2 className="mr-2 size-4" />
+                            ) : (
+                              <Save className="mr-2 size-4" />
+                            )}
+                            {configStatus === 'saved' ? 'Saved' : 'Save Configuration'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => void handleResetConfig()}
+                            disabled={configStatus === 'saving' || configLoading}
+                          >
+                            <RotateCcw className="mr-2 size-4" />
+                            Reset to Defaults
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </div>

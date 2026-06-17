@@ -7,11 +7,22 @@ export interface UserResponse {
   id: string;
   email: string;
   full_name: string;
+  institution: string | null;
+  job_title: string | null;
+  department: string | null;
+  phone: string | null;
+  country: string | null;
   role: UserRole;
   status: UserStatus;
   is_active: boolean;
   is_verified: boolean;
+  last_login_at: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface AdminUserResponse extends UserResponse {
+  workspace_count: number;
 }
 
 export interface LoginRequest {
@@ -22,6 +33,7 @@ export interface LoginRequest {
 export interface RegisterRequest {
   email: string;
   full_name: string;
+  institution?: string | null;
   password: string;
 }
 
@@ -63,6 +75,16 @@ export interface ResetPasswordRequest {
 
 export interface UpdateProfileRequest {
   full_name: string;
+  institution?: string | null;
+  job_title?: string | null;
+  department?: string | null;
+  phone?: string | null;
+  country?: string | null;
+}
+
+export interface AdminUpdateUserRequest {
+  role?: UserRole;
+  status?: UserStatus;
 }
 
 export function registerUser(payload: RegisterRequest): Promise<UserResponse> {
@@ -124,5 +146,23 @@ export function updateProfile(payload: UpdateProfileRequest): Promise<UserRespon
   return apiRequest<UserResponse>('/api/v1/auth/profile', {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+export function listAdminUsers(search?: string): Promise<AdminUserResponse[]> {
+  const params = search?.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+  return apiRequest<AdminUserResponse[]>(`/api/v1/auth/admin/users${params}`);
+}
+
+export function updateAdminUser(userId: string, payload: AdminUpdateUserRequest): Promise<AdminUserResponse> {
+  return apiRequest<AdminUserResponse>(`/api/v1/auth/admin/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deactivateAdminUser(userId: string): Promise<MessageResponse> {
+  return apiRequest<MessageResponse>(`/api/v1/auth/admin/users/${userId}`, {
+    method: 'DELETE',
   });
 }

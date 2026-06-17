@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 import pandas as pd
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import (
@@ -24,6 +24,7 @@ from app.models.base import Base
 from app.schemas.analytics import AnalyticsQueryRequest, SqlPreviewRequest
 from app.schemas.auth import (
     AdminCreateUserRequest,
+    AdminUpdateUserRequest,
     ForgotPasswordRequest,
     LoginRequest,
     RefreshTokenRequest,
@@ -150,7 +151,12 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
     monkeypatch.setattr(auth_service.settings, "environment", "development")
     registered = auth_service.register_user(
         db_session,
-        RegisterRequest(email="new@example.com", full_name="New User", password="password123"),
+        RegisterRequest(
+            email="new@example.com",
+            full_name="New User",
+            institution="UDLA",
+            password="password123",
+        ),
     )
     admin_created = auth_service.admin_create_user(
         db_session,
@@ -188,6 +194,7 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
     updated = auth_service.update_profile(db_session, user, UpdateProfileRequest(full_name="Renamed User"))
 
     assert admin_created.role == UserRole.admin
+    assert registered.institution == "UDLA"
     assert session.authenticated is True
     assert refreshed.refresh_token != login.refresh_token
     assert reset.message == "Password updated successfully."
@@ -212,12 +219,91 @@ def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session) -
             user_agent=None,
             ip_address=None,
         )
+
+    suspended = db_session.scalar(select(User).where(User.email == "dupe@example.com"))
+    suspended.status = UserStatus.suspended.value
+    suspended.is_active = False
+    db_session.commit()
+    with pytest.raises(AuthError, match="deactivated"):
+        auth_service.login_user(
+            db_session,
+            LoginRequest(email="dupe@example.com", password="password123"),
+            user_agent=None,
+            ip_address=None,
+        )
     with pytest.raises(AuthError):
         auth_service.refresh_access_token(
             db_session,
             RefreshTokenRequest(refresh_token="missing-token"),
             user_agent=None,
             ip_address=None,
+        )
+
+
+def test_admin_user_management_lists_updates_and_deactivates(db_session, tmp_path: Path) -> None:
+    admin = User(
+        email="admin@example.com",
+        full_name="Admin User",
+        password_hash="hash",
+        role=UserRole.admin.value,
+        status=UserStatus.active.value,
+        is_active=True,
+        is_verified=True,
+    )
+    researcher = User(
+        email="researcher@example.com",
+        full_name="Researcher User",
+        password_hash="hash",
+        role=UserRole.researcher.value,
+        status=UserStatus.active.value,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add_all([admin, researcher])
+    db_session.commit()
+    db_session.add(
+        Workspace(
+            owner_user_id=researcher.id,
+            name="Research Workspace",
+            slug="research-workspace",
+            schema_name="workspace_research",
+            storage_path=str(tmp_path / "workspace"),
+            is_active=True,
+        )
+    )
+    db_session.add(
+        Workspace(
+            owner_user_id=researcher.id,
+            name="Archived Workspace",
+            slug="archived-workspace",
+            schema_name="workspace_archived",
+            storage_path=str(tmp_path / "workspace-archived"),
+            is_active=False,
+        )
+    )
+    db_session.commit()
+
+    users = auth_service.list_admin_users(db_session, search="researcher")
+    updated = auth_service.update_admin_user(
+        db_session,
+        target_user_id=researcher.id,
+        payload=AdminUpdateUserRequest(role=UserRole.admin),
+        acting_user=admin,
+    )
+    deactivated = auth_service.deactivate_admin_user(db_session, target_user_id=researcher.id, acting_user=admin)
+
+    assert len(users) == 1
+    assert users[0].workspace_count == 2
+    assert updated.role == UserRole.admin
+    assert deactivated.message == "User access deactivated."
+    assert db_session.get(User, researcher.id).status == UserStatus.suspended.value
+
+    with pytest.raises(AuthError, match="own admin role"):
+        auth_service.update_admin_user(
+            db_session,
+            target_user_id=admin.id,
+            payload=AdminUpdateUserRequest(role=UserRole.researcher),
+            acting_user=admin,
         )
 
 

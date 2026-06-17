@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,7 +29,7 @@ export function ForgotPassword({ onSend, onBackToLogin, onOpenResetPassword }: F
     setError(null);
     setTokenHint(null);
     try {
-      const response = await onSend(values.email);
+      const response = await onSend(values.email.trim().toLowerCase());
       setMessage(response.message);
       if (response.debug_reset_token) {
         setTokenHint(response.debug_reset_token);
@@ -65,8 +66,18 @@ export function ForgotPassword({ onSend, onBackToLogin, onOpenResetPassword }: F
               )}
             </div>
 
-            {message && <p className="text-sm text-green-700">{message}</p>}
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {message && (
+              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                <span>{message}</span>
+              </div>
+            )}
+            {error && (
+              <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
             {tokenHint && (
               <div className="rounded-md border border-[#509EE3]/30 bg-[#f0f7ff] p-2 text-xs">
                 <p className="font-semibold text-[#1F5A8A]">Development reset token:</p>

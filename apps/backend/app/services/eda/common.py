@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 from app.schemas.eda import EdaPlotRequest, EdaSecondaryFigure
+from app.services.app_config_service import get_default_config_map
 from app.services.plotly_theme import apply_atmos_plotly_theme
 
 CHART_COLORS = ["#509EE3", "#1F5A8A", "#0EA5E9", "#0B7285", "#16A34A", "#E9730C", "#D946EF", "#A16207"]
@@ -50,6 +51,13 @@ class EdaServiceError(ValueError):
 
 
 class EdaSharedMixin:
+    def _config_float(self, key: str) -> float:
+        config = getattr(self, "config", None)
+        if config is None:
+            config = get_default_config_map()
+            self.config = config
+        return float(config[key])
+
     def _serialize_figure(self, figure: go.Figure) -> dict[str, Any]:
         return json.loads(pio.to_json(figure, pretty=False))
 

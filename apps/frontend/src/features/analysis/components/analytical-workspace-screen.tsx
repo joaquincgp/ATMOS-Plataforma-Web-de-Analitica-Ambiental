@@ -9,6 +9,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 
+import { getAppConfig } from '@/api/modules/app-config';
 import type { EdaChartType } from '@/api/modules/eda';
 import { PlotlyFigurePanel } from '@/components/common/plotly-figure-panel';
 import { Badge } from '@/components/ui/badge';
@@ -184,6 +185,28 @@ export function AnalyticalWorkspaceScreen() {
     return defaults;
   });
   const { activeWorkspaceId } = useWorkspace();
+
+  useEffect(() => {
+    const loadWorkspaceDefaults = async () => {
+      try {
+        const response = await getAppConfig();
+        const values = Object.fromEntries(response.items.map((item) => [item.key, item.value]));
+        setRollingWindow(Math.max(0, Math.floor(values['workspace.default_rolling_window'] ?? 0)));
+        setDecompositionWindow(Math.max(2, Math.floor(values['workspace.default_decomposition_window'] ?? 21)));
+        setForecastHorizon(Math.max(1, Math.min(365, Math.floor(values['workspace.default_forecast_horizon'] ?? 30))));
+        setChangepointWindow(Math.max(2, Math.floor(values['workspace.default_changepoint_window'] ?? 7)));
+        setChangepointSensitivity(Number(values['workspace.default_changepoint_sensitivity'] ?? 2));
+        setHistogramBins(Math.max(1, Math.floor(values['workspace.default_histogram_bins'] ?? 32)));
+        setConfidenceLevel(Number(values['workspace.default_confidence_level'] ?? 0.95));
+        setMarkerOpacity(Math.max(0.05, Math.min(1, Number(values['workspace.default_marker_opacity'] ?? 0.78))));
+        setMarkerSize(Math.max(1, Math.floor(values['workspace.default_marker_size'] ?? 7)));
+        setFacetColumns(Math.max(1, Math.floor(values['workspace.default_facet_columns'] ?? 2)));
+      } catch {
+        // Keep compiled defaults when configuration cannot be loaded.
+      }
+    };
+    void loadWorkspaceDefaults();
+  }, []);
 
   const selection = useMemo(
     () => ({
@@ -509,10 +532,10 @@ export function AnalyticalWorkspaceScreen() {
       Math.max(
         100,
         selectedManualDataset
-          ? selectedManualDataset.row_count || 5000
-          : selectedSources.reduce((total, source) => total + source.row_count, 0) || 5000,
+          ? selectedManualDataset.row_count || rowLimit
+          : selectedSources.reduce((total, source) => total + source.row_count, 0) || rowLimit,
       ),
-    [selectedManualDataset, selectedSources],
+    [rowLimit, selectedManualDataset, selectedSources],
   );
 
   const summary = useMemo(() => buildLocalSummary(controllerRows), [controllerRows]);
@@ -1282,6 +1305,7 @@ export function AnalyticalWorkspaceScreen() {
                 manualDatasetColumnOptions={manualDatasetColumnOptions}
                 genericXAxis={genericXAxis}
                 genericYAxis={genericYAxis}
+                defaultForecastHorizon={forecastHorizon}
                 onToggleVariable={handleToggleAdvancedVariable}
                 onGenericXAxisChange={setGenericXAxis}
                 onGenericYAxisChange={setGenericYAxis}

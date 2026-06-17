@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Database, Loader2, Sigma, TrendingUp } from 'lucide-react';
 
 import { runAdvancedForecast, type AdvancedAnalyticsResponse, type AdvancedModel } from '@/api/modules/advanced-analytics';
@@ -29,6 +29,7 @@ interface AnalyticalWorkspaceAdvancedPanelProps {
   manualDatasetColumnOptions: VariableOption[];
   genericXAxis: string;
   genericYAxis: string;
+  defaultForecastHorizon: number;
   onToggleVariable: (value: string) => void;
   onGenericXAxisChange: (value: string) => void;
   onGenericYAxisChange: (value: string) => void;
@@ -58,6 +59,7 @@ export function AnalyticalWorkspaceAdvancedPanel({
   manualDatasetColumnOptions,
   genericXAxis,
   genericYAxis,
+  defaultForecastHorizon,
   onToggleVariable,
   onGenericXAxisChange,
   onGenericYAxisChange,
@@ -74,7 +76,7 @@ export function AnalyticalWorkspaceAdvancedPanel({
   const [model, setModel] = useState<AdvancedModel>('arima');
   const [orderInput, setOrderInput] = useState('1,1,1');
   const [seasonalOrderInput, setSeasonalOrderInput] = useState('1,0,1,7');
-  const [horizon, setHorizon] = useState(30);
+  const [horizon, setHorizon] = useState(defaultForecastHorizon);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<AdvancedAnalyticsResponse | null>(null);
@@ -93,6 +95,10 @@ export function AnalyticalWorkspaceAdvancedPanel({
     { value: 'sarima', label: 'SARIMA', detail: 'Seasonal' },
     { value: 'prophet', label: 'Prophet', detail: 'Decomposition' },
   ];
+
+  useEffect(() => {
+    setHorizon(defaultForecastHorizon);
+  }, [defaultForecastHorizon]);
 
   const handleRun = async () => {
     if (selectedDataSourceCount === 0) {
@@ -270,7 +276,9 @@ export function AnalyticalWorkspaceAdvancedPanel({
                   min={1}
                   max={365}
                   value={horizon}
-                  onChange={(event) => setHorizon(Math.max(1, Math.min(365, Number(event.target.value || 30))))}
+                  onChange={(event) =>
+                    setHorizon(Math.max(1, Math.min(365, Number(event.target.value || defaultForecastHorizon))))
+                  }
                   className="h-9 text-xs"
                 />
               </div>

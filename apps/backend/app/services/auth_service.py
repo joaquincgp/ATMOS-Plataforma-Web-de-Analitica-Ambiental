@@ -8,15 +8,18 @@ from typing import Any
 
 import bcrypt
 from jose import JWTError, jwt
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
+from app.models.workspace import Workspace
 from app.schemas.auth import (
     AdminCreateUserRequest,
+    AdminUpdateUserRequest,
+    AdminUserResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -52,6 +55,12 @@ def _token_hash(raw_token: str) -> str:
 
 def _user_response(user: User) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+def _admin_user_response(user: User, workspace_count: int = 0) -> AdminUserResponse:
+    response = AdminUserResponse.model_validate(user)
+    response.workspace_count = workspace_count
+    return response
 
 
 def hash_password(password: str) -> str:
@@ -171,6 +180,7 @@ def register_user(db: Session, payload: RegisterRequest) -> UserResponse:
     user = User(
         email=payload.email.lower(),
         full_name=payload.full_name,
+        institution=payload.institution,
         password_hash=hash_password(payload.password),
         role=UserRole.researcher.value,
         status=UserStatus.pending_validation.value,
@@ -192,6 +202,7 @@ def admin_create_user(db: Session, payload: AdminCreateUserRequest) -> UserRespo
     user = User(
         email=payload.email.lower(),
         full_name=payload.full_name,
+        institution=payload.institution,
         password_hash=hash_password(payload.password),
         role=payload.role.value,
         status=payload.status.value,
@@ -202,6 +213,85 @@ def admin_create_user(db: Session, payload: AdminCreateUserRequest) -> UserRespo
     db.commit()
     db.refresh(user)
     return _user_response(user)
+
+
+def list_admin_users(db: Session, *, search: str | None = None) -> list[AdminUserResponse]:
+    statement = select(User).order_by(User.created_at.desc(), User.email.asc())
+    if search:
+        pattern = f"%{search.strip().lower()}%"
+        statement = statement.where(
+            func.lower(User.email).like(pattern)
+            | func.lower(User.full_name).like(pattern)
+            | func.lower(User.role).like(pattern)
+            | func.lower(User.status).like(pattern)
+        )
+
+    users = db.scalars(statement).all()
+    if not users:
+        return []
+
+    workspace_rows = db.execute(
+        select(Workspace.owner_user_id, func.count(Workspace.id))
+        .where(Workspace.owner_user_id.in_([user.id for user in users]))
+        .group_by(Workspace.owner_user_id)
+    ).all()
+    workspace_counts = {owner_user_id: int(count) for owner_user_id, count in workspace_rows}
+    return [_admin_user_response(user, workspace_counts.get(user.id, 0)) for user in users]
+
+
+def update_admin_user(
+    db: Session,
+    *,
+    target_user_id: str,
+    payload: AdminUpdateUserRequest,
+    acting_user: User,
+) -> AdminUserResponse:
+    user = db.scalar(select(User).where(User.id == target_user_id))
+    if user is None:
+        raise AuthError("User not found.")
+
+    if user.id == acting_user.id and payload.status == UserStatus.suspended:
+        raise AuthError("You cannot suspend your own account.")
+
+    if user.id == acting_user.id and payload.role is not None and payload.role != UserRole.admin:
+        raise AuthError("You cannot remove your own admin role.")
+
+    if payload.role is not None:
+        user.role = payload.role.value
+
+    if payload.status is not None:
+        user.status = payload.status.value
+        user.is_active = payload.status != UserStatus.suspended
+        user.is_verified = payload.status == UserStatus.active
+
+    user.updated_at = _utcnow()
+    db.commit()
+    db.refresh(user)
+
+    workspace_count = db.scalar(
+        select(func.count(Workspace.id)).where(Workspace.owner_user_id == user.id)
+    )
+    return _admin_user_response(user, int(workspace_count or 0))
+
+
+def deactivate_admin_user(db: Session, *, target_user_id: str, acting_user: User) -> MessageResponse:
+    user = db.scalar(select(User).where(User.id == target_user_id))
+    if user is None:
+        raise AuthError("User not found.")
+    if user.id == acting_user.id:
+        raise AuthError("You cannot deactivate your own account.")
+
+    now = _utcnow()
+    user.status = UserStatus.suspended.value
+    user.is_active = False
+    user.updated_at = now
+    db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    db.commit()
+    return MessageResponse(message="User access deactivated.")
 
 
 def login_user(
@@ -216,7 +306,7 @@ def login_user(
         raise AuthError("Invalid credentials.")
 
     if not user.is_active or user.status == UserStatus.suspended.value:
-        raise AuthError("User account is inactive.")
+        raise AuthError("Your account has been deactivated. Contact an administrator to restore access.")
 
     user.last_login_at = _utcnow()
     refresh_token = _create_refresh_token(db, user, user_agent=user_agent, ip_address=ip_address)
