@@ -111,7 +111,6 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
       await onRegister({
         full_name: formData.fullName.trim(),
         email: normalizedEmail,
-        institution: formData.institution.trim() || null,
         password: formData.password,
       });
 

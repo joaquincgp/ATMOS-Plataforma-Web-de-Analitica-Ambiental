@@ -20,6 +20,44 @@ interface PlotComponentProps {
 
 type PlotComponent = ComponentType<PlotComponentProps>;
 
+function normalizePlotlyTitle(value: unknown): unknown {
+  if (typeof value === 'string') {
+    return { text: value, font: { size: 14 } };
+  }
+  if (value && typeof value === 'object') {
+    const title = value as Record<string, unknown>;
+    const font = title.font && typeof title.font === 'object' ? title.font as Record<string, unknown> : {};
+    return {
+      ...title,
+      text: typeof title.text === 'string' ? title.text : '',
+      font: {
+        ...font,
+        size: typeof font.size === 'number' ? font.size : 14,
+      },
+    };
+  }
+  return { text: '', font: { size: 14 } };
+}
+
+function normalizeAxis(value: unknown): unknown {
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const axis = value as Record<string, unknown>;
+  return {
+    ...axis,
+    title: normalizePlotlyTitle(axis.title),
+  };
+}
+
+function normalizeAxes(layout: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(layout)
+      .filter(([key]) => /^[xy]axis\d*$/.test(key))
+      .map(([key, value]) => [key, normalizeAxis(value)]),
+  );
+}
+
 export function PlotlyChart({
   figure,
   height = 560,
@@ -99,8 +137,11 @@ export function PlotlyChart({
     );
   }
 
+  const baseLayout = figure.layout ?? {};
   const layout = {
-    ...(figure.layout ?? {}),
+    ...baseLayout,
+    ...normalizeAxes(baseLayout),
+    title: normalizePlotlyTitle(baseLayout.title),
     autosize: true,
     height,
     dragmode: enableTimeNavigation ? 'pan' : (figure.layout?.dragmode as string | undefined),

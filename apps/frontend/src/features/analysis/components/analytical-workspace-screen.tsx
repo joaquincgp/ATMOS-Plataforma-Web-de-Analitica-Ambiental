@@ -128,6 +128,7 @@ export function AnalyticalWorkspaceScreen() {
     setPlotViewport,
     timeAggregation,
     setTimeAggregation,
+    setAvailableVariables,
   } = useAnalyticalWorkspaceState();
   const [chartType, setChartType] = useState<ChartType>('line');
   const [labSection, setLabSection] = useState<LabSection>('load-data');
@@ -482,6 +483,10 @@ export function AnalyticalWorkspaceScreen() {
     () => availableVariables.map((variable) => variable.code),
     [availableVariables],
   );
+
+  useEffect(() => {
+    setAvailableVariables(availableVariables);
+  }, [availableVariables, setAvailableVariables]);
 
   const activeRawSelectedVariables = useMemo(
     () => (labSection === 'load-data' ? [] : getVariablesForScope(labSection, availableVariableCodes)),

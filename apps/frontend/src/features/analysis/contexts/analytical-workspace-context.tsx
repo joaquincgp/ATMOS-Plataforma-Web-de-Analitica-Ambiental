@@ -16,6 +16,12 @@ export interface PlotViewport {
   to: string | null;
 }
 
+export interface WorkspaceVariableOption {
+  code: string;
+  name: string;
+  inferredKind?: string;
+}
+
 interface AnalyticalWorkspaceStateValue {
   selectedSourceIds: number[];
   setSelectedSourceIds: Dispatch<SetStateAction<number[]>>;
@@ -41,6 +47,8 @@ interface AnalyticalWorkspaceStateValue {
   setGranularity: Dispatch<SetStateAction<TimeGranularity>>;
   timeAggregation: TimeAggregationMode;
   setTimeAggregation: Dispatch<SetStateAction<TimeAggregationMode>>;
+  availableVariables: WorkspaceVariableOption[];
+  setAvailableVariables: Dispatch<SetStateAction<WorkspaceVariableOption[]>>;
 }
 
 const AnalyticalWorkspaceContext = createContext<AnalyticalWorkspaceStateValue | undefined>(undefined);
@@ -58,6 +66,7 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
   const [plotViewport, setPlotViewport] = useState<PlotViewport>({ from: null, to: null });
   const [granularity, setGranularity] = useState<TimeGranularity>('day');
   const [timeAggregation, setTimeAggregation] = useState<TimeAggregationMode>('mean');
+  const [availableVariables, setAvailableVariables] = useState<WorkspaceVariableOption[]>([]);
 
   useEffect(() => {
     const loadQueryLimit = async () => {
@@ -101,6 +110,8 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
         setGranularity,
         timeAggregation,
         setTimeAggregation,
+        availableVariables,
+        setAvailableVariables,
       }}
     >
       {children}
