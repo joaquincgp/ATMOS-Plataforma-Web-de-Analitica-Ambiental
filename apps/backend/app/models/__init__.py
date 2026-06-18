@@ -1,3 +1,4 @@
+from app.models.app_config import AppConfig
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
 from app.models.measurement import Measurement
@@ -22,4 +23,5 @@ __all__ = [
     "Workspace",
     "RefreshToken",
     "PasswordResetToken",
+    "AppConfig",
 ]

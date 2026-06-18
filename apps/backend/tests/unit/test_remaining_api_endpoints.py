@@ -13,6 +13,8 @@ from app.main import handle_database_operational_error
 from app.schemas.analytics import AnalyticsQueryResponse
 from app.schemas.auth import (
     AdminCreateUserRequest,
+    AdminUpdateUserRequest,
+    AdminUserResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -73,6 +75,7 @@ def _user_response() -> UserResponse:
         is_active=True,
         is_verified=True,
         created_at=datetime(2025, 1, 1),
+        updated_at=datetime(2025, 1, 1),
     )
 
 
@@ -99,6 +102,17 @@ def test_auth_endpoints_delegate_and_map_errors(monkeypatch) -> None:
     monkeypatch.setattr(auth, "forgot_password", lambda db, payload: ForgotPasswordResponse(message="ok"))
     monkeypatch.setattr(auth, "reset_password", lambda db, payload: MessageResponse(message="reset"))
     monkeypatch.setattr(auth, "update_profile", lambda db, current_user, payload: user)
+    monkeypatch.setattr(auth, "list_admin_users", lambda db, search=None: [AdminUserResponse(**user.model_dump())])
+    monkeypatch.setattr(
+        auth,
+        "update_admin_user",
+        lambda db, target_user_id, payload, acting_user: AdminUserResponse(**user.model_dump()),
+    )
+    monkeypatch.setattr(
+        auth,
+        "deactivate_admin_user",
+        lambda db, target_user_id, acting_user: MessageResponse(message="off"),
+    )
 
     assert auth.register(RegisterRequest(email="user@example.com", full_name="User", password="password123")) is user
     assert auth.create_user_by_admin(
@@ -112,6 +126,16 @@ def test_auth_endpoints_delegate_and_map_errors(monkeypatch) -> None:
     )
     assert auth.logout(LogoutRequest(refresh_token="refresh-token"), _user=SimpleNamespace()).message == "done"
     assert auth.get_session(request, _user=SimpleNamespace()).authenticated is True
+    assert auth.list_users_for_admin(_admin=SimpleNamespace())[0].email == "user@example.com"
+    assert (
+        auth.update_user_by_admin(
+            "user-1",
+            AdminUpdateUserRequest(role=UserRole.admin),
+            admin=SimpleNamespace(id="admin-1"),
+        ).role
+        == UserRole.researcher
+    )
+    assert auth.deactivate_user_by_admin("user-1", admin=SimpleNamespace(id="admin-1")).message == "off"
     assert auth.get_me(SimpleNamespace(**user.model_dump())).email == "user@example.com"
     assert auth.patch_profile(UpdateProfileRequest(full_name="Updated User"), user=SimpleNamespace()) is user
     assert auth.forgot_password_route(ForgotPasswordRequest(email="user@example.com")).message == "ok"
@@ -164,6 +188,28 @@ def test_auth_endpoints_map_remaining_auth_errors(monkeypatch) -> None:
     with pytest.raises(HTTPException) as profile_exc:
         auth.patch_profile(UpdateProfileRequest(full_name="Updated User"), user=SimpleNamespace())
     assert profile_exc.value.status_code == 400
+
+    monkeypatch.setattr(
+        auth,
+        "update_admin_user",
+        lambda *args, **_kwargs: (_ for _ in ()).throw(AuthError("bad update")),
+    )
+    with pytest.raises(HTTPException) as admin_update_exc:
+        auth.update_user_by_admin(
+            "user-1",
+            AdminUpdateUserRequest(status=UserStatus.suspended),
+            admin=SimpleNamespace(id="admin-1"),
+        )
+    assert admin_update_exc.value.status_code == 400
+
+    monkeypatch.setattr(
+        auth,
+        "deactivate_admin_user",
+        lambda *args, **_kwargs: (_ for _ in ()).throw(AuthError("bad delete")),
+    )
+    with pytest.raises(HTTPException) as admin_delete_exc:
+        auth.deactivate_user_by_admin("user-1", admin=SimpleNamespace(id="admin-1"))
+    assert admin_delete_exc.value.status_code == 400
 
     monkeypatch.setattr(auth, "reset_password", lambda db, payload: (_ for _ in ()).throw(AuthError("bad reset")))
     with pytest.raises(HTTPException) as reset_exc:

@@ -17,6 +17,7 @@ from app.models.user import User
 from app.models.variable import Variable
 from app.schemas.advanced_analytics import AdvancedAnalyticsRequest, AdvancedAnalyticsResponse
 from app.services.advanced_analytics import fit_prophet_model, fit_statsmodels_model
+from app.services.app_config_service import get_config_map, get_default_config_map
 from app.services.etl.helpers import normalize_variable_code
 from app.services.manual_dataset import ManualDatasetEdaContext, ManualDatasetService
 from app.services.plotly_theme import apply_atmos_plotly_theme
@@ -30,11 +31,6 @@ _FREQ_MAP = {
     "year": "YS",
 }
 
-_MAX_STATSMODELS_POINTS = 5000
-_MAX_PROPHET_POINTS = 20000
-_MAX_FIGURE_POINTS = 4000
-
-
 class AdvancedAnalyticsError(Exception):
     pass
 
@@ -44,6 +40,7 @@ class AdvancedAnalyticsService:
         self.db = db
         self.user = user
         self.manual_dataset_service = ManualDatasetService(db)
+        self.config = get_config_map(db) if db is not None else get_default_config_map()
 
     def run_forecast(self, payload: AdvancedAnalyticsRequest) -> AdvancedAnalyticsResponse:
         warnings: list[str] = []
@@ -274,22 +271,27 @@ class AdvancedAnalyticsService:
 
     def _validate_model_budget(self, series: pd.Series, payload: AdvancedAnalyticsRequest) -> None:
         point_count = int(series.dropna().shape[0])
-        if payload.model in {"arima", "sarima"} and point_count > _MAX_STATSMODELS_POINTS:
+        max_statsmodels_points = self._config_int("analytics.max_statsmodels_points")
+        max_prophet_points = self._config_int("analytics.max_prophet_points")
+        if payload.model in {"arima", "sarima"} and point_count > max_statsmodels_points:
             raise AdvancedAnalyticsError(
-                "La serie es demasiado grande para ARIMA/SARIMA con la granularidad actual. "
+                "La serie es demasiado grande para ARIMA/SARIMA "
+                f"({point_count} puntos, limite {max_statsmodels_points}). "
                 "Usa una granularidad más gruesa o reduce la ventana temporal."
             )
-        if payload.model == "prophet" and point_count > _MAX_PROPHET_POINTS:
+        if payload.model == "prophet" and point_count > max_prophet_points:
             raise AdvancedAnalyticsError(
-                "La serie es demasiado grande para Prophet con la granularidad actual. "
+                f"La serie es demasiado grande para Prophet ({point_count} puntos, limite {max_prophet_points}). "
                 "Usa una granularidad más gruesa o reduce la ventana temporal."
             )
 
     def _validate_minimum_series_length(self, series: pd.Series, payload: AdvancedAnalyticsRequest) -> None:
         point_count = int(series.dropna().shape[0])
-        minimum_points = 12 if payload.model == "sarima" else 8
+        minimum_points = self._config_int("analytics.min_series_length_sarima") if payload.model == "sarima" else (
+            self._config_int("analytics.min_series_length_arima")
+        )
         if payload.model == "prophet":
-            minimum_points = 3
+            minimum_points = self._config_int("analytics.min_series_length_prophet")
         if point_count < minimum_points:
             raise AdvancedAnalyticsError(
                 "La serie tiene muy pocas observaciones para este modelo "
@@ -441,13 +443,21 @@ class AdvancedAnalyticsService:
         return figure
 
     def _apply_plot_budget(self, frame: pd.DataFrame) -> pd.DataFrame:
-        if len(frame) <= _MAX_FIGURE_POINTS:
+        max_figure_points = self._config_int("analytics.max_figure_points")
+        if len(frame) <= max_figure_points:
             return frame
-        step = max(1, math.ceil(len(frame) / _MAX_FIGURE_POINTS))
+        step = max(1, math.ceil(len(frame) / max_figure_points))
         decimated = frame.iloc[::step].copy()
         if decimated.iloc[-1]["bucket"] != frame.iloc[-1]["bucket"]:
             decimated = pd.concat([decimated, frame.iloc[[-1]]], ignore_index=True)
         return decimated.reset_index(drop=True)
+
+    def _config_int(self, key: str) -> int:
+        config = getattr(self, "config", None)
+        if config is None:
+            config = get_default_config_map()
+            self.config = config
+        return int(config[key])
 
     def _normalized_variable_sql_expr(self, column: Any) -> Any:
         expression = func.upper(column)

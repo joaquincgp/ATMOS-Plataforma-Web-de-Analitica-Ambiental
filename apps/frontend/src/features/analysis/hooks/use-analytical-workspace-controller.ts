@@ -450,7 +450,7 @@ export function useAnalyticalWorkspaceController({
           bootstrapActions.setSelectedSourceIds(firstSource ? [firstSource.id] : []);
         }
         if (!rowLimit) {
-          bootstrapActions.setRowLimit(Math.max(100, Math.min(5000, firstSource?.row_count ?? 5000)));
+          bootstrapActions.setRowLimit(Math.max(100, firstSource?.row_count ?? 100));
         }
         if (!dateFrom && !dateTo) {
           bootstrapActions.setRangePreset('all');

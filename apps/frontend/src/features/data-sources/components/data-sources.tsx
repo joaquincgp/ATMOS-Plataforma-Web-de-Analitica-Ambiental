@@ -18,6 +18,7 @@ import {
   type AnalyticsDataRow,
   type AnalyticsFilterOptionsResponse,
 } from '@/api/modules/analytics';
+import { getAppConfig } from '@/api/modules/app-config';
 import {
   deleteManualDataset,
   listManualDatasets,
@@ -39,6 +40,7 @@ import { useEtl } from '@/hooks/use-etl';
 import { formatEcuadorDateTime, parseBackendDateInEcuador } from '@/shared/lib/datetime';
 
 const MAX_REMMAQ_VARIABLES = 3;
+const FALLBACK_QUERY_LIMIT = 5000;
 
 type SourceMode = 'manual' | 'sync' | 'existing';
 
@@ -110,6 +112,10 @@ function Stepper({ currentStep, onStepClick }: StepperProps) {
   );
 }
 
+function clampRowLimit(value: number, maxLimit: number) {
+  return Math.max(100, Math.min(maxLimit, Math.floor(value || 100)));
+}
+
 export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void }) {
   const [currentStep, setCurrentStep] = useState(1);
   const [sourceType, setSourceType] = useState<SourceMode>('manual');
@@ -129,7 +135,8 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
   const [managerSelectedVariables, setManagerSelectedVariables] = useState<string[]>([]);
   const [managerDateFrom, setManagerDateFrom] = useState('');
   const [managerDateTo, setManagerDateTo] = useState('');
-  const [managerLimit, setManagerLimit] = useState(500);
+  const [managerMaxLimit, setManagerMaxLimit] = useState(FALLBACK_QUERY_LIMIT);
+  const [managerLimit, setManagerLimit] = useState(FALLBACK_QUERY_LIMIT);
   const [manualDataset, setManualDataset] = useState<ManualDatasetResponse | null>(null);
   const [manualDatasets, setManualDatasets] = useState<ManualDatasetResponse[]>([]);
   const [manualDatasetsLoading, setManualDatasetsLoading] = useState(false);
@@ -153,6 +160,24 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
     setPlotViewport,
     setGranularity,
   } = useAnalyticalWorkspaceState();
+
+  useEffect(() => {
+    const loadQueryLimitConfig = async () => {
+      try {
+        const response = await getAppConfig();
+        const configuredLimit = response.items.find((item) => item.key === 'analytics.default_query_limit')?.value;
+        if (typeof configuredLimit !== 'number') {
+          return;
+        }
+        const nextLimit = Math.max(100, Math.floor(configuredLimit));
+        setManagerMaxLimit(nextLimit);
+        setManagerLimit(nextLimit);
+      } catch {
+        // Keep the compiled fallback if config is temporarily unavailable.
+      }
+    };
+    void loadQueryLimitConfig();
+  }, []);
 
   const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
   const finalizedManualDatasets = useMemo(
@@ -310,7 +335,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
         variable_codes: managerSelectedVariables.length > 0 ? managerSelectedVariables : undefined,
         date_from: managerDateFrom || undefined,
         date_to: managerDateTo || undefined,
-        limit: Math.max(100, Math.min(5000, managerLimit)),
+        limit: clampRowLimit(managerLimit, managerMaxLimit),
       });
       setManagerRows(response.rows);
       if (response.rows.length === 0) {
@@ -414,7 +439,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
           setDateFrom(managerDateFrom);
           setDateTo(managerDateTo);
           setRangePreset(managerDateFrom || managerDateTo ? 'custom' : 'all');
-          setRowLimit(Math.max(100, Math.min(5000, managerLimit)));
+          setRowLimit(clampRowLimit(managerLimit, managerMaxLimit));
         }
       } else {
         if (!latestRun) {
@@ -437,7 +462,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
         setDateFrom(remmaqDateFrom);
         setDateTo(remmaqDateTo);
         setRangePreset(remmaqDateFrom || remmaqDateTo ? 'custom' : 'all');
-        setRowLimit(Math.max(100, Math.min(5000, matchingSources[0]?.row_count ?? 5000)));
+        setRowLimit(clampRowLimit(matchingSources[0]?.row_count ?? managerMaxLimit, managerMaxLimit));
       }
 
       setGranularity('day');
@@ -623,9 +648,10 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
               managerDateFrom={managerDateFrom}
               managerDateTo={managerDateTo}
               managerLimit={managerLimit}
+              managerMaxLimit={managerMaxLimit}
               onManagerDateFromChange={setManagerDateFrom}
               onManagerDateToChange={setManagerDateTo}
-              onManagerLimitChange={setManagerLimit}
+              onManagerLimitChange={(value) => setManagerLimit(clampRowLimit(value, managerMaxLimit))}
               onManagerToggleSourceFile={toggleManagerSourceFile}
               onManagerToggleStation={toggleManagerStation}
               onManagerToggleVariable={toggleManagerVariable}
@@ -717,6 +743,7 @@ interface SourceStepProps {
   managerDateFrom: string;
   managerDateTo: string;
   managerLimit: number;
+  managerMaxLimit: number;
   onManagerDateFromChange: (value: string) => void;
   onManagerDateToChange: (value: string) => void;
   onManagerLimitChange: (value: number) => void;
@@ -762,6 +789,7 @@ function SourceStep({
   managerDateFrom,
   managerDateTo,
   managerLimit,
+  managerMaxLimit,
   onManagerDateFromChange,
   onManagerDateToChange,
   onManagerLimitChange,
@@ -973,6 +1001,7 @@ function SourceStep({
               dateFrom={managerDateFrom}
               dateTo={managerDateTo}
               limit={managerLimit}
+              maxLimit={managerMaxLimit}
               onDateFromChange={onManagerDateFromChange}
               onDateToChange={onManagerDateToChange}
               onLimitChange={onManagerLimitChange}
@@ -1155,6 +1184,7 @@ interface ExistingDataPanelProps {
   dateFrom: string;
   dateTo: string;
   limit: number;
+  maxLimit: number;
   onDateFromChange: (value: string) => void;
   onDateToChange: (value: string) => void;
   onLimitChange: (value: number) => void;
@@ -1182,6 +1212,7 @@ function ExistingDataPanel({
   dateFrom,
   dateTo,
   limit,
+  maxLimit,
   onDateFromChange,
   onDateToChange,
   onLimitChange,
@@ -1278,12 +1309,13 @@ function ExistingDataPanel({
               id="manager-limit"
               type="number"
               min={100}
-              max={5000}
+              max={maxLimit}
               step={100}
               value={limit}
-              onChange={(event) => onLimitChange(Math.max(100, Math.min(5000, Number(event.target.value || 100))))}
+              onChange={(event) => onLimitChange(clampRowLimit(Number(event.target.value || 100), maxLimit))}
               className="h-9"
             />
+            <p className="text-[11px] text-muted-foreground">Max configured: {maxLimit.toLocaleString()}</p>
           </div>
         </div>
 

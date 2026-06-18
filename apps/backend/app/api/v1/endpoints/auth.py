@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db_session, require_roles
 from app.models.user import User
 from app.schemas.auth import (
     AdminCreateUserRequest,
+    AdminUpdateUserRequest,
+    AdminUserResponse,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -22,12 +24,15 @@ from app.schemas.auth import (
 from app.services.auth_service import (
     AuthError,
     admin_create_user,
+    deactivate_admin_user,
     forgot_password,
+    list_admin_users,
     login_user,
     logout_user,
     refresh_access_token,
     register_user,
     reset_password,
+    update_admin_user,
     update_profile,
     validate_session,
 )
@@ -60,6 +65,40 @@ def create_user_by_admin(
 ) -> UserResponse:
     try:
         return admin_create_user(db, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.get("/admin/users", response_model=list[AdminUserResponse])
+def list_users_for_admin(
+    search: str | None = Query(default=None, max_length=255),
+    db: Session = Depends(get_db_session),
+    _admin: User = Depends(require_roles(UserRole.admin)),
+) -> list[AdminUserResponse]:
+    return list_admin_users(db, search=search)
+
+
+@router.patch("/admin/users/{user_id}", response_model=AdminUserResponse)
+def update_user_by_admin(
+    user_id: str,
+    payload: AdminUpdateUserRequest,
+    db: Session = Depends(get_db_session),
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> AdminUserResponse:
+    try:
+        return update_admin_user(db, target_user_id=user_id, payload=payload, acting_user=admin)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.delete("/admin/users/{user_id}", response_model=MessageResponse)
+def deactivate_user_by_admin(
+    user_id: str,
+    db: Session = Depends(get_db_session),
+    admin: User = Depends(require_roles(UserRole.admin)),
+) -> MessageResponse:
+    try:
+        return deactivate_admin_user(db, target_user_id=user_id, acting_user=admin)
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 

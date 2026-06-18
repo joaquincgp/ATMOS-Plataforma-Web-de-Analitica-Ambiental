@@ -26,6 +26,7 @@ from app.schemas.analytics import (
     StationLiveSnapshotResponse,
     StationLiveSnapshotResponseItem,
 )
+from app.services.app_config_service import get_config_int
 from app.services.etl.helpers import normalize_variable_code
 from app.services.station_reference import (
     resolve_station_reference,
@@ -37,7 +38,6 @@ FORBIDDEN_SQL_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 
-DEFAULT_ANALYTICS_LIMIT = 5000
 EXCLUDED_ANALYTICS_SOURCE_TYPES = {"public_dashboard"}
 EXCLUDED_ANALYTICS_SOURCE_SUFFIXES = (".json",)
 
@@ -75,6 +75,7 @@ def _user_measurement_filter() -> Any:
 
 def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
     sync_station_reference_metadata(db)
+    source_list_limit = get_config_int(db, "analytics.source_list_limit")
 
     measurement_count = func.count(Measurement.id).label("measurement_count")
     source_rows = db.execute(
@@ -99,7 +100,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         )
         .having(func.count(Measurement.id) > 0)
         .order_by(desc(SourceFile.downloaded_at), desc(measurement_count), desc(SourceFile.id))
-        .limit(300)
+        .limit(source_list_limit)
     ).all()
 
     station_rows = db.execute(
@@ -181,6 +182,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
 
 
 def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
+    default_query_limit = get_config_int(db, "analytics.default_query_limit")
     statement = (
         select(
             Measurement.observed_at,
@@ -228,16 +230,11 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
 
     ordered_statement = statement.order_by(Measurement.observed_at.asc())
     dataset_max_rows = _resolve_dataset_max_rows(db, payload.source_file_ids)
-    if payload.limit is None:
-        result_rows = db.execute(ordered_statement).all()
-        truncated = False
-        capped_rows = result_rows
-    else:
-        requested_limit = max(1, payload.limit)
-        effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
-        result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
-        truncated = len(result_rows) > effective_limit
-        capped_rows = result_rows[:effective_limit]
+    requested_limit = max(1, payload.limit if payload.limit is not None else default_query_limit)
+    effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
+    result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
+    truncated = len(result_rows) > effective_limit
+    capped_rows = result_rows[:effective_limit]
 
     return AnalyticsQueryResponse(
         rows=[

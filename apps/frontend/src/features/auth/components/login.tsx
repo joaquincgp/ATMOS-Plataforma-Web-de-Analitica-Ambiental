@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { motion } from 'motion/react';
-import { Cloud, Wind, Leaf, Droplets, Sun, CloudRain, TreeDeciduous, Waves } from 'lucide-react';
+import { AlertCircle, Cloud, Wind, Leaf, Droplets, Sun, CloudRain, TreeDeciduous, Waves } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,29 +28,42 @@ const floatingIcons = [
   { Icon: Waves, delay: 1, x: '80%', y: '85%', duration: 20, scale: 0.95 },
 ] as const;
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPassword }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const errors: Record<string, string> = {};
+    const normalizedEmail = email.trim().toLowerCase();
 
-    if (!email.trim() || !password.trim()) {
-      setError('Email and password are required.');
-      return;
+    if (!normalizedEmail) {
+      errors.email = 'Ingresa tu correo electrónico.';
+    } else if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      errors.email = 'Ingresa un correo válido.';
     }
 
-    if (password.length < 8) {
-      setError('Password must have at least 8 characters.');
+    if (!password.trim()) {
+      errors.password = 'Ingresa tu contraseña.';
+    } else if (password.length < 8) {
+      errors.password = 'La contraseña debe tener al menos 8 caracteres.';
+    }
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setError('Revisa los campos marcados antes de continuar.');
       return;
     }
 
     setError(null);
     setIsSubmitting(true);
     try {
-      await onLogin({ email: email.trim().toLowerCase(), password });
+      await onLogin({ email: normalizedEmail, password });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not sign in.');
     } finally {
@@ -141,10 +154,15 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
                   type="email"
                   placeholder="researcher@udla.edu.ec"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setFieldErrors((current) => ({ ...current, email: '' }));
+                  }}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.email)}
                   required
                 />
+                {fieldErrors.email && <p className="text-xs text-red-600">{fieldErrors.email}</p>}
               </div>
 
               <div className="space-y-2">
@@ -156,10 +174,15 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
                   type="password"
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setFieldErrors((current) => ({ ...current, password: '' }));
+                  }}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.password)}
                   required
                 />
+                {fieldErrors.password && <p className="text-xs text-red-600">{fieldErrors.password}</p>}
               </div>
 
               <div className="text-right">
@@ -172,7 +195,12 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
                 </button>
               </div>
 
-              {error && <p className="text-sm text-red-600">{error}</p>}
+              {error && (
+                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
 
               <Button
                 type="submit"

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.user import User
 from app.schemas.eda import EdaPlotRequest, EdaPlotResponse, EdaSecondaryFigure
+from app.services.app_config_service import get_config_map
 from app.services.eda.common import GENERIC_SECTIONS, EdaServiceError, EdaSharedMixin
 from app.services.eda.generic import EdaGenericMixin
 from app.services.eda.measurement import EdaMeasurementMixin
@@ -19,6 +20,7 @@ class EdaService(EdaGenericMixin, EdaMeasurementMixin, EdaSharedMixin):
         self.db = db
         self.user = user
         self.manual_dataset_service = ManualDatasetService(db)
+        self.config = get_config_map(db)
 
     def build_plot(self, payload: EdaPlotRequest) -> EdaPlotResponse:
         warnings: list[str] = []

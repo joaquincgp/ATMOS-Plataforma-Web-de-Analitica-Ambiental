@@ -1,17 +1,25 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useState,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from 'react';
 
+import { getAppConfig } from '@/api/modules/app-config';
 import type { TimeAggregationMode, TimeGranularity } from '@/features/analysis/lib/analytical-workspace-config';
 
 export interface PlotViewport {
   from: string | null;
   to: string | null;
+}
+
+export interface WorkspaceVariableOption {
+  code: string;
+  name: string;
+  inferredKind?: string;
 }
 
 interface AnalyticalWorkspaceStateValue {
@@ -39,6 +47,8 @@ interface AnalyticalWorkspaceStateValue {
   setGranularity: Dispatch<SetStateAction<TimeGranularity>>;
   timeAggregation: TimeAggregationMode;
   setTimeAggregation: Dispatch<SetStateAction<TimeAggregationMode>>;
+  availableVariables: WorkspaceVariableOption[];
+  setAvailableVariables: Dispatch<SetStateAction<WorkspaceVariableOption[]>>;
 }
 
 const AnalyticalWorkspaceContext = createContext<AnalyticalWorkspaceStateValue | undefined>(undefined);
@@ -52,10 +62,26 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
   const [dateTo, setDateTo] = useState('');
   const [rangePreset, setRangePreset] = useState('all');
   const [sourceSearch, setSourceSearch] = useState('');
-  const [rowLimit, setRowLimit] = useState(50000);
+  const [rowLimit, setRowLimit] = useState(5000);
   const [plotViewport, setPlotViewport] = useState<PlotViewport>({ from: null, to: null });
   const [granularity, setGranularity] = useState<TimeGranularity>('day');
   const [timeAggregation, setTimeAggregation] = useState<TimeAggregationMode>('mean');
+  const [availableVariables, setAvailableVariables] = useState<WorkspaceVariableOption[]>([]);
+
+  useEffect(() => {
+    const loadQueryLimit = async () => {
+      try {
+        const response = await getAppConfig();
+        const defaultLimit = response.items.find((item) => item.key === 'analytics.default_query_limit')?.value;
+        if (typeof defaultLimit === 'number') {
+          setRowLimit(Math.max(100, Math.floor(defaultLimit)));
+        }
+      } catch {
+        // Keep the compiled default when configuration cannot be loaded.
+      }
+    };
+    void loadQueryLimit();
+  }, []);
 
   return (
     <AnalyticalWorkspaceContext.Provider
@@ -84,6 +110,8 @@ export function AnalyticalWorkspaceProvider({ children }: { children: ReactNode 
         setGranularity,
         timeAggregation,
         setTimeAggregation,
+        availableVariables,
+        setAvailableVariables,
       }}
     >
       {children}

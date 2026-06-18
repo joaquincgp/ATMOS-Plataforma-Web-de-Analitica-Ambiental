@@ -22,6 +22,7 @@ import {
   type ForgotPasswordResponse,
   type RegisterRequest,
   type ResetPasswordRequest,
+  type UpdateProfileRequest,
   type UserResponse,
 } from '@/api/modules/auth';
 
@@ -48,7 +49,7 @@ interface AuthContextValue {
   forgotPassword: (email: string) => Promise<ForgotPasswordResponse>;
   resetPassword: (payload: ResetPasswordRequest) => Promise<void>;
   refreshSession: () => Promise<boolean>;
-  updateUserProfile: (fullName: string) => Promise<void>;
+  updateUserProfile: (payload: UpdateProfileRequest) => Promise<void>;
 }
 
 const AUTH_STORAGE_KEY = 'atmos.auth.v1';
@@ -205,8 +206,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await resetPassword(payload);
   }, []);
 
-  const updateUserProfile = useCallback(async (fullName: string) => {
-    const updated = await updateProfile({ full_name: fullName });
+  const updateUserProfile = useCallback(async (payload: UpdateProfileRequest) => {
+    const updated = await updateProfile(payload);
     setAuthState((current) => ({ ...current, user: updated }));
   }, []);
 

@@ -43,11 +43,22 @@ class UserResponse(AuthBaseModel):
     id: str
     email: str
     full_name: str
+    institution: str | None = None
+    job_title: str | None = None
+    department: str | None = None
+    phone: str | None = None
+    country: str | None = None
     role: UserRole
     status: UserStatus
     is_active: bool
     is_verified: bool
+    last_login_at: datetime | None = None
     created_at: datetime
+    updated_at: datetime
+
+
+class AdminUserResponse(UserResponse):
+    workspace_count: int = 0
 
 
 class LoginRequest(AuthBaseModel):
@@ -58,12 +69,18 @@ class LoginRequest(AuthBaseModel):
 class RegisterRequest(AuthBaseModel):
     email: str
     full_name: str = Field(min_length=2, max_length=255)
+    institution: str | None = Field(default=None, max_length=255)
     password: str = Field(min_length=8, max_length=128)
 
 
 class AdminCreateUserRequest(RegisterRequest):
     role: UserRole = UserRole.researcher
     status: UserStatus = UserStatus.active
+
+
+class AdminUpdateUserRequest(AuthBaseModel):
+    role: UserRole | None = None
+    status: UserStatus | None = None
 
 
 class TokenPairResponse(AuthBaseModel):
@@ -108,3 +125,8 @@ class MessageResponse(AuthBaseModel):
 
 class UpdateProfileRequest(AuthBaseModel):
     full_name: str = Field(min_length=2, max_length=255)
+    institution: str | None = Field(default=None, max_length=255)
+    job_title: str | None = Field(default=None, max_length=255)
+    department: str | None = Field(default=None, max_length=255)
+    phone: str | None = Field(default=None, max_length=64)
+    country: str | None = Field(default=None, max_length=128)

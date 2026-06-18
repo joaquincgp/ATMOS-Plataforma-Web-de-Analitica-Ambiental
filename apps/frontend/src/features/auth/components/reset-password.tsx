@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,12 +36,13 @@ export function ResetPassword({ initialToken, onReset, onBackToLogin }: ResetPas
     setError(null);
 
     if (values.newPassword !== values.confirmPassword) {
-      setError('Password confirmation does not match.');
+      form.setError('confirmPassword', { message: 'Password confirmation does not match.' });
+      setError('Revisa los campos marcados antes de continuar.');
       return;
     }
 
     try {
-      await onReset({ token: values.token, new_password: values.newPassword });
+      await onReset({ token: values.token.trim(), new_password: values.newPassword });
       setMessage('Password reset complete. You can now sign in.');
       form.reset({ token: '', newPassword: '', confirmPassword: '' });
     } catch (err) {
@@ -79,8 +81,12 @@ export function ResetPassword({ initialToken, onReset, onBackToLogin }: ResetPas
                 {...form.register('newPassword', {
                   required: 'New password is required.',
                   minLength: { value: 8, message: 'Minimum 8 characters.' },
+                  maxLength: { value: 128, message: 'Maximum 128 characters.' },
                 })}
               />
+              {form.formState.errors.newPassword && (
+                <p className="text-sm text-red-600">{form.formState.errors.newPassword.message}</p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -92,10 +98,23 @@ export function ResetPassword({ initialToken, onReset, onBackToLogin }: ResetPas
                   required: 'Please confirm your password.',
                 })}
               />
+              {form.formState.errors.confirmPassword && (
+                <p className="text-sm text-red-600">{form.formState.errors.confirmPassword.message}</p>
+              )}
             </div>
 
-            {message && <p className="text-sm text-green-700">{message}</p>}
-            {error && <p className="text-sm text-red-600">{error}</p>}
+            {message && (
+              <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                <span>{message}</span>
+              </div>
+            )}
+            {error && (
+              <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
 
             <Button type="submit" className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
               Reset password

@@ -1,150 +1,220 @@
-# ATMOS (Atmospheric Time-series Modeling & Observation System)
+# ATMOS
 
-ATMOS es una plataforma web diseñada para la ingestión, transformación (ETL), analítica, monitoreo y predicción de calidad de aire basada en series temporales. El sistema está orientado a la gestión de áreas de investigación (workspaces) completamente aisladas, permitiendo que distintos equipos o proyectos analicen datos ambientales de forma independiente, reproducible y segura. 
+ATMOS (Atmospheric Time-series Modeling & Observation System) es una plataforma web para ingestión, transformación, análisis, monitoreo y predicción de datos de calidad del aire basados en series temporales.
 
-La plataforma aprovecha los datos públicos recopilados por la REMMAQ (Red Metropolitana de Monitoreo de Calidad del Aire), gracias a su red de sensores, para visibilizar, interpretar y comunicar el estado de la calidad del aire en la ciudad de Quito, mediante visualizaciones interactivas y modelos predictivos.
+La aplicación usa datos públicos de la REMMAQ para visualizar e interpretar la calidad del aire en Quito, y permite trabajar con espacios de análisis aislados por equipo o proyecto.
 
-##  Características Principales
-- **ETL Robusto:** Ingestión de series temporales históricas y soporte para cargas de datos manuales.
-- **Analytical Workspace:** Entornos interactivos de análisis con visualizaciones de datos y gráficos dinámicos.
-- **Autenticación y RBAC:** Seguridad basada en JSON Web Tokens (JWT) con control de acceso basado en roles (`admin`, `researcher`, `generic`).
-- **Arquitectura Multi-tenant:** Aislamiento de datos a nivel de base de datos utilizando un esquema de PostgreSQL por cada tenant/workspace (`schema-per-tenant`).
-- **Persistencia de Dashboards:** Guardado de dashboards personalizados por workspace con soporte para bloques de visualización dinámicos.
+## Características
 
-## Stack Tecnológico
-El proyecto está estructurado como un monorepo que divide claramente las responsabilidades del cliente y del servidor:
+- Ingesta ETL desde fuentes REMMAQ y cargas manuales.
+- Dashboards y análisis de series temporales por workspace.
+- Autenticación JWT y roles `admin`, `researcher` y `generic`.
+- Arquitectura multi-tenant con un esquema PostgreSQL por workspace.
+- Persistencia de artefactos, archivos y configuraciones de análisis.
 
-**Backend:**
-- **[FastAPI](https://fastapi.tiangolo.com/):** Framework web de alto rendimiento para construir APIs con Python 3.11+.
-- **SQLAlchemy (v2) & Alembic:** ORM y sistema de migraciones para la gestión fluida de base de datos.
-- **PostgreSQL & PostGIS:** Motor de base de datos relacional con extensión geoespacial para datos atmosféricos y de ubicación.
-- **Pydantic:** Validación estricta de datos y gestión de configuraciones (settings).
-- **Pandas & Beautifulsoup4:** Utilizados intensivamente en pipelines ETL para procesamiento matemático y extracción de datos web.
+## Stack
 
-**Frontend:**
-- **React 18 & TypeScript:** Core del cliente para la construcción de interfaces seguras e interactivas.
-- **Vite:** Herramienta de compilación ultrarrápida (HMR) e inicialización del proyecto.
-- **Tailwind CSS & Radix UI / MUI:** Sistemas de diseño y utilidades CSS pragmáticas para estilado responsivo y componentes accesibles de alto nivel.
-- **Recharts:** Librería de gráficos composables enfocada en la visualización clara de series temporales.
-- **React Leaflet:** Integración con mapas interactivos para información geoespacial.
+- Backend: FastAPI, Python 3.11+, SQLAlchemy 2, Pydantic, Pandas, PostgreSQL y PostGIS.
+- Frontend: React 18, TypeScript, Vite, Tailwind CSS, Radix UI/MUI, Recharts, Plotly y React Leaflet.
+- Infra local: Docker Compose con PostgreSQL/PostGIS, API y frontend estático servido por Nginx.
 
-## 📁 Estructura del Proyecto
+## Estructura
+
 ```text
-ATMOS/
+.
 ├── apps/
-│   ├── backend/       # API RESTful en FastAPI, servicios ETL, modelos de BD
-│   └── frontend/      # SPA interactiva en React + Vite + Tailwind CSS
-├── docs/              # Documentación técnica, diseño y manuales
-├── infra/             # Configuraciones de infraestructura y despliegue 
-├── packages/          # Módulos y dependencias compartidas (ej. contracts comunes)
-├── docker-compose.yml # Orquestación de contenedores para desarrollo local unificado
-└── package.json       # Funciones y scripts globales de NPM Workspace
+│   ├── backend/       # API FastAPI, ETL, modelos y servicios
+│   └── frontend/      # SPA React + Vite
+├── docs/              # Documentación técnica
+├── infra/             # Infraestructura y despliegue
+├── packages/
+│   └── contracts/     # Contratos API compartidos
+├── docker-compose.yml # Ejecución local con contenedores
+├── Makefile           # Atajos de desarrollo
+└── package.json       # Scripts de workspace
 ```
 
-## Variables de Entorno (Configuración)
-Para configurar la API, debes copiar el archivo de ejemplo en el backend (ubicado en `apps/backend/.env.example`) a `apps/backend/.env` y ajustar las variables según necesites:
+## Requisitos
 
-- `DATABASE_URL`: Cadena de conexión principal para PostgreSQL (ej. `postgresql+psycopg://atmos:password@localhost:5432/atmos`).
-- `JWT_SECRET_KEY`: Clave secreta para firmar los tokens JWT. **Debe cambiarse para entornos de producción.**
-- `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`: Configuración de la duración y vigencia de la sesión de usuario.
-- `AUTO_INIT_DB_ON_STARTUP`: Al asiganarle `true`, el esquema base se inicializará automáticamente en la base de datos de PostgreSQL.
-- `WORKSPACE_STORAGE_DIR`: Directorio en disco donde se persistirán archivos y artefactos de los workspaces (por defecto: `./data/workspaces`).
-- `CORS_ORIGINS`: URLs permitidas para solicitudes en el ambiente web (por defecto en local: `http://localhost:5173`).
+Para Docker:
 
-## Instalación y Formas de Ejecución
+- Docker y Docker Compose.
 
-Existen dos vías principales para correr la plataforma de manera local: corriendo contenedores con Docker/Docker Compose (muy recomendado para un arranque sin fricciones) o ejecutando los procesos por su cuenta en el entorno host.
+Para ejecución local sin contenedores de aplicación:
 
-### Opción 1: Docker Compose
-Requisitos previos: `Docker` y `Docker Compose` corriendo.
-Esta es la ruta más rápida. Inicializa contenedores para PostGIS, el servidor FastAPI (backend) y el entorno en caliente de Vite (frontend) sin configurar intérpretes locales.
+- Node.js 18+ y npm.
+- Python 3.11+.
+- PostgreSQL 16 con PostGIS, o el servicio `db` de `docker-compose.yml`.
 
-1. Instala las dependencias base a nivel raíz para tener control de los scripts:
+## Variables de entorno
+
+Para Docker no es obligatorio copiar archivos `.env`; `docker-compose.yml` incluye valores de desarrollo listos para levantar la aplicación. Opcionalmente puedes copiar el archivo raíz si quieres fijar el nombre del proyecto de Compose:
+
+```bash
+cp .env.example .env
+```
+
+Para ejecución local del backend:
+
+```bash
+cp apps/backend/.env.example apps/backend/.env
+```
+
+Variables clave:
+
+- `DATABASE_URL`: conexión PostgreSQL. En local con el `db` de Docker usa `postgresql+psycopg://atmos:atmos_dev_password@localhost:5432/atmos`.
+- `JWT_SECRET_KEY`: secreto para firmar tokens. Debe cambiarse fuera de desarrollo.
+- `AUTO_INIT_DB_ON_STARTUP`: si está en `true`, inicializa el esquema base al arrancar.
+- `CORS_ORIGINS`: orígenes permitidos para el frontend.
+- `WORKSPACE_STORAGE_DIR`: ruta donde se guardan archivos de workspaces.
+
+Para ejecución local del frontend:
+
+```bash
+cp apps/frontend/.env.example apps/frontend/.env.local
+```
+
+Variable clave:
+
+- `VITE_API_BASE_URL`: URL del backend, por defecto `http://localhost:8000`.
+
+## Ejecución Con Docker
+
+Esta es la opción recomendada para correr toda la plataforma en local. Levanta PostgreSQL/PostGIS, backend y frontend.
+
+Desde la raíz del proyecto:
+
+```bash
+docker compose up --build
+```
+
+También puedes usar los atajos equivalentes:
+
+```bash
+npm run dev
+# o
+make docker-dev
+```
+
+Servicios disponibles:
+
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8000`
+- Swagger/OpenAPI: `http://localhost:8000/docs`
+- PostgreSQL: `localhost:5432`
+
+Para detener los contenedores:
+
+```bash
+docker compose down
+```
+
+Para detenerlos y borrar los volúmenes de base de datos y workspaces:
+
+```bash
+docker compose down -v
+```
+
+## Ejecución Local Sin Contenedores De Aplicación
+
+Usa esta opción cuando necesites depurar backend o frontend directamente desde el host.
+
+1. Levanta solo la base de datos:
+
    ```bash
-   npm install
+   docker compose up -d db
    ```
-2. Ejecuta todo el conjunto mediante el comando de npm:
-   ```bash
-   npm run dev
-   ```
-   *Esto internamente orquestará `docker compose up --build` levantando los servicios enlazados y conectados por redes locales de bridge en Docker.*
 
-**Acceso a los Servicios:**
-- Aplicación Frontend SPA: `http://localhost:5173`
-- Backend API Principal: `http://localhost:8000`
-- Documentación OpenAPI Explicativa (Swagger UI): `http://localhost:8000/docs`
+2. Prepara y ejecuta el backend:
 
-### Opción 2: Ejecución Local Independiente
-Ideal para depuración pura en editores como VSCode, PyCharm u otros donde quieres utilizar los "debuggers" integrados del backend. Es necesario tener Node.js 18+, Python 3.11+, e idealmente una base de datos de Postgres levantada.
-
-1. **Base de Datos (PostgreSQL):**
-   Aún podrías usar Docker exclusivamente para levantar tu BD y no instalar Postgis manualmente:
-   ```bash
-   docker compose up db -d
-   ```
-2. **Setup y Run del Backend:**
-   Entra a la carpeta de aplicación, crea tu entorno virtual y ejecuta Uvicorn:
    ```bash
    cd apps/backend
    python -m venv .venv
    source .venv/bin/activate
    pip install -e ".[dev]"
+   cp .env.example .env
    uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
-3. **Setup y Run del Frontend:**
-   En otra terminal, corre solo el servidor de cliente desde la base de tu mono-repo:
+
+3. En otra terminal, prepara y ejecuta el frontend:
+
    ```bash
    npm install
+   cp apps/frontend/.env.example apps/frontend/.env.local
    npm run dev:frontend
    ```
 
-### Opcion 3: Acceso por Red Local (LAN)
+## Ejecución En Red Local
 
-Permite que otros equipos en la misma red (Wi-Fi o Ethernet) accedan a la aplicacion sin configuracion adicional. Probar la plataforma desde otros dispositivos mientras el servidor corre en una sola maquina.
+Para probar la aplicación desde otros dispositivos de la misma red:
 
-Requisitos previos: Node.js 18+, Python 3.11+ y PostgreSQL corriendo (puedes usar `make db-up`).
+```bash
+docker compose up -d db
+cd apps/backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+cd ../..
+npm install
+```
+
+Luego ejecuta:
 
 ```bash
 make dev-lan
 ```
 
-El comando detecta automaticamente la IP local de la maquina, configura el CORS del backend y la URL del frontend, y levanta ambos servidores.
+El comando detecta la IP local, ajusta `apps/backend/.env` y `apps/frontend/.env.local`, y levanta backend y frontend en `0.0.0.0`.
 
-Para detener los servidores usa `Ctrl+C`. 
-O para hacerlo manualmente, usa:
+Comandos relacionados:
 
 ```bash
 make lan-stop
-```
-
-Para limpiar los archivos de configuracion generados:
-
-```bash
 make lan-clean
 ```
 
-> **Nota:** Los archivos generados (`apps/backend/.env` y `apps/frontend/.env.local`) estan excluidos en `.gitignore` y no se subiran al repositorio.
+## Scripts Útiles
 
-## Scripts Disponibles con NPM Workspaces
-El archivo `package.json` raíz simplifica la inicialización orquestando las acciones frecuentas para los desarrolladores. Desde el directorio base del proyecto (`ATMOS/`) puedes usar:
+Desde la raíz del proyecto:
 
-- `npm run dev`: Inicia todo el orquestador backend, frontend, y BD en sus contenedores respectivos de Docker.
-- `npm run dev:frontend`: Levanta sólo el servidor dev de Vite para el frontend en `0.0.0.0:5173`.
-- `npm run build:frontend`: Fuerza la compilación (build) y empaquetado de React + TypeScript para entornos de producción.
-- `npm run lint:frontend`: Analiza y avisa de reglas de código erróneas usando ESLint en el frontend.
-- `npm run typecheck:frontend`: Lanza el sistema de tipos de TypeScript sin modificar ni emitir archivos JS puros para encontrar errores estrictos.
-- `npm run backend:dev`: Ingresa a la carpeta de API y levanta Uvicorn auto-recargable en el puerto 8000.
-- `npm run backend:test`: Busca y corre pruebas de verificación unitarias empleando `pytest` en la carpeta backend.
-- `npm run backend:lint`: Ejecuta el analizador sintáctico `ruff` en el Python de la API para garantizar el formato del código.
+- `npm run dev`: levanta toda la aplicación con Docker Compose.
+- `npm run dev:frontend`: levanta Vite en `0.0.0.0:5173`.
+- `npm run build:frontend`: compila el frontend.
+- `npm run lint:frontend`: ejecuta ESLint.
+- `npm run typecheck:frontend`: valida TypeScript.
+- `npm run test:frontend`: ejecuta pruebas del frontend.
+- `npm run backend:dev`: levanta FastAPI en modo recarga.
+- `npm run backend:test`: ejecuta pruebas del backend.
+- `npm run backend:lint`: ejecuta Ruff.
 
-## Flujo Básico de Uso
-1. **Puesta a Punto de DB:** Arranca el servidor (idealmente con `AUTO_INIT_DB_ON_STARTUP=true`). Esto sembrará las tablas y esquemas indispensables eliminando la necesidad de migraciones previas.
-2. **Acceso y Registro Inicial:** Accede a `http://localhost:5173`, regístrate usando la página de inicio como un nuevo usuario. Por lo general asimilarás un rol de `researcher` o `generic` lo que condiciona tu acceso.
-3. **Página de Workspaces:** Creada tu sesión, entra a la zona de Workspaces. Si el rol que posees lo permite, podrás crear uno. Al nombrarlo y configurarlo, el backend actuará de orquestador creando inmediatamente en la BD el esquema individualizado dedicado (ej. `ws_joaquin_clima_1`).
-4. **Análisis Continuo:** Ingresa dentro del workspace donde podrás administrar fuentes ETL, importar datos de CSVs/Excel, procesar información de API externas, y graficar resultados montando un Dashboard propio que será almacenado de manera continua y persistente bajo ese contexto virtual.
+Atajos equivalentes del `Makefile`:
 
-## Contribución
-¡Las contribuciones y Pull Requests son siempre bienvenidos! Por favor, asegúrate de revisar nuestra [Guía de Contribución](CONTRIBUTING.md) para conocer los estándares del proyecto y el ciclo de desarrollo recomendado.
+```bash
+make help
+make db-up
+make lint
+make typecheck
+make test
+make check
+```
+
+## Flujo Básico
+
+1. Levanta la plataforma con Docker.
+2. Entra a `http://localhost:5173`.
+3. Registra o inicia sesión con un usuario.
+4. Crea o selecciona un workspace.
+5. Carga datos, ejecuta procesos ETL y construye dashboards o análisis.
+
+## Documentación Relacionada
+
+- Backend: `apps/backend/README.md`
+- Frontend: `apps/frontend/README.md`
+- Contratos API: `packages/contracts/README.md`
+- Arquitectura: `docs/architecture.md`
+- Calidad y CI: `docs/quality-ci.md`
+- Azure: `infra/azure/README.md`
 
 ## Licencia
-Este proyecto está bajo la Licencia MIT. Consulta el archivo [LICENSE](LICENSE) para más detalles.
+
+Este proyecto está bajo licencia MIT. Consulta `LICENSE` para más detalles.

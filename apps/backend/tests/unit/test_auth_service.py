@@ -28,6 +28,7 @@ def _user(**overrides):
         "is_active": True,
         "is_verified": True,
         "created_at": datetime(2025, 1, 1),
+        "updated_at": datetime(2025, 1, 1),
     }
     values.update(overrides)
     return SimpleNamespace(**values)

@@ -1553,8 +1553,9 @@ class EdaGenericMixin:
             q1 = float(sorted_values[int(math.floor(len(sorted_values) * 0.25))])
             q3 = float(sorted_values[int(math.floor(len(sorted_values) * 0.75))])
             iqr = q3 - q1
-            lower_bound = q1 - iqr * 1.5
-            upper_bound = q3 + iqr * 1.5
+            iqr_multiplier = self._config_float("analytics.anomaly_iqr_multiplier")
+            lower_bound = q1 - iqr * iqr_multiplier
+            upper_bound = q3 + iqr * iqr_multiplier
             agg_frame["upper"] = upper_bound
             agg_frame["lower"] = lower_bound
             agg_frame["anomaly_value"] = np.where(

@@ -10,6 +10,7 @@ import {
   CloudRain,
   TreeDeciduous,
   Waves,
+  AlertCircle,
   CheckCircle2,
 } from 'lucide-react';
 
@@ -37,6 +38,8 @@ const floatingIcons = [
   { Icon: Waves, delay: 1, x: '80%', y: '85%', duration: 20, scale: 0.95 },
 ] as const;
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpProps) {
   const [formData, setFormData] = useState({
     fullName: '',
@@ -46,41 +49,60 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
     confirmPassword: '',
     termsAccepted: false,
   });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleChange = (field: keyof typeof formData, value: string | boolean) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    setFieldErrors((current) => ({ ...current, [field]: '' }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(null);
+    const errors: Record<string, string> = {};
+    const normalizedEmail = formData.email.trim().toLowerCase();
 
-    if (!formData.fullName.trim() || !formData.email.trim() || !formData.password || !formData.confirmPassword) {
-      setError('All required fields must be completed.');
-      return;
+    if (!formData.fullName.trim()) {
+      errors.fullName = 'Ingresa tu nombre completo.';
+    } else if (formData.fullName.trim().length < 2) {
+      errors.fullName = 'El nombre debe tener al menos 2 caracteres.';
     }
 
-    if (!/^\S+@\S+\.\S+$/.test(formData.email.trim())) {
-      setError('Invalid email format.');
-      return;
+    if (!normalizedEmail) {
+      errors.email = 'Ingresa tu correo electrónico.';
+    } else if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      errors.email = 'Ingresa un correo válido.';
     }
 
-    if (formData.password.length < 8) {
-      setError('Password must have at least 8 characters.');
-      return;
+    if (formData.institution.trim().length > 255) {
+      errors.institution = 'La institución no puede superar 255 caracteres.';
     }
 
-    if (formData.password !== formData.confirmPassword) {
-      setError('Passwords do not match.');
-      return;
+    if (!formData.password) {
+      errors.password = 'Ingresa una contraseña.';
+    } else if (formData.password.length < 8) {
+      errors.password = 'La contraseña debe tener al menos 8 caracteres.';
+    } else if (formData.password.length > 128) {
+      errors.password = 'La contraseña no puede superar 128 caracteres.';
+    }
+
+    if (!formData.confirmPassword) {
+      errors.confirmPassword = 'Confirma tu contraseña.';
+    } else if (formData.password !== formData.confirmPassword) {
+      errors.confirmPassword = 'Las contraseñas no coinciden.';
     }
 
     if (!formData.termsAccepted) {
-      setError('You must accept the terms to continue.');
+      errors.termsAccepted = 'Debes aceptar los términos para continuar.';
+    }
+
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      setError('Revisa los campos marcados antes de crear la cuenta.');
       return;
     }
 
@@ -88,7 +110,7 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
     try {
       await onRegister({
         full_name: formData.fullName.trim(),
-        email: formData.email.trim().toLowerCase(),
+        email: normalizedEmail,
         password: formData.password,
       });
 
@@ -193,8 +215,10 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   value={formData.fullName}
                   onChange={(e) => handleChange('fullName', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.fullName)}
                   required
                 />
+                {fieldErrors.fullName && <p className="text-xs text-red-600">{fieldErrors.fullName}</p>}
               </div>
 
               <div className="space-y-2">
@@ -208,8 +232,10 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   value={formData.email}
                   onChange={(e) => handleChange('email', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.email)}
                   required
                 />
+                {fieldErrors.email && <p className="text-xs text-red-600">{fieldErrors.email}</p>}
               </div>
 
               <div className="space-y-2">
@@ -223,7 +249,9 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   value={formData.institution}
                   onChange={(e) => handleChange('institution', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.institution)}
                 />
+                {fieldErrors.institution && <p className="text-xs text-red-600">{fieldErrors.institution}</p>}
               </div>
 
               <div className="space-y-2">
@@ -237,8 +265,10 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   value={formData.password}
                   onChange={(e) => handleChange('password', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.password)}
                   required
                 />
+                {fieldErrors.password && <p className="text-xs text-red-600">{fieldErrors.password}</p>}
               </div>
 
               <div className="space-y-2">
@@ -252,8 +282,10 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   value={formData.confirmPassword}
                   onChange={(e) => handleChange('confirmPassword', e.target.value)}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
+                  aria-invalid={Boolean(fieldErrors.confirmPassword)}
                   required
                 />
+                {fieldErrors.confirmPassword && <p className="text-xs text-red-600">{fieldErrors.confirmPassword}</p>}
               </div>
 
               <div className="flex items-start space-x-2 pt-2">
@@ -270,9 +302,20 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                   research purposes.
                 </label>
               </div>
+              {fieldErrors.termsAccepted && <p className="text-xs text-red-600">{fieldErrors.termsAccepted}</p>}
 
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              {success && <p className="text-sm text-green-700">{success}</p>}
+              {error && (
+                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+              {success && (
+                <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+                  <span>{success}</span>
+                </div>
+              )}
 
               <Button
                 type="submit"
