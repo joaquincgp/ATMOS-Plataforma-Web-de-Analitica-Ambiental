@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any, Protocol
+
+from app.services.ml_experiments.dataset import MLDataset
+
+
+@dataclass(frozen=True)
+class MLTrainingResult:
+    loss_curve: list[dict[str, float]]
+    rmse_curve: list[dict[str, float]]
+    final_rmse: float
+    feature_importance: list[dict[str, float]]
+    predictions: list[dict[str, float]]
+    r_squared: float
+    extra_stats: dict[str, Any] = field(default_factory=dict)
+
+
+class ModelRunner(Protocol):
+    """Implemented by every algorithm: lstm, gru, and (later) remote foundation-model runners."""
+
+    def train(
+        self,
+        dataset: MLDataset,
+        *,
+        epochs: int,
+        learning_rate: float,
+        progress_callback: Callable[[int, dict[str, float]], None] | None = None,
+        seed: int = 42,
+    ) -> MLTrainingResult: ...

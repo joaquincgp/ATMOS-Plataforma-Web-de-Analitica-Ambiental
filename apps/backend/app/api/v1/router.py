@@ -6,6 +6,7 @@ from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.eda import router as eda_router
 from app.api.v1.endpoints.etl import router as etl_router
 from app.api.v1.endpoints.health import router as health_router
+from app.api.v1.endpoints.ml_experiments import router as ml_experiments_router
 from app.api.v1.endpoints.public import router as public_router
 from app.api.v1.endpoints.stations import router as stations_router
 from app.api.v1.endpoints.workspaces import router as workspaces_router
@@ -20,3 +21,4 @@ api_router.include_router(analytics_router, prefix="/analytics", tags=["analytic
 api_router.include_router(eda_router, prefix="/eda", tags=["eda"])
 api_router.include_router(advanced_analytics_router, prefix="/advanced-analytics", tags=["advanced-analytics"])
 api_router.include_router(workspaces_router, prefix="/workspaces", tags=["workspaces"])
+api_router.include_router(ml_experiments_router, prefix="/ml-experiments", tags=["ml-experiments"])

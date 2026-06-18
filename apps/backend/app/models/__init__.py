@@ -1,6 +1,7 @@
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
 from app.models.measurement import Measurement
+from app.models.ml_experiment_run import MLExperimentRun
 from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
 from app.models.source_file import SourceFile
@@ -14,6 +15,7 @@ __all__ = [
     "Variable",
     "Measurement",
     "ManualDataset",
+    "MLExperimentRun",
     "EtlRun",
     "SourceFile",
     "User",

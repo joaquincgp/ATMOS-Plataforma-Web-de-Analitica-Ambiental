@@ -12,7 +12,9 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY app ./app
 
-RUN pip install --upgrade pip && pip install .
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cpu torch \
+    && pip install .
 
 EXPOSE 8000
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
