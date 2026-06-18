@@ -15,10 +15,10 @@ export interface AppConfigResponse {
 }
 
 export interface AppConfigUpdateRequest {
-  items: Array<{
+  items: {
     key: string;
     value: number;
-  }>;
+  }[];
 }
 
 export function getAppConfig(): Promise<AppConfigResponse> {

@@ -44,10 +44,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/components/ui/utils';
 import { useAuth } from '@/contexts/auth-context';
 
-interface SettingsProps {
-  onLogout?: () => void;
-}
-
 type SaveStatus = 'idle' | 'saving' | 'saved';
 type AdminSection = 'users' | 'engine' | 'query' | 'workspace';
 
@@ -76,12 +72,12 @@ const WORKSPACE_KEYS = [
   'workspace.default_facet_columns',
 ];
 
-const ADMIN_SECTIONS: Array<{
+const ADMIN_SECTIONS: {
   id: AdminSection;
   label: string;
   description: string;
   icon: typeof Users;
-}> = [
+}[] = [
   { id: 'users', label: 'Users', description: 'Roles, access and last activity', icon: Users },
   { id: 'engine', label: 'Analytics Engine', description: 'Model limits and anomaly rules', icon: Zap },
   { id: 'query', label: 'Query Limits', description: 'Rows and filter list caps', icon: Database },
@@ -138,7 +134,7 @@ function roleBadgeClass(role: UserRole) {
   return 'bg-slate-50 text-slate-700 border-slate-200';
 }
 
-export function SettingsPanel({ onLogout: _onLogout }: SettingsProps) {
+export function SettingsPanel() {
   const { user, updateUserProfile } = useAuth();
   const isAdmin = user?.role === 'admin';
 
