@@ -33,6 +33,7 @@ services:
       PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: 30
       WORKSPACE_STORAGE_DIR: ./data/workspaces
       AUTO_INIT_DB_ON_STARTUP: "true"
+      REMMAQ_PROXY_BASE_URL: ${REMMAQ_PROXY_BASE_URL:-}
     depends_on:
       db:
         condition: service_healthy
