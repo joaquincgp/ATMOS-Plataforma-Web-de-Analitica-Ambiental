@@ -36,5 +36,14 @@ class ManualDataset(Base):
     etl_run_id: Mapped[str | None] = mapped_column(ForeignKey("etl_runs.id"), nullable=True, index=True)
     source_file_id: Mapped[int | None] = mapped_column(ForeignKey("source_files.id"), nullable=True, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # NULL (default) = general-purpose dataset, visible in Data Manager/Advanced
+    # Analytics as today. "ml_experiments" = created from within ML Experiments'
+    # own isolated REMMAQ sync; excluded from the general dataset listing so the
+    # two feature areas never share or mix sources.
+    created_for: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Free-form metadata for sources created programmatically (e.g. REMMAQ sync
+    # triggered from ML Experiments): variable_codes, station_codes, date_from,
+    # date_to actually covered by the extracted data.
+    source_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive, onupdate=ecuador_now_naive)

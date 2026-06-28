@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models import EtlRun, Measurement, MLExperimentRun, SourceFile, Station, User, Variable, Workspace
 from app.models.base import Base
+from app.models.manual_dataset import ManualDataset
 from app.schemas.auth import UserRole, UserStatus
 from app.services.etl.helpers import compute_record_hash
 from app.services.ml_experiments import worker as worker_module
@@ -164,6 +165,11 @@ def test_execute_job_completes_and_persists_results(session_factory) -> None:
     refreshed = session.get(MLExperimentRun, "run-complete")
     assert refreshed.status == "completed"
     assert refreshed.final_rmse is not None
+    assert refreshed.final_rmse_ci_low is not None
+    assert refreshed.final_rmse_ci_high is not None
+    assert refreshed.final_rmse_ci_low <= refreshed.final_rmse_ci_high
+    assert refreshed.r_squared_ci_low is not None
+    assert refreshed.r_squared_ci_high is not None
     assert len(refreshed.loss_curve) == 2
     assert len(refreshed.feature_importance) == 5
     assert refreshed.dataset_stats["train_rows"] > 0
@@ -186,7 +192,11 @@ def test_execute_job_marks_failed_for_unimplemented_algorithm(session_factory) -
     owner_id, workspace_id = _seed_workspace(session_factory)
     _seed_remmaq_measurements(session_factory)
     _make_run(
-        session_factory, owner_id=owner_id, workspace_id=workspace_id, run_id="run-unimplemented", algorithm="gru"
+        session_factory,
+        owner_id=owner_id,
+        workspace_id=workspace_id,
+        run_id="run-unimplemented",
+        algorithm="not-a-registered-algorithm",
     )
 
     worker_module._execute_job("run-unimplemented")
@@ -195,3 +205,63 @@ def test_execute_job_marks_failed_for_unimplemented_algorithm(session_factory) -
     refreshed = session.get(MLExperimentRun, "run-unimplemented")
     assert refreshed.status == "failed"
     assert "no está implementado" in refreshed.error_message
+
+
+def test_reset_orphaned_jobs_fails_stuck_running_and_syncing_only(session_factory) -> None:
+    owner_id, workspace_id = _seed_workspace(session_factory)
+    _make_run(session_factory, owner_id=owner_id, workspace_id=workspace_id, run_id="run-stuck-running")
+    _make_run(session_factory, owner_id=owner_id, workspace_id=workspace_id, run_id="run-still-pending")
+
+    session = session_factory()
+    session.get(MLExperimentRun, "run-stuck-running").status = "running"
+    session.add(
+        ManualDataset(
+            id="source-stuck-syncing",
+            workspace_id=workspace_id,
+            owner_user_id=owner_id,
+            name="REMMAQ PM25 (sincronizando...)",
+            source_kind="remmaq",
+            source_url="https://datosambiente.quito.gob.ec/",
+            original_file_name="remmaq-pm25.csv",
+            raw_file_path="",
+            checksum_sha256="pending",
+            status="syncing",
+            storage_format="csv",
+            created_for="ml_experiments",
+        )
+    )
+    session.add(
+        ManualDataset(
+            id="source-still-draft",
+            workspace_id=workspace_id,
+            owner_user_id=owner_id,
+            name="general.csv",
+            source_kind="manual",
+            original_file_name="general.csv",
+            raw_file_path="/tmp/general.csv",
+            checksum_sha256="b" * 64,
+            status="draft",
+            storage_format="csv",
+            created_for=None,
+        )
+    )
+    session.commit()
+    session.close()
+
+    worker_module.reset_orphaned_jobs()
+
+    check_session = session_factory()
+    stuck_run = check_session.get(MLExperimentRun, "run-stuck-running")
+    assert stuck_run.status == "failed"
+    assert stuck_run.error_message
+    assert stuck_run.finished_at is not None
+
+    pending_run = check_session.get(MLExperimentRun, "run-still-pending")
+    assert pending_run.status == "pending"
+
+    stuck_source = check_session.get(ManualDataset, "source-stuck-syncing")
+    assert stuck_source.status == "failed"
+    assert stuck_source.error_message
+
+    untouched_source = check_session.get(ManualDataset, "source-still-draft")
+    assert untouched_source.status == "draft"

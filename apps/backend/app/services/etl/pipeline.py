@@ -321,7 +321,19 @@ class EtlService:
         max_archives: int | None,
         observed_from: date | None = None,
         observed_to: date | None = None,
+        request_timeout_seconds: int | None = None,
+        cache_ttl_seconds: int | None = None,
+        progress_callback: Callable[[int, int, int], None] | None = None,
     ) -> tuple[pd.DataFrame, list[dict[str, str]]]:
+        """Extracts REMMAQ rows for the given variables/date range.
+
+        `request_timeout_seconds`/`cache_ttl_seconds` are opt-in (None preserves
+        the original behavior used by the Data Manager "import from REMMAQ"
+        flow): callers that need a longer timeout for large archives, or a
+        local re-download cache, pass them explicitly. `progress_callback`, if
+        given, is invoked as (archives_done, archives_total, rows_so_far) after
+        each archive finishes.
+        """
         normalized_variables = self._normalize_variable_selection(variable_codes)
         normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
         observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
@@ -341,9 +353,13 @@ class EtlService:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
 
-        for archive in archives:
+        for archive_index, archive in enumerate(archives, start=1):
             archive_url = archive["url"]
-            content, filename = self._download_binary(archive_url)
+            content, filename = self._download_binary(
+                archive_url,
+                timeout_seconds=request_timeout_seconds,
+                cache_ttl_seconds=cache_ttl_seconds,
+            )
             checksum = compute_sha256(content)
             safe_name = filename.replace("/", "_").replace("\\", "_")
             archive_name = f"{checksum[:12]}-{safe_name}"
@@ -371,6 +387,9 @@ class EtlService:
                         "source_url": archive_url,
                     }
                 )
+
+            if progress_callback is not None:
+                progress_callback(archive_index, len(archives), len(records))
 
         if not records:
             raise RuntimeError("No se encontraron filas REMMAQ para el rango o variables seleccionadas.")
@@ -839,9 +858,20 @@ class EtlService:
                 return variable_code
         return None
 
-    def _download_binary(self, url: str) -> tuple[bytes, str]:
+    def _download_binary(
+        self,
+        url: str,
+        *,
+        timeout_seconds: int | None = None,
+        cache_ttl_seconds: int | None = None,
+    ) -> tuple[bytes, str]:
+        if cache_ttl_seconds is not None:
+            cached = self._read_cached_download(url, max_age_seconds=cache_ttl_seconds)
+            if cached is not None:
+                return cached
+
         with httpx.Client(
-            timeout=self.settings.etl_request_timeout_seconds,
+            timeout=timeout_seconds or self.settings.etl_request_timeout_seconds,
             follow_redirects=True,
             headers=_REMMAQ_BROWSER_HEADERS,
         ) as client:
@@ -849,7 +879,34 @@ class EtlService:
             response.raise_for_status()
 
         filename = self._resolve_filename(url=url, response=response)
-        return response.content, filename
+        content = response.content
+
+        if cache_ttl_seconds is not None:
+            self._write_cached_download(url, content=content, filename=filename)
+
+        return content, filename
+
+    def _download_cache_dir(self) -> Path:
+        cache_dir = self.raw_dir / "_download_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir
+
+    def _read_cached_download(self, url: str, *, max_age_seconds: int) -> tuple[bytes, str] | None:
+        key = compute_sha256(url.encode("utf-8"))
+        content_path = self._download_cache_dir() / f"{key}.bin"
+        name_path = self._download_cache_dir() / f"{key}.name"
+        if not content_path.exists() or not name_path.exists():
+            return None
+        age_seconds = time.time() - content_path.stat().st_mtime
+        if age_seconds > max_age_seconds:
+            return None
+        return content_path.read_bytes(), name_path.read_text(encoding="utf-8")
+
+    def _write_cached_download(self, url: str, *, content: bytes, filename: str) -> None:
+        key = compute_sha256(url.encode("utf-8"))
+        cache_dir = self._download_cache_dir()
+        (cache_dir / f"{key}.bin").write_bytes(content)
+        (cache_dir / f"{key}.name").write_text(filename, encoding="utf-8")
 
     def _resolve_filename(self, *, url: str, response: httpx.Response) -> str:
         content_disposition = response.headers.get("content-disposition", "")

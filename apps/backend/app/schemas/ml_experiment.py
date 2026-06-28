@@ -5,11 +5,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-MLAlgorithm = Literal["lstm", "gru", "timesfm", "chronos", "moirai"]
+MLAlgorithm = Literal["lstm", "gru", "transformer"]
 MLTargetVariable = Literal["PM25", "PM10", "NO2", "O3"]
 MLRunStatus = Literal["pending", "running", "completed", "failed"]
 
-_VALID_TRAIN_SPLITS = (0.7, 0.8, 0.9)
+_MIN_TRAIN_SPLIT = 0.5
+_MAX_TRAIN_SPLIT = 0.95
 
 
 class MLExperimentRunRequest(BaseModel):
@@ -19,6 +20,11 @@ class MLExperimentRunRequest(BaseModel):
     station_codes: list[str] = Field(default_factory=list)
     date_from: date | None = None
     date_to: date | None = None
+    # When set, training reads exclusively from this ML-Experiments-owned
+    # source (see MLExperimentSourceResponse) instead of the shared REMMAQ
+    # measurement pool. station_codes/date_from/date_to still apply on top,
+    # scoped within that source's own data.
+    manual_dataset_id: str | None = None
     epochs: int = Field(default=50, ge=1, le=100)
     learning_rate: float = Field(default=0.01, gt=0, le=1)
     train_split: float = Field(default=0.8)
@@ -26,9 +32,49 @@ class MLExperimentRunRequest(BaseModel):
     @field_validator("train_split")
     @classmethod
     def validate_train_split(cls, value: float) -> float:
-        if not any(abs(value - candidate) < 1e-9 for candidate in _VALID_TRAIN_SPLITS):
-            raise ValueError("train_split must be one of 0.7, 0.8, or 0.9.")
+        if not _MIN_TRAIN_SPLIT <= value <= _MAX_TRAIN_SPLIT:
+            raise ValueError("train_split must be between 0.5 and 0.95.")
         return value
+
+
+class MLAlgorithmsResponse(BaseModel):
+    algorithms: list[str]
+
+
+class MLModelSourceFile(BaseModel):
+    key: str
+    filename: str
+    label: str
+    content: str
+
+
+class MLModelSourcesResponse(BaseModel):
+    files: list[MLModelSourceFile]
+
+
+class MLExperimentSourceSyncRequest(BaseModel):
+    workspace_id: str
+    target_variable_code: MLTargetVariable
+    date_from: date | None = None
+    date_to: date | None = None
+
+
+class MLExperimentSourceResponse(BaseModel):
+    id: str
+    name: str
+    status: str
+    row_count: int
+    created_at: datetime
+    updated_at: datetime
+    error_message: str | None = None
+    source_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    model_config = {"from_attributes": True}
+
+    @field_validator("source_metadata", mode="before")
+    @classmethod
+    def default_null_metadata_to_empty(cls, value: Any) -> Any:
+        return {} if value is None else value
 
 
 class MLLossPoint(BaseModel):
@@ -60,6 +106,7 @@ class MLExperimentRunSummary(BaseModel):
     epochs: int
     learning_rate: float
     train_split: float
+    manual_dataset_id: str | None = None
     final_rmse: float | None = None
     r_squared: float | None = None
     created_at: datetime
@@ -77,6 +124,11 @@ class MLExperimentRunDetail(MLExperimentRunSummary):
     feature_importance: list[MLFeatureImportance] = Field(default_factory=list)
     predictions: list[MLPredictionPoint] = Field(default_factory=list)
     dataset_stats: dict[str, Any] = Field(default_factory=dict)
+    # 95% bootstrap confidence intervals for final_rmse / r_squared.
+    final_rmse_ci_low: float | None = None
+    final_rmse_ci_high: float | None = None
+    r_squared_ci_low: float | None = None
+    r_squared_ci_high: float | None = None
 
     @field_validator("loss_curve", "rmse_curve", "feature_importance", "predictions", mode="before")
     @classmethod

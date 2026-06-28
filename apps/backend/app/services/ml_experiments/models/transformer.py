@@ -11,18 +11,42 @@ from app.services.ml_experiments.runner import MLTrainingResult
 
 DEFAULT_LOOKBACK_HOURS = 24
 MIN_LOOKBACK_HOURS = 2
-HIDDEN_SIZE = 32
+D_MODEL = 32
+N_HEAD = 2
+NUM_LAYERS = 1
+DIM_FEEDFORWARD = 64
+DROPOUT = 0.1
 
 
-class _LstmRegressor(nn.Module):
-    def __init__(self, input_dim: int, hidden_size: int = HIDDEN_SIZE) -> None:
+class _TransformerRegressor(nn.Module):
+    def __init__(
+        self,
+        input_dim: int,
+        d_model: int = D_MODEL,
+        n_head: int = N_HEAD,
+        num_layers: int = NUM_LAYERS,
+        dim_feedforward: int = DIM_FEEDFORWARD,
+        dropout: float = DROPOUT,
+        max_lookback: int = DEFAULT_LOOKBACK_HOURS,
+    ) -> None:
         super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_size, num_layers=1, batch_first=True)
-        self.head = nn.Linear(hidden_size, 1)
+        self.input_projection = nn.Linear(input_dim, d_model)
+        self.positional_embedding = nn.Parameter(torch.randn(max_lookback, d_model) * 0.02)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_head,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.head = nn.Linear(d_model, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output, _ = self.lstm(x)
-        return self.head(output[:, -1, :]).squeeze(-1)
+        seq_len = x.shape[1]
+        projected = self.input_projection(x) + self.positional_embedding[:seq_len]
+        encoded = self.encoder(projected)
+        return self.head(encoded[:, -1, :]).squeeze(-1)
 
 
 def _resolve_lookback(train_len: int, test_len: int) -> int:
@@ -38,7 +62,7 @@ def _build_windows(
     n_windows = len(frame_values) - lookback
     if n_windows <= 0:
         raise MLExperimentError(
-            "No hay suficientes observaciones para construir las ventanas de entrenamiento del LSTM."
+            "No hay suficientes observaciones para construir las ventanas de entrenamiento del Transformer."
         )
     n_columns = frame_values.shape[1]
     x = np.zeros((n_windows, lookback, n_columns), dtype=np.float32)
@@ -95,7 +119,7 @@ def _split_train_validation(
 
 
 def _permutation_importance(
-    model: _LstmRegressor,
+    model: _TransformerRegressor,
     x_test: np.ndarray,
     y_test: np.ndarray,
     feature_names: list[str],
@@ -121,7 +145,7 @@ def _permutation_importance(
     return [{"feature": name, "importance": value / total} for name, value in raw_importances.items()]
 
 
-class LstmModelRunner:
+class TransformerModelRunner:
     def train(
         self,
         dataset: MLDataset,
@@ -148,7 +172,7 @@ class LstmModelRunner:
         x_test, y_test = _build_windows(test_norm, target_index=0, lookback=lookback)
         x_train, y_train, x_val, y_val = _split_train_validation(x_train_full, y_train_full)
 
-        model = _LstmRegressor(input_dim=len(columns))
+        model = _TransformerRegressor(input_dim=len(columns), max_lookback=lookback)
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         loss_fn = nn.MSELoss()
 

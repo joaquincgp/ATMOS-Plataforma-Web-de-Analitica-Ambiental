@@ -9,6 +9,7 @@ import httpx
 import pandas as pd
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
@@ -35,6 +36,15 @@ from app.services.manual_dataset.pipeline import ManualDatasetPipelineMixin
 
 class ManualDatasetError(Exception):
     pass
+
+
+# REMMAQ historical archives bundle the entire 2004-present history per
+# variable; the request has to fully download before date filtering can even
+# apply, so this isolated sync needs more headroom than the default ETL
+# timeout (tuned for Data Manager's 1-3 variable imports). The cache lets a
+# retry of the same variable skip a redundant multi-minute re-download.
+_ML_SOURCE_REQUEST_TIMEOUT_SECONDS = 300
+_ML_SOURCE_DOWNLOAD_CACHE_TTL_SECONDS = 6 * 60 * 60
 
 
 @dataclass
@@ -157,6 +167,161 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         self.db.refresh(entity)
         return self._to_response(entity)
 
+    def create_ml_experiment_source_draft(
+        self,
+        *,
+        workspace_id: str,
+        user: User,
+        target_variable_code: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> ManualDatasetResponse:
+        workspace = self._get_workspace(workspace_id=workspace_id, user=user)
+        dataset = ManualDataset(
+            id=str(uuid.uuid4()),
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            name=f"REMMAQ {target_variable_code} (sincronizando...)",
+            source_kind="remmaq",
+            source_url="https://datosambiente.quito.gob.ec/",
+            original_file_name=f"remmaq-{target_variable_code.lower()}.csv",
+            raw_file_path="",
+            checksum_sha256="pending",
+            status="syncing",
+            storage_format="csv",
+            dataset_kind=None,
+            created_for="ml_experiments",
+            profile_summary={"row_count": 0, "column_count": 0},
+            source_metadata={
+                "target_variable_code": target_variable_code,
+                "date_from": date_from.isoformat() if date_from else None,
+                "date_to": date_to.isoformat() if date_to else None,
+            },
+        )
+        self.db.add(dataset)
+        self.db.commit()
+        self.db.refresh(dataset)
+        return self._to_response(dataset)
+
+    def run_ml_experiment_source_sync(
+        self,
+        *,
+        dataset_id: str,
+        target_variable_code: str,
+        date_from: date | None,
+        date_to: date | None,
+    ) -> None:
+        dataset = self.db.get(ManualDataset, dataset_id)
+        if dataset is None:
+            return
+        workspace = self.db.get(Workspace, dataset.workspace_id)
+        if workspace is None:
+            dataset.status = "failed"
+            dataset.error_message = "Workspace no encontrado."
+            self.db.add(dataset)
+            self.db.commit()
+            return
+
+        def _report_progress(archives_done: int, archives_total: int, rows_collected: int) -> None:
+            dataset.source_metadata = {
+                **(dataset.source_metadata or {}),
+                "archives_done": archives_done,
+                "archives_total": archives_total,
+                "rows_collected": rows_collected,
+            }
+            self.db.add(dataset)
+            try:
+                self.db.commit()
+            except StaleDataError:
+                # The source was deleted while syncing; nothing left to update.
+                self.db.rollback()
+
+        etl_service = EtlService(self.db)
+        try:
+            dataframe, _archives = etl_service.extract_remmaq_dataframe(
+                variable_codes=[target_variable_code, "TMP", "HUM", "VEL"],
+                max_archives=None,
+                observed_from=date_from,
+                observed_to=date_to,
+                request_timeout_seconds=_ML_SOURCE_REQUEST_TIMEOUT_SECONDS,
+                cache_ttl_seconds=_ML_SOURCE_DOWNLOAD_CACHE_TTL_SECONDS,
+                progress_callback=_report_progress,
+            )
+        except Exception as exc:  # noqa: BLE001
+            try:
+                dataset.status = "failed"
+                dataset.error_message = f"No se pudo sincronizar REMMAQ: {exc}"
+                self.db.add(dataset)
+                self.db.commit()
+            except StaleDataError:
+                self.db.rollback()
+            return
+
+        mapping = self._suggest_mapping(dataframe)
+        transformed_df = self._apply_pipeline(dataframe.copy(), [], mapping)
+        raw_bytes = dataframe.to_csv(index=False).encode("utf-8")
+
+        final_dir = self._build_dataset_dir(workspace, dataset.id)
+        final_dir.mkdir(parents=True, exist_ok=True)
+        final_raw_path = final_dir / self._safe_filename(dataset.original_file_name)
+        final_raw_path.write_bytes(raw_bytes)
+
+        dataset.raw_file_path = str(final_raw_path.resolve())
+        dataset.checksum_sha256 = compute_sha256(raw_bytes)
+        self._sync_dataset_state(dataset, transformed_df, [], mapping)
+
+        observed_at_parsed = pd.to_datetime(dataframe["observed_at"], errors="coerce")
+        has_dates = bool(observed_at_parsed.notna().any())
+        actual_date_from = observed_at_parsed.min().date().isoformat() if has_dates else None
+        actual_date_to = observed_at_parsed.max().date().isoformat() if has_dates else None
+        dataset.source_metadata = {
+            "target_variable_code": target_variable_code,
+            "variable_codes": sorted(dataframe["variable_code"].dropna().unique().tolist()),
+            "station_codes": sorted(dataframe["station_code"].dropna().unique().tolist()),
+            "date_from": actual_date_from,
+            "date_to": actual_date_to,
+        }
+        date_range_label = f" ({actual_date_from} a {actual_date_to})" if has_dates else ""
+        dataset.name = f"REMMAQ {target_variable_code}{date_range_label}"
+        dataset.status = "draft"
+        dataset.error_message = None
+        self.db.add(dataset)
+        try:
+            self.db.commit()
+        except StaleDataError:
+            # The source was deleted while syncing; discard the finished result.
+            self.db.rollback()
+
+    def list_ml_experiment_sources(self, *, workspace_id: str, user: User) -> list[ManualDatasetResponse]:
+        workspace = self._get_workspace(workspace_id=workspace_id, user=user)
+        datasets = list(
+            self.db.scalars(
+                select(ManualDataset)
+                .where(ManualDataset.workspace_id == workspace.id)
+                .where(ManualDataset.created_for == "ml_experiments")
+                .order_by(ManualDataset.created_at.desc())
+            ).all()
+        )
+        return [self._to_response(dataset) for dataset in datasets]
+
+    def get_ml_experiment_source(self, *, dataset_id: str, user: User) -> ManualDatasetResponse:
+        dataset = self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
+        return self._to_response(dataset)
+
+    def delete_ml_experiment_source(self, *, dataset_id: str, user: User) -> None:
+        self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
+        self.delete_dataset(dataset_id=dataset_id, user=user)
+
+    def _get_ml_experiment_source_entity(self, *, dataset_id: str, user: User) -> ManualDataset:
+        dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        if dataset.created_for != "ml_experiments":
+            raise ManualDatasetError("Esta fuente no pertenece a ML Experiments.")
+        return dataset
+
+    def get_source_dataframe(self, *, dataset_id: str, user: User) -> pd.DataFrame:
+        dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        return self._read_dataframe_for_query(dataset)
+
     def get_dataset(self, *, dataset_id: str, user: User) -> ManualDatasetResponse:
         dataset = self._get_dataset(dataset_id=dataset_id, user=user)
         return self._to_response(dataset)
@@ -167,6 +332,10 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             self.db.scalars(
                 select(ManualDataset)
                 .where(ManualDataset.workspace_id == workspace.id)
+                # Sources created from within ML Experiments' own isolated REMMAQ
+                # sync are excluded here so the two feature areas never share or
+                # mix data sources (see create_ml_experiment_source_draft).
+                .where(ManualDataset.created_for.is_(None))
                 .order_by(ManualDataset.updated_at.desc())
             ).all()
         )
@@ -500,4 +669,6 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             created_at=dataset.created_at,
             updated_at=dataset.updated_at,
             error_message=dataset.error_message,
+            created_for=dataset.created_for,
+            source_metadata=dataset.source_metadata,
         )

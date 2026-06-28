@@ -11,7 +11,7 @@ from sqlalchemy.exc import OperationalError
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.init_db import init_db
-from app.services.ml_experiments.worker import ml_job_worker_loop
+from app.services.ml_experiments.worker import ml_job_worker_loop, reset_orphaned_jobs
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -24,6 +24,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             init_db()
         except OperationalError:
             logger.warning("Database auto-initialization skipped because PostgreSQL is unavailable at startup.")
+
+    try:
+        reset_orphaned_jobs()
+    except OperationalError:
+        logger.warning("Orphaned ML job reconciliation skipped because PostgreSQL is unavailable at startup.")
 
     worker_task = asyncio.create_task(ml_job_worker_loop())
     try:

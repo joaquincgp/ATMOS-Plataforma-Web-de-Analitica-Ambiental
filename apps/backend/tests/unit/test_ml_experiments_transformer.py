@@ -1,4 +1,4 @@
-# Fast synthetic-data smoke tests for the LSTM ModelRunner (no DB involved).
+# Fast synthetic-data smoke tests for the Transformer ModelRunner (no DB involved).
 from __future__ import annotations
 
 import math
@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from app.services.ml_experiments.dataset import MLDataset
-from app.services.ml_experiments.models.lstm import LstmModelRunner
+from app.services.ml_experiments.models.transformer import TransformerModelRunner
 
 FEATURE_NAMES = ["Temperature", "Humidity", "Wind Speed", "Hour of Day", "Day of Week"]
 TARGET_NAME = "PM2.5 Concentration"
@@ -44,9 +44,9 @@ def _build_synthetic_dataset(rows: int = 200) -> MLDataset:
     )
 
 
-def test_lstm_runner_produces_full_result_contract() -> None:
+def test_transformer_runner_produces_full_result_contract() -> None:
     dataset = _build_synthetic_dataset()
-    runner = LstmModelRunner()
+    runner = TransformerModelRunner()
 
     result = runner.train(dataset, epochs=3, learning_rate=0.01, seed=42)
 
@@ -68,9 +68,9 @@ def test_lstm_runner_produces_full_result_contract() -> None:
     assert all(math.isfinite(bound) for bound in result.r_squared_ci)
 
 
-def test_lstm_runner_reports_progress_per_epoch() -> None:
+def test_transformer_runner_reports_progress_per_epoch() -> None:
     dataset = _build_synthetic_dataset()
-    runner = LstmModelRunner()
+    runner = TransformerModelRunner()
     progress: list[tuple[int, dict[str, float]]] = []
 
     runner.train(
@@ -85,9 +85,9 @@ def test_lstm_runner_reports_progress_per_epoch() -> None:
     assert all(math.isfinite(call[1]["train_loss"]) for call in progress)
 
 
-def test_lstm_runner_is_deterministic_for_a_fixed_seed() -> None:
+def test_transformer_runner_is_deterministic_for_a_fixed_seed() -> None:
     dataset = _build_synthetic_dataset()
-    runner = LstmModelRunner()
+    runner = TransformerModelRunner()
 
     first = runner.train(dataset, epochs=2, learning_rate=0.01, seed=7)
     second = runner.train(dataset, epochs=2, learning_rate=0.01, seed=7)

@@ -137,7 +137,9 @@ def test_extract_remmaq_dataframe_filters_rows_and_reports_empty_ranges(db_sessi
         "_discover_archive_urls",
         lambda **_kwargs: [{"url": "https://datosambiente.quito.gob.ec/pm25.zip", "variable_code": "PM25"}],
     )
-    monkeypatch.setattr(service, "_download_binary", lambda _url: (b"station,value\nA,1\n", "pm25.csv"))
+    monkeypatch.setattr(
+        service, "_download_binary", lambda _url, **_kwargs: (b"station,value\nA,1\n", "pm25.csv")
+    )
     monkeypatch.setattr(service, "_extract_input_file", lambda _path, _checksum: extracted_dir)
     monkeypatch.setattr(service, "_extract_rows_from_directory", lambda _path, **_kwargs: rows)
 
@@ -158,6 +160,64 @@ def test_extract_remmaq_dataframe_filters_rows_and_reports_empty_ranges(db_sessi
             observed_from=date(2024, 1, 1),
             observed_to=date(2024, 1, 2),
         )
+
+
+def test_extract_remmaq_dataframe_invokes_progress_callback_per_archive(db_session, tmp_path, monkeypatch) -> None:
+    service = EtlService(db_session, settings=_settings(tmp_path))
+    extracted_dir = tmp_path / "extracted"
+    extracted_dir.mkdir()
+    rows = [_row("A", datetime(2025, 1, 1, tzinfo=UTC), "PM25", 10.0)]
+    monkeypatch.setattr(
+        service,
+        "_discover_archive_urls",
+        lambda **_kwargs: [
+            {"url": "https://datosambiente.quito.gob.ec/pm25.zip", "variable_code": "PM25"},
+            {"url": "https://datosambiente.quito.gob.ec/tmp.zip", "variable_code": "TMP"},
+        ],
+    )
+    monkeypatch.setattr(service, "_download_binary", lambda _url, **_kwargs: (b"x", "f.csv"))
+    monkeypatch.setattr(service, "_extract_input_file", lambda _path, _checksum: extracted_dir)
+    monkeypatch.setattr(service, "_extract_rows_from_directory", lambda _path, **_kwargs: rows)
+
+    progress_calls: list[tuple[int, int, int]] = []
+    service.extract_remmaq_dataframe(
+        variable_codes=["PM25", "TMP"],
+        max_archives=None,
+        progress_callback=lambda done, total, rows_so_far: progress_calls.append((done, total, rows_so_far)),
+    )
+
+    assert progress_calls == [(1, 2, 1), (2, 2, 2)]
+
+
+def test_download_binary_cache_skips_second_network_call(db_session, tmp_path, monkeypatch) -> None:
+    service = EtlService(db_session, settings=_settings(tmp_path))
+    call_count = {"n": 0}
+
+    class _FakeResponse:
+        content = b"archive-bytes"
+        headers: dict[str, str] = {}
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, _url):
+            call_count["n"] += 1
+            return _FakeResponse()
+
+    monkeypatch.setattr("app.services.etl.pipeline.httpx.Client", lambda **_kwargs: _FakeClient())
+
+    first = service._download_binary("https://datosambiente.quito.gob.ec/pm25.zip", cache_ttl_seconds=3600)
+    second = service._download_binary("https://datosambiente.quito.gob.ec/pm25.zip", cache_ttl_seconds=3600)
+
+    assert call_count["n"] == 1
+    assert first == second == (b"archive-bytes", "pm25.zip")
 
 
 def test_extractors_read_directory_workbooks_and_delimited_files(db_session, tmp_path) -> None:

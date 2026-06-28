@@ -14,14 +14,14 @@ MIN_LOOKBACK_HOURS = 2
 HIDDEN_SIZE = 32
 
 
-class _LstmRegressor(nn.Module):
+class _GruRegressor(nn.Module):
     def __init__(self, input_dim: int, hidden_size: int = HIDDEN_SIZE) -> None:
         super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_size, num_layers=1, batch_first=True)
+        self.gru = nn.GRU(input_dim, hidden_size, num_layers=1, batch_first=True)
         self.head = nn.Linear(hidden_size, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        output, _ = self.lstm(x)
+        output, _ = self.gru(x)
         return self.head(output[:, -1, :]).squeeze(-1)
 
 
@@ -38,7 +38,7 @@ def _build_windows(
     n_windows = len(frame_values) - lookback
     if n_windows <= 0:
         raise MLExperimentError(
-            "No hay suficientes observaciones para construir las ventanas de entrenamiento del LSTM."
+            "No hay suficientes observaciones para construir las ventanas de entrenamiento del GRU."
         )
     n_columns = frame_values.shape[1]
     x = np.zeros((n_windows, lookback, n_columns), dtype=np.float32)
@@ -95,7 +95,7 @@ def _split_train_validation(
 
 
 def _permutation_importance(
-    model: _LstmRegressor,
+    model: _GruRegressor,
     x_test: np.ndarray,
     y_test: np.ndarray,
     feature_names: list[str],
@@ -121,7 +121,7 @@ def _permutation_importance(
     return [{"feature": name, "importance": value / total} for name, value in raw_importances.items()]
 
 
-class LstmModelRunner:
+class GruModelRunner:
     def train(
         self,
         dataset: MLDataset,
@@ -148,7 +148,7 @@ class LstmModelRunner:
         x_test, y_test = _build_windows(test_norm, target_index=0, lookback=lookback)
         x_train, y_train, x_val, y_val = _split_train_validation(x_train_full, y_train_full)
 
-        model = _LstmRegressor(input_dim=len(columns))
+        model = _GruRegressor(input_dim=len(columns))
         optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         loss_fn = nn.MSELoss()
 

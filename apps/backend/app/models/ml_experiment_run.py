@@ -24,6 +24,11 @@ class MLExperimentRun(Base):
     algorithm: Mapped[str] = mapped_column(String(32), index=True)
     target_variable_code: Mapped[str] = mapped_column(String(32))
     station_codes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # When set, training reads exclusively from this ML-Experiments-owned
+    # manual dataset (an isolated REMMAQ extraction) instead of the shared
+    # measurement pool. No FK constraint: the source may be deleted later
+    # while the run's record of having used it remains for history purposes.
+    manual_dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     date_from: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     date_to: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     epochs: Mapped[int] = mapped_column(Integer)
@@ -41,9 +46,13 @@ class MLExperimentRun(Base):
     loss_curve: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     rmse_curve: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     final_rmse: Mapped[float | None] = mapped_column(Float, nullable=True)
+    final_rmse_ci_low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    final_rmse_ci_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     feature_importance: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     predictions: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     r_squared: Mapped[float | None] = mapped_column(Float, nullable=True)
+    r_squared_ci_low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    r_squared_ci_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     dataset_stats: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive)

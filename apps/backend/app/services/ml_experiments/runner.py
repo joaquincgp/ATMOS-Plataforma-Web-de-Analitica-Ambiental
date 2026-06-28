@@ -15,6 +15,11 @@ class MLTrainingResult:
     feature_importance: list[dict[str, float]]
     predictions: list[dict[str, float]]
     r_squared: float
+    # 95% bootstrap confidence intervals (resampling the test-set predictions
+    # with replacement), so the point estimates above can be reported with a
+    # measure of statistical uncertainty rather than as a single bare number.
+    rmse_ci: tuple[float, float]
+    r_squared_ci: tuple[float, float]
     extra_stats: dict[str, Any] = field(default_factory=dict)
 
 

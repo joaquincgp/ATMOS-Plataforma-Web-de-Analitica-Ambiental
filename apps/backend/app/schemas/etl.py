@@ -146,3 +146,5 @@ class ManualDatasetResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     error_message: str | None = None
+    created_for: str | None = None
+    source_metadata: dict[str, Any] | None = None
