@@ -115,6 +115,59 @@ app/
   services/               # lógica de negocio, ETL y analítica
 ```
 
+## Acceso a REMMAQ vía proxy local (Uvicorn + ngrok)
+
+`datosambiente.quito.gob.ec` puede rechazar consultas desde algunas IPs (por
+ejemplo, redes en la nube). Cuando eso pasa, cualquier sync REMMAQ falla con
+0 filas insertadas/actualizadas/omitidas. La solución: usar una máquina cuya
+IP sí pueda consultar REMMAQ como intermediaria.
+
+1. En esa máquina, con el venv del backend activado:
+
+   ```bash
+   cd apps/backend
+   python scripts/remmaq_proxy.py
+   ```
+
+   Esto levanta un proxy inverso minimalista en el puerto 8080 (usa
+   `--port` para otro) que reenvía cualquier ruta hacia
+   `datosambiente.quito.gob.ec` y devuelve la respuesta tal cual. Es un
+   puerto distinto al del backend (8000) a propósito, para poder correr
+   ambos en la misma máquina sin que choquen.
+
+2. En otra terminal, exponlo públicamente:
+
+   ```bash
+   ngrok http 8080
+   ```
+
+   Copia la URL pública que te da ngrok (cambia cada vez que reinicias ngrok
+   en el plan gratuito).
+
+3. En la instancia que necesita el proxy (la que no puede llegar a REMMAQ
+   directamente), define `REMMAQ_PROXY_BASE_URL` con esa URL:
+
+   - Backend nativo: agrégalo a tu `apps/backend/.env`.
+   - Backend en Docker Compose (este repo, local): antes de levantarlo,
+
+     ```bash
+     export REMMAQ_PROXY_BASE_URL=https://xxxx.ngrok-free.app
+     docker compose up -d backend
+     ```
+
+   - Azure Container App (cuando esté desplegado): `az containerapp update
+     --name <app> --resource-group <rg> --set-env-vars
+     REMMAQ_PROXY_BASE_URL=https://xxxx.ngrok-free.app`.
+
+4. Deja `python scripts/remmaq_proxy.py` y `ngrok` corriendo mientras
+   necesites sincronizar REMMAQ. Si los cierras, vuelve a poner
+   `REMMAQ_PROXY_BASE_URL` vacío (o quítalo) para que la instancia intente
+   conectarse directo de nuevo.
+
+Si la IP de la instancia sí puede llegar a REMMAQ directamente, deja
+`REMMAQ_PROXY_BASE_URL` vacío — es el comportamiento por defecto y no requiere
+nada de esto.
+
 ## Notas Operativas
 
 - `AUTO_INIT_DB_ON_STARTUP=true` crea el esquema base y habilita PostGIS al arrancar.

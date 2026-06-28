@@ -43,6 +43,7 @@ services:
       EMAIL_UDLA_LOGO_URL: ${EMAIL_UDLA_LOGO_URL:-}
       WORKSPACE_STORAGE_DIR: ./data/workspaces
       AUTO_INIT_DB_ON_STARTUP: "true"
+      REMMAQ_PROXY_BASE_URL: ${REMMAQ_PROXY_BASE_URL:-}
     depends_on:
       db:
         condition: service_healthy
