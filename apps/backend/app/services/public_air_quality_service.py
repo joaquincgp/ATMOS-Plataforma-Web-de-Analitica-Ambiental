@@ -731,6 +731,7 @@ def _build_public_air_quality_snapshot(
         window,
         selectors,
         station_ids,
+        latest_per_station=uses_relative_window and _normalize_period(period) == "latest" and not station_ids,
     )
     time_series, observation_count = _load_public_time_series(db, selected_selector, window, station_ids)
     meteorology = _load_meteorology_summary(db, window, selectors, station_ids)
@@ -1008,7 +1009,18 @@ def _load_station_observations(
     window: PublicAirQualityWindow,
     selectors: dict[str, PublicVariableSelector],
     station_ids: tuple[int, ...] = (),
+    latest_per_station: bool = False,
 ) -> list[PublicStationObservation]:
+    if latest_per_station:
+        return _load_latest_station_observations(
+            db,
+            variable_code,
+            selector,
+            variable_unit,
+            selectors,
+            station_ids,
+        )
+
     aggregate_statement = (
         select(
             Station.id.label("station_id"),
@@ -1069,6 +1081,73 @@ def _load_station_observations(
             )
         )
         station_ids_by_code[row.station_code] = row.station_id
+
+    station_variables = _load_latest_station_variables(db, list(station_ids_by_code.values()), selectors)
+    for observation in observations:
+        observation.variables = station_variables.get(station_ids_by_code.get(observation.station_code), [])
+    observations.sort(key=lambda item: item.station_name)
+    return observations
+
+
+def _load_latest_station_observations(
+    db: Session,
+    variable_code: str,
+    selector: PublicVariableSelector,
+    variable_unit: str | None,
+    selectors: dict[str, PublicVariableSelector],
+    station_ids: tuple[int, ...] = (),
+) -> list[PublicStationObservation]:
+    latest_statement = (
+        select(
+            Station.id.label("station_id"),
+            Station.code.label("station_code"),
+            Station.name.label("station_name"),
+            Station.latitude.label("latitude"),
+            Station.longitude.label("longitude"),
+            Measurement.value.label("latest_value"),
+            Measurement.unit.label("unit"),
+            Measurement.observed_at.label("latest_observed_at"),
+            func.row_number()
+            .over(partition_by=Measurement.station_id, order_by=Measurement.observed_at.desc())
+            .label("row_num"),
+        )
+        .select_from(Measurement)
+        .join(Station, Station.id == Measurement.station_id)
+    )
+    latest_statement = _apply_selector(latest_statement, selector)
+    latest_statement = _apply_station_filter(latest_statement, station_ids)
+    latest_ranked = latest_statement.subquery()
+    latest_rows = db.execute(select(latest_ranked).where(latest_ranked.c.row_num == 1)).all()
+
+    observations: list[PublicStationObservation] = []
+    station_ids_by_code: dict[str, int] = {}
+    for row in latest_rows:
+        reference = resolve_station_reference(row.station_code, row.station_name)
+        latitude = row.latitude if row.latitude is not None else (reference.latitude if reference else None)
+        longitude = row.longitude if row.longitude is not None else (reference.longitude if reference else None)
+        if latitude is None or longitude is None:
+            continue
+
+        station_window = _hour_window(row.latest_observed_at)
+        aggregate = _load_variable_aggregate(db, selector, station_window, (int(row.station_id),))
+        latest_value = float(row.latest_value)
+        observations.append(
+            PublicStationObservation(
+                station_code=row.station_code,
+                station_name=row.station_name,
+                latitude=float(latitude),
+                longitude=float(longitude),
+                region=reference.region if reference else None,
+                latest_value=latest_value,
+                mean_value=float(aggregate.mean_value) if aggregate and aggregate.mean_value is not None else latest_value,
+                min_value=float(aggregate.min_value) if aggregate and aggregate.min_value is not None else latest_value,
+                max_value=float(aggregate.max_value) if aggregate and aggregate.max_value is not None else latest_value,
+                sample_count=int(aggregate.sample_count or 1) if aggregate else 1,
+                unit=row.unit or variable_unit,
+                latest_observed_at=row.latest_observed_at,
+            )
+        )
+        station_ids_by_code[row.station_code] = int(row.station_id)
 
     station_variables = _load_latest_station_variables(db, list(station_ids_by_code.values()), selectors)
     for observation in observations:

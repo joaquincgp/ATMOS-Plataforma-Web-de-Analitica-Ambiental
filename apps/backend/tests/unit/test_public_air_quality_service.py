@@ -200,6 +200,55 @@ def test_public_air_quality_variable_summaries_use_each_variable_latest_relative
     assert summaries["CO"].latest_available_at == datetime(2026, 1, 1, 11)
 
 
+def test_public_air_quality_latest_all_stations_uses_each_station_latest_reading(db_session) -> None:
+    run = EtlRun(trigger_type="automatic", source="REMMAQ", status="completed")
+    belisario = Station(code="BEL", name="Belisario", latitude=-0.184719, longitude=-78.495986)
+    cotocollao = Station(code="COT", name="Cotocollao", latitude=-0.107777, longitude=-78.497222)
+    san_antonio = Station(code="SAN", name="San Antonio", latitude=-0.009722, longitude=-78.447222)
+    so2 = Variable(code="SO2", display_name="SO2", category="pollutant", default_unit="ug/m3")
+    pm25 = Variable(code="PM25", display_name="PM2.5", category="pollutant", default_unit="ug/m3")
+    db_session.add_all([run, belisario, cotocollao, san_antonio, so2, pm25])
+    db_session.commit()
+
+    source = SourceFile(
+        etl_run_id=run.id,
+        source_type="public_dashboard",
+        source_url="https://datosambiente.quito.gob.ec/",
+        original_name="current.zip",
+        local_archive_path="current.zip",
+        checksum_sha256="c" * 64,
+        status="completed",
+        row_count=3,
+    )
+    db_session.add(source)
+    db_session.commit()
+
+    rows = [
+        (belisario, so2, datetime(2026, 1, 1, 9), 4.0),
+        (cotocollao, so2, datetime(2026, 1, 1, 11), 7.0),
+        (san_antonio, pm25, datetime(2026, 1, 1, 11), 10.0),
+    ]
+    for station, variable, observed_at, value in rows:
+        db_session.add(
+            Measurement(
+                station_id=station.id,
+                variable_id=variable.id,
+                observed_at=observed_at,
+                value=value,
+                unit=variable.default_unit,
+                source_file_id=source.id,
+                record_hash=compute_record_hash(station.code, variable.code, observed_at.replace(tzinfo=UTC)),
+            )
+        )
+    db_session.commit()
+
+    response = get_public_air_quality_snapshot(db_session, variable_code="SO2", period="latest")
+
+    assert response.station_count == 2
+    assert [station.station_code for station in response.stations] == ["BEL", "COT"]
+    assert {station.station_code: station.latest_value for station in response.stations} == {"BEL": 4.0, "COT": 7.0}
+
+
 def test_public_air_quality_snapshot_filters_period_summary_by_station(db_session) -> None:
     _seed_public_measurements(db_session)
 

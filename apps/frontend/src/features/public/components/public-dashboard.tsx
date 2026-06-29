@@ -669,7 +669,7 @@ export function PublicDashboard({
   const [selectedStation, setSelectedStation] = useState(ALL_STATIONS);
   const [selectedHour, setSelectedHour] = useState<string>(ALL_STATIONS);
   const [expandedVariableInfo, setExpandedVariableInfo] = useState<string | null>(null);
-  const [stationOptions, setStationOptions] = useState<{ code: string; name: string }[]>([]);
+  const [stationOptionsByKey, setStationOptionsByKey] = useState<Record<string, { code: string; name: string }[]>>({});
   const [showSurface, setShowSurface] = useState(true);
   const [showStations, setShowStations] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -698,17 +698,23 @@ export function PublicDashboard({
     () => `${cacheGroupKey}|${selectedVariable}`,
     [cacheGroupKey, selectedVariable],
   );
+  const stationOptionsKey = useMemo(
+    () => `${rangePreset}|${selectedHour}|${selectedVariable}`,
+    [rangePreset, selectedHour, selectedVariable],
+  );
 
   const cacheSnapshot = useCallback((response: PublicAirQualityResponse) => {
     const hourKey = requestParams.hour ?? ALL_STATIONS;
     const stationKey = requestParams.station_code ?? ALL_STATIONS;
     snapshotCacheRef.current.set(`${requestParams.period}|${hourKey}|${stationKey}|${response.variable_code}`, response);
-    if (!requestParams.station_code && response.stations.length > 0) {
-      setStationOptions((current) => {
-        const next = new Map(current.map((station) => [station.code, station]));
-        response.stations.forEach((station) => next.set(station.station_code, { code: station.station_code, name: station.station_name }));
-        return [...next.values()].sort((a, b) => a.name.localeCompare(b.name));
-      });
+    if (!requestParams.station_code) {
+      const nextStations = response.stations
+        .map((station) => ({ code: station.station_code, name: station.station_name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+      setStationOptionsByKey((current) => ({
+        ...current,
+        [`${requestParams.period}|${hourKey}|${response.variable_code}`]: nextStations,
+      }));
     }
   }, [requestParams.hour, requestParams.period, requestParams.station_code]);
 
@@ -843,6 +849,10 @@ export function PublicDashboard({
     });
   }, [showStations, showSurface, snapshot]);
 
+  useEffect(() => {
+    setSelectedStation(ALL_STATIONS);
+  }, [selectedVariable]);
+
   const values = snapshot?.stations.map((station) => station.mean_value) ?? [];
   const selectedMin = values.length > 0 ? Math.min(...values) : null;
   const selectedMax = values.length > 0 ? Math.max(...values) : null;
@@ -874,6 +884,18 @@ export function PublicDashboard({
       return orderA - orderB;
     });
   }, [snapshot]);
+  const stationOptions = useMemo(() => {
+    const cachedOptions = stationOptionsByKey[stationOptionsKey];
+    if (cachedOptions) {
+      return cachedOptions;
+    }
+    if (selectedStation === ALL_STATIONS) {
+      return [...(snapshot?.stations ?? [])]
+        .map((station) => ({ code: station.station_code, name: station.station_name }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return [];
+  }, [selectedStation, snapshot, stationOptionsByKey, stationOptionsKey]);
   const variableSummaries = useMemo(() => snapshot?.variable_summaries ?? [], [snapshot]);
   const selectedVariableSummary = variableSummaries.find((summary) => summary.variable_code === snapshot?.variable_code);
   const stationComparison: StationBarPoint[] = useMemo(
