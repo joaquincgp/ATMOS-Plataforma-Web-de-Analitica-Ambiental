@@ -1,4 +1,5 @@
 from app.models.app_config import AppConfig
+from app.models.email_verification_token import EmailVerificationToken
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
 from app.models.measurement import Measurement
@@ -19,6 +20,7 @@ __all__ = [
     "MLExperimentRun",
     "EtlRun",
     "SourceFile",
+    "EmailVerificationToken",
     "User",
     "Workspace",
     "RefreshToken",

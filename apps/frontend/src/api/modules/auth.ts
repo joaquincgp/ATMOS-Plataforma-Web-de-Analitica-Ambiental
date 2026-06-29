@@ -134,10 +134,25 @@ export function forgotPassword(payload: ForgotPasswordRequest): Promise<ForgotPa
   });
 }
 
+export function resendVerification(payload: ForgotPasswordRequest): Promise<MessageResponse> {
+  return apiRequest<MessageResponse>('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    auth: false,
+  });
+}
+
 export function resetPassword(payload: ResetPasswordRequest): Promise<MessageResponse> {
   return apiRequest<MessageResponse>('/api/v1/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify(payload),
+    auth: false,
+  });
+}
+
+export function verifyEmail(token: string): Promise<MessageResponse> {
+  return apiRequest<MessageResponse>(`/api/v1/auth/verify-email?token=${encodeURIComponent(token)}`, {
+    method: 'POST',
     auth: false,
   });
 }

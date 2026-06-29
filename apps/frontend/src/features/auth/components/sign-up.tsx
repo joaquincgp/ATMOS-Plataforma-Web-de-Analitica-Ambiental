@@ -22,7 +22,7 @@ import atmosLogo from '@/assets/brand/atmos-logo.png';
 import udlaLogo from '@/assets/brand/udla-logo.png';
 
 interface SignUpProps {
-  onRegister: (payload: { full_name: string; email: string; password: string }) => Promise<void>;
+  onRegister: (payload: { full_name: string; email: string; institution?: string | null; password: string }) => Promise<void>;
   onBackToLanding?: () => void;
   onBackToLogin?: () => void;
 }
@@ -39,6 +39,7 @@ const floatingIcons = [
 ] as const;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INSTITUTIONAL_DOMAIN = '@udla.edu.ec';
 
 export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpProps) {
   const [formData, setFormData] = useState({
@@ -47,7 +48,6 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
     institution: '',
     password: '',
     confirmPassword: '',
-    termsAccepted: false,
   });
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +76,8 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
       errors.email = 'Ingresa tu correo electrónico.';
     } else if (!EMAIL_PATTERN.test(normalizedEmail)) {
       errors.email = 'Ingresa un correo válido.';
+    } else if (!normalizedEmail.endsWith(INSTITUTIONAL_DOMAIN)) {
+      errors.email = 'Usa tu correo institucional @udla.edu.ec.';
     }
 
     if (formData.institution.trim().length > 255) {
@@ -96,10 +98,6 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
       errors.confirmPassword = 'Las contraseñas no coinciden.';
     }
 
-    if (!formData.termsAccepted) {
-      errors.termsAccepted = 'Debes aceptar los términos para continuar.';
-    }
-
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       setError('Revisa los campos marcados antes de crear la cuenta.');
@@ -111,17 +109,17 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
       await onRegister({
         full_name: formData.fullName.trim(),
         email: normalizedEmail,
+        institution: formData.institution.trim() || null,
         password: formData.password,
       });
 
-      setSuccess('Account created successfully. You can now sign in.');
+      setSuccess('Cuenta creada. Revisa tu correo institucional para verificarla antes de iniciar sesión.');
       setFormData({
         fullName: '',
         email: '',
         institution: '',
         password: '',
         confirmPassword: '',
-        termsAccepted: false,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create account.');
@@ -287,22 +285,6 @@ export function SignUp({ onRegister, onBackToLanding, onBackToLogin }: SignUpPro
                 />
                 {fieldErrors.confirmPassword && <p className="text-xs text-red-600">{fieldErrors.confirmPassword}</p>}
               </div>
-
-              <div className="flex items-start space-x-2 pt-2">
-                <input
-                  type="checkbox"
-                  id="terms"
-                  checked={formData.termsAccepted}
-                  onChange={(e) => handleChange('termsAccepted', e.target.checked)}
-                  className="mt-1 h-4 w-4 rounded border-gray-300 text-[#509EE3] focus:ring-[#509EE3]"
-                  required
-                />
-                <label htmlFor="terms" className="text-xs text-muted-foreground leading-relaxed">
-                  I agree to the Terms of Service and Privacy Policy. I understand this platform is for academic
-                  research purposes.
-                </label>
-              </div>
-              {fieldErrors.termsAccepted && <p className="text-xs text-red-600">{fieldErrors.termsAccepted}</p>}
 
               {error && (
                 <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

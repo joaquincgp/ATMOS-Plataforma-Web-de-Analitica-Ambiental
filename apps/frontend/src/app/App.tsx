@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { AnalyticalWorkspaceProvider } from '@/features/analysis/contexts/analytical-workspace-context';
 import { DashboardProvider } from '@/features/dashboard/contexts/dashboard-context';
+import { verifyEmail } from '@/api/modules/auth';
 import type { AppView } from '@/store/app-store';
 
 function normalizePath(path: string): string {
@@ -56,6 +57,43 @@ function useSimpleRouter() {
   return { path, navigate };
 }
 
+function VerifyEmailScreen({ onDone }: { onDone: () => void }) {
+  const [message, setMessage] = useState('Verificando correo institucional...');
+  const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get('token');
+    if (!token) {
+      setHasError(true);
+      setMessage('El enlace de verificación no incluye token.');
+      return;
+    }
+
+    void verifyEmail(token)
+      .then((response) => {
+        setHasError(false);
+        setMessage(response.message);
+        window.history.replaceState({}, '', '/verify-email');
+      })
+      .catch((err) => {
+        setHasError(true);
+        setMessage(err instanceof Error ? err.message : 'No se pudo verificar el correo.');
+      });
+  }, []);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#F9FBFC] p-4 text-center">
+      <div className="max-w-md space-y-4">
+        <h1 className="text-2xl font-semibold text-foreground">Verificación de cuenta</h1>
+        <p className={`text-sm ${hasError ? 'text-red-600' : 'text-muted-foreground'}`}>{message}</p>
+        <button type="button" onClick={onDone} className="text-sm font-medium text-[#509EE3]">
+          Ir al login
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { path, navigate } = useSimpleRouter();
   const {
@@ -75,7 +113,7 @@ function App() {
 
   const isGenericUser = user?.role === 'generic';
   const isPrivatePath = path.startsWith('/app');
-  const isAuthPath = ['/login', '/register', '/forgot-password', '/reset-password'].includes(path);
+  const isAuthPath = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email'].includes(path);
 
   useEffect(() => {
     if (isLoading) {
@@ -163,6 +201,10 @@ function App() {
     return <PublicDashboard onGoToLanding={() => navigate('/')} onGoToLogin={() => navigate('/login')} />;
   }
 
+  if (path === '/verify-email') {
+    return <VerifyEmailScreen onDone={() => navigate('/login', true)} />;
+  }
+
   if (!isAuthenticated) {
     if (path === '/register') {
       return (
@@ -190,9 +232,10 @@ function App() {
     }
 
     if (path === '/reset-password') {
+      const queryToken = new URLSearchParams(window.location.search).get('token') ?? undefined;
       return (
         <ResetPassword
-          initialToken={resetTokenPrefill}
+          initialToken={resetTokenPrefill ?? queryToken}
           onReset={async (payload) => {
             await resetPassword(payload);
           }}

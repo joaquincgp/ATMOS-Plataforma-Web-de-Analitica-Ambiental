@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     refresh_token_expire_days: int = 14
     password_reset_token_expire_minutes: int = 30
+    email_verification_token_expire_minutes: int = 60 * 24
+    allowed_email_domains: str = "udla.edu.ec"
+
+    frontend_base_url: str = "http://localhost:5173"
+    backend_base_url: str = "http://localhost:8000"
+
+    email_provider: str = "log"
+    acs_email_connection_string: str = ""
+    acs_email_sender_address: str = ""
+    email_from_name: str = "ATMOS"
 
     remmaq_base_url: str = "https://datosambiente.quito.gob.ec/"
     remmaq_proxy_base_url: str = ""
@@ -39,7 +49,12 @@ class Settings(BaseSettings):
     etl_sync_default_max_archives: int = 4
     auto_init_db_on_startup: bool = True
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=("../../.env", ".env"),
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     @staticmethod
     def parse_cors_origins(value: str | list[str]) -> list[str]:
@@ -57,6 +72,14 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return self.parse_cors_origins(self.cors_origins)
+
+    @property
+    def allowed_email_domains_list(self) -> list[str]:
+        return [
+            domain.strip().lower().lstrip("@")
+            for domain in self.allowed_email_domains.split(",")
+            if domain.strip()
+        ]
 
 
 @lru_cache

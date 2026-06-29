@@ -31,10 +31,12 @@ from app.services.auth_service import (
     logout_user,
     refresh_access_token,
     register_user,
+    resend_verification_email,
     reset_password,
     update_admin_user,
     update_profile,
     validate_session,
+    verify_email,
 )
 
 router = APIRouter()
@@ -174,7 +176,21 @@ def forgot_password_route(
     payload: ForgotPasswordRequest,
     db: Session = Depends(get_db_session),
 ) -> ForgotPasswordResponse:
-    return forgot_password(db, payload)
+    try:
+        return forgot_password(db, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification_route(
+    payload: ForgotPasswordRequest,
+    db: Session = Depends(get_db_session),
+) -> MessageResponse:
+    try:
+        return resend_verification_email(db, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
 @router.post("/reset-password", response_model=MessageResponse)
@@ -184,5 +200,16 @@ def reset_password_route(
 ) -> MessageResponse:
     try:
         return reset_password(db, payload)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/verify-email", response_model=MessageResponse)
+def verify_email_route(
+    token: str = Query(..., min_length=10),
+    db: Session = Depends(get_db_session),
+) -> MessageResponse:
+    try:
+        return verify_email(db, token)
     except AuthError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

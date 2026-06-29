@@ -29,6 +29,7 @@ const floatingIcons = [
 ] as const;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const INSTITUTIONAL_DOMAIN = '@udla.edu.ec';
 
 export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPassword }: LoginProps) {
   const [email, setEmail] = useState('');
@@ -46,6 +47,8 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
       errors.email = 'Ingresa tu correo electrónico.';
     } else if (!EMAIL_PATTERN.test(normalizedEmail)) {
       errors.email = 'Ingresa un correo válido.';
+    } else if (!normalizedEmail.endsWith(INSTITUTIONAL_DOMAIN)) {
+      errors.email = 'Usa tu correo institucional @udla.edu.ec.';
     }
 
     if (!password.trim()) {

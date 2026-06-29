@@ -5,6 +5,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 import bcrypt
 from jose import JWTError, jwt
@@ -12,6 +13,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.models.email_verification_token import EmailVerificationToken
 from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -34,6 +36,7 @@ from app.schemas.auth import (
     UserRole,
     UserStatus,
 )
+from app.services.email_service import EmailDeliveryError, send_password_reset_email, send_verification_email
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -55,6 +58,22 @@ def _token_hash(raw_token: str) -> str:
 
 def _user_response(user: User) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+def _is_allowed_email_domain(email: str) -> bool:
+    normalized = email.strip().lower()
+    if "@" not in normalized:
+        return False
+    domain = normalized.rsplit("@", 1)[1]
+    return domain in settings.allowed_email_domains_list
+
+
+def _require_allowed_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if not _is_allowed_email_domain(normalized):
+        allowed = ", ".join(f"@{domain}" for domain in settings.allowed_email_domains_list)
+        raise AuthError(f"Only institutional email addresses are allowed ({allowed}).")
+    return normalized
 
 
 def _admin_user_response(user: User, workspace_count: int = 0) -> AdminUserResponse:
@@ -172,13 +191,46 @@ def _build_token_pair_response(user: User, *, refresh_token: str) -> TokenPairRe
     )
 
 
+def _build_frontend_url(path: str, **params: str) -> str:
+    base = settings.frontend_base_url.rstrip("/")
+    url = f"{base}/{path.lstrip('/')}"
+    query = urlencode({key: value for key, value in params.items() if value})
+    return f"{url}?{query}" if query else url
+
+
+def _create_email_verification_token(db: Session, user: User) -> str:
+    db.execute(
+        delete(EmailVerificationToken).where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+        )
+    )
+    raw_token = secrets.token_urlsafe(40)
+    db.add(
+        EmailVerificationToken(
+            user_id=user.id,
+            token_hash=_token_hash(raw_token),
+            expires_at=_utcnow() + timedelta(minutes=settings.email_verification_token_expire_minutes),
+        )
+    )
+    return raw_token
+
+
+def _send_verification_email_for_user(db: Session, user: User) -> str:
+    raw_token = _create_email_verification_token(db, user)
+    verification_url = _build_frontend_url("verify-email", token=raw_token)
+    send_verification_email(to_email=user.email, full_name=user.full_name, verification_url=verification_url)
+    return raw_token
+
+
 def register_user(db: Session, payload: RegisterRequest) -> UserResponse:
-    existing = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = _require_allowed_email(payload.email)
+    existing = db.scalar(select(User).where(User.email == email))
     if existing is not None:
         raise AuthError("A user with this email already exists.")
 
     user = User(
-        email=payload.email.lower(),
+        email=email,
         full_name=payload.full_name,
         institution=payload.institution,
         password_hash=hash_password(payload.password),
@@ -188,19 +240,47 @@ def register_user(db: Session, payload: RegisterRequest) -> UserResponse:
         is_verified=False,
     )
     db.add(user)
+    db.flush()
+    try:
+        _send_verification_email_for_user(db, user)
+    except EmailDeliveryError as exc:
+        raise AuthError("Could not send verification email. Check email service configuration.") from exc
     db.commit()
     db.refresh(user)
     return _user_response(user)
 
 
+def resend_verification_email(db: Session, payload: ForgotPasswordRequest) -> MessageResponse:
+    generic_response = MessageResponse(
+        message="If the account exists and is not verified, a verification email has been sent."
+    )
+    email = payload.email.lower()
+    if not _is_allowed_email_domain(email):
+        return generic_response
+
+    user = db.scalar(select(User).where(User.email == email))
+    if user is None or not user.is_active or user.is_verified:
+        return generic_response
+
+    try:
+        _send_verification_email_for_user(db, user)
+    except EmailDeliveryError as exc:
+        raise AuthError("Could not send verification email. Check email service configuration.") from exc
+
+    db.commit()
+    logger.info("Verification email resent for %s", user.email)
+    return generic_response
+
+
 def admin_create_user(db: Session, payload: AdminCreateUserRequest) -> UserResponse:
-    existing = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = _require_allowed_email(payload.email)
+    existing = db.scalar(select(User).where(User.email == email))
     if existing is not None:
         raise AuthError("A user with this email already exists.")
 
     is_verified = payload.status == UserStatus.active
     user = User(
-        email=payload.email.lower(),
+        email=email,
         full_name=payload.full_name,
         institution=payload.institution,
         password_hash=hash_password(payload.password),
@@ -301,12 +381,15 @@ def login_user(
     user_agent: str | None,
     ip_address: str | None,
 ) -> TokenPairResponse:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = _require_allowed_email(payload.email)
+    user = db.scalar(select(User).where(User.email == email))
     if user is None or not verify_password(payload.password, user.password_hash):
         raise AuthError("Invalid credentials.")
 
     if not user.is_active or user.status == UserStatus.suspended.value:
         raise AuthError("Your account has been deactivated. Contact an administrator to restore access.")
+    if not user.is_verified or user.status == UserStatus.pending_validation.value:
+        raise AuthError("Verify your institutional email before signing in.")
 
     user.last_login_at = _utcnow()
     refresh_token = _create_refresh_token(db, user, user_agent=user_agent, ip_address=ip_address)
@@ -364,11 +447,15 @@ def validate_session(db: Session, token: str) -> SessionResponse:
 
 
 def forgot_password(db: Session, payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
-    user = db.scalar(select(User).where(User.email == payload.email.lower()))
+    email = payload.email.lower()
     generic_response = ForgotPasswordResponse(
         message="If the account exists, a reset link has been sent.",
         debug_reset_token=None,
     )
+    if not _is_allowed_email_domain(email):
+        return generic_response
+
+    user = db.scalar(select(User).where(User.email == email))
 
     if user is None or not user.is_active:
         return generic_response
@@ -390,13 +477,47 @@ def forgot_password(db: Session, payload: ForgotPasswordRequest) -> ForgotPasswo
     db.add(reset_row)
     db.commit()
 
-    # Simulated email integration (Azure Communication Services/SendGrid SMTP placeholder).
+    reset_url = _build_frontend_url("reset-password", token=raw_token)
+    try:
+        send_password_reset_email(to_email=user.email, full_name=user.full_name, reset_url=reset_url)
+    except EmailDeliveryError as exc:
+        raise AuthError("Could not send password reset email. Check email service configuration.") from exc
+
     logger.info("Password reset requested for %s", user.email)
 
     if settings.environment.lower() != "production":
         generic_response.debug_reset_token = raw_token
 
     return generic_response
+
+
+def verify_email(db: Session, token: str) -> MessageResponse:
+    now = _utcnow()
+    token_hash = _token_hash(token)
+    verification_row = db.scalar(
+        select(EmailVerificationToken).where(
+            EmailVerificationToken.token_hash == token_hash,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.expires_at > now,
+        )
+    )
+    if verification_row is None:
+        raise AuthError("Verification token is invalid or expired.")
+
+    user = db.scalar(select(User).where(User.id == verification_row.user_id))
+    if user is None or not user.is_active:
+        raise AuthError("User account is not available.")
+
+    if not _is_allowed_email_domain(user.email):
+        raise AuthError("Only institutional email addresses can be verified.")
+
+    user.is_verified = True
+    if user.status == UserStatus.pending_validation.value:
+        user.status = UserStatus.active.value
+    user.updated_at = now
+    verification_row.used_at = now
+    db.commit()
+    return MessageResponse(message="Email verified successfully.")
 
 
 def reset_password(db: Session, payload: ResetPasswordRequest) -> MessageResponse:
