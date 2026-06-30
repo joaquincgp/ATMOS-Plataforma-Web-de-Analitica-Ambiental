@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from app.api.router import api_router
 from app.core.config import get_settings
@@ -22,13 +22,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.auto_init_db_on_startup:
         try:
             init_db()
-        except OperationalError:
-            logger.warning("Database auto-initialization skipped because PostgreSQL is unavailable at startup.")
+        except SQLAlchemyError:
+            logger.warning("Database auto-initialization skipped due to a database error at startup.", exc_info=True)
 
     try:
         reset_orphaned_jobs()
-    except OperationalError:
-        logger.warning("Orphaned ML job reconciliation skipped because PostgreSQL is unavailable at startup.")
+    except SQLAlchemyError:
+        logger.warning("Orphaned ML job reconciliation skipped due to a database error at startup.", exc_info=True)
 
     worker_task = asyncio.create_task(ml_job_worker_loop())
     try:
