@@ -149,10 +149,11 @@ def test_analytics_query_caps_rows_and_rejects_unsafe_sql(db_session) -> None:
 
 def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkeypatch) -> None:
     monkeypatch.setattr(auth_service.settings, "environment", "development")
+    user_email = "new.user@udla.edu.ec"
     registered = auth_service.register_user(
         db_session,
         RegisterRequest(
-            email="new@example.com",
+            email=user_email,
             full_name="New User",
             institution="UDLA",
             password="password123",
@@ -161,7 +162,7 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
     admin_created = auth_service.admin_create_user(
         db_session,
         AdminCreateUserRequest(
-            email="admin-created@example.com",
+            email="admin.created@udla.edu.ec",
             full_name="Admin Created",
             password="password123",
             role=UserRole.admin,
@@ -175,7 +176,7 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
 
     login = auth_service.login_user(
         db_session,
-        LoginRequest(email="new@example.com", password="password123"),
+        LoginRequest(email=user_email, password="password123"),
         user_agent="pytest",
         ip_address="127.0.0.1",
     )
@@ -186,7 +187,7 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
         user_agent="pytest",
         ip_address="127.0.0.1",
     )
-    forgot = auth_service.forgot_password(db_session, ForgotPasswordRequest(email="new@example.com"))
+    forgot = auth_service.forgot_password(db_session, ForgotPasswordRequest(email=user_email))
     reset = auth_service.reset_password(
         db_session,
         ResetPasswordRequest(token=forgot.debug_reset_token, new_password="new-password123"),
@@ -202,32 +203,33 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
 
 
 def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session) -> None:
+    user_email = "dupe@udla.edu.ec"
     auth_service.register_user(
         db_session,
-        RegisterRequest(email="dupe@example.com", full_name="Dupe User", password="password123"),
+        RegisterRequest(email=user_email, full_name="Dupe User", password="password123"),
     )
 
     with pytest.raises(AuthError):
         auth_service.register_user(
             db_session,
-            RegisterRequest(email="dupe@example.com", full_name="Dupe User", password="password123"),
+            RegisterRequest(email=user_email, full_name="Dupe User", password="password123"),
         )
     with pytest.raises(AuthError):
         auth_service.login_user(
             db_session,
-            LoginRequest(email="dupe@example.com", password="wrong-pass"),
+            LoginRequest(email=user_email, password="wrong-pass"),
             user_agent=None,
             ip_address=None,
         )
 
-    suspended = db_session.scalar(select(User).where(User.email == "dupe@example.com"))
+    suspended = db_session.scalar(select(User).where(User.email == user_email))
     suspended.status = UserStatus.suspended.value
     suspended.is_active = False
     db_session.commit()
     with pytest.raises(AuthError, match="deactivated"):
         auth_service.login_user(
             db_session,
-            LoginRequest(email="dupe@example.com", password="password123"),
+            LoginRequest(email=user_email, password="password123"),
             user_agent=None,
             ip_address=None,
         )
