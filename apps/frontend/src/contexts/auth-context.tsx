@@ -178,11 +178,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (input: LoginInput) => {
+      clearAuthState();
       const response = await loginUser(input);
       applyTokenPair(response);
       return response.user;
     },
-    [applyTokenPair],
+    [applyTokenPair, clearAuthState],
   );
 
   const register = useCallback(async (payload: RegisterRequest) => {

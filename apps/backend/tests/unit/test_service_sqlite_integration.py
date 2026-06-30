@@ -1,7 +1,7 @@
 # SQLite-backed service tests cover real query/service behavior without PostgreSQL.
 # pylint: disable=protected-access,redefined-outer-name
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -244,6 +244,45 @@ def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session, m
             user_agent=None,
             ip_address=None,
         )
+
+
+def test_auth_service_rejects_pending_user_session_and_refresh_tokens(db_session) -> None:
+    user = User(
+        email="pending-auth@udla.edu.ec",
+        full_name="Pending Auth",
+        password_hash=auth_service.hash_password("password123"),
+        role=UserRole.researcher.value,
+        status=UserStatus.pending_validation.value,
+        is_active=True,
+        is_verified=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    refresh_token = RefreshToken(
+        user_id=user.id,
+        token_hash=auth_service._token_hash("pending-refresh-token"),
+        expires_at=datetime.utcnow() + timedelta(days=1),
+    )
+    db_session.add(refresh_token)
+    db_session.commit()
+
+    with pytest.raises(AuthError, match="Verify your institutional email"):
+        auth_service.login_user(
+            db_session,
+            LoginRequest(email=user.email, password="password123"),
+            user_agent=None,
+            ip_address=None,
+        )
+    with pytest.raises(AuthError, match="Verify your institutional email"):
+        auth_service.refresh_access_token(
+            db_session,
+            RefreshTokenRequest(refresh_token="pending-refresh-token"),
+            user_agent=None,
+            ip_address=None,
+        )
+    with pytest.raises(AuthError, match="Verify your institutional email"):
+        auth_service.validate_session(db_session, auth_service.create_access_token(user))
 
 
 def test_auth_service_resend_verification_uses_cooldown(db_session, monkeypatch) -> None:

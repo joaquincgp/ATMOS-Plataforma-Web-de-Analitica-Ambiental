@@ -82,6 +82,13 @@ def _require_allowed_email(email: str) -> str:
     return normalized
 
 
+def _ensure_user_can_sign_in(user: User, *, inactive_message: str) -> None:
+    if not user.is_active or user.status == UserStatus.suspended.value:
+        raise AuthError(inactive_message)
+    if not user.is_verified or user.status == UserStatus.pending_validation.value:
+        raise AuthError("Verify your institutional email before signing in.")
+
+
 def _admin_user_response(user: User, workspace_count: int = 0) -> AdminUserResponse:
     response = AdminUserResponse.model_validate(user)
     response.workspace_count = workspace_count
@@ -160,10 +167,9 @@ def get_user_from_access_token(db: Session, token: str) -> User:
     payload = decode_access_token(token)
     user_id = str(payload["sub"])
     user = db.scalar(select(User).where(User.id == user_id))
-    if user is None or not user.is_active:
+    if user is None:
         raise AuthError("User not found or inactive.")
-    if user.status == UserStatus.suspended.value:
-        raise AuthError("User suspended.")
+    _ensure_user_can_sign_in(user, inactive_message="User suspended.")
     return user
 
 
@@ -462,10 +468,10 @@ def login_user(
     if user is None or not verify_password(payload.password, user.password_hash):
         raise AuthError("Invalid credentials.")
 
-    if not user.is_active or user.status == UserStatus.suspended.value:
-        raise AuthError("Your account has been deactivated. Contact an administrator to restore access.")
-    if not user.is_verified or user.status == UserStatus.pending_validation.value:
-        raise AuthError("Verify your institutional email before signing in.")
+    _ensure_user_can_sign_in(
+        user,
+        inactive_message="Your account has been deactivated. Contact an administrator to restore access.",
+    )
 
     user.last_login_at = _utcnow()
     refresh_token = _create_refresh_token(db, user, user_agent=user_agent, ip_address=ip_address)
@@ -495,8 +501,9 @@ def refresh_access_token(
         raise AuthError("Refresh token is invalid or expired.")
 
     user = db.scalar(select(User).where(User.id == refresh_row.user_id))
-    if user is None or not user.is_active or user.status == UserStatus.suspended.value:
+    if user is None:
         raise AuthError("User account is inactive.")
+    _ensure_user_can_sign_in(user, inactive_message="User account is inactive.")
 
     refresh_row.revoked_at = now
     new_refresh_token = _create_refresh_token(db, user, user_agent=user_agent, ip_address=ip_address)
