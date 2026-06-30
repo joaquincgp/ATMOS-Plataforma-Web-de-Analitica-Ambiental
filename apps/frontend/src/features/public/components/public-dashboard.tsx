@@ -161,6 +161,9 @@ const QUITO_PUBLIC_MAP_POLYGONS: [number, number][][] = [
   [
     [-0.005, -78.505],
     [-0.012, -78.463],
+    [-0.002, -78.452],
+    [-0.006, -78.435],
+    [-0.035, -78.427],
     [-0.07, -78.444],
     [-0.14, -78.448],
     [-0.205, -78.468],
@@ -263,36 +266,27 @@ const getLegendData = (
   unit: string | null | undefined,
 ): IdwLegendData => {
   const formattedUnit = getUnitLabel(unit);
-  if (min === null || max === null) {
+  const thresholds = TULSMA_THRESHOLDS[variableCode];
+  if (!thresholds) {
     return {
       min,
       max,
-      lowLabel: 'Menor',
-      midLabel: 'Intermedio',
-      highLabel: 'Mayor',
+      lowLabel: min !== null ? `${roundValue(min)} ${formattedUnit}`.trim() : 'Menor',
+      midLabel: 'Valor medio',
+      highLabel: max !== null ? `${roundValue(max)} ${formattedUnit}`.trim() : 'Mayor',
       scaleLabel: 'Escala de lectura',
-      description: 'Sin valores suficientes para clasificar el rango observado.',
+      description: 'Sin umbral TULSMA definido para esta variable.',
     };
   }
-  if (variableCode === 'PM25') {
-    return {
-      min,
-      max,
-      lowLabel: `< 10 ${formattedUnit}`.trim(),
-      midLabel: `10-25 ${formattedUnit}`.trim(),
-      highLabel: `> 25 ${formattedUnit}`.trim(),
-      scaleLabel: 'Umbral PM2.5',
-      description: 'Verde, amarillo y rojo siguen bandas de PM2.5 usadas para lectura publica de exposicion.',
-    };
-  }
+  const [t1, t2] = thresholds;
   return {
     min,
     max,
-    lowLabel: `${roundValue(min)} ${formattedUnit}`.trim(),
-    midLabel: 'Valor medio',
-    highLabel: `${roundValue(max)} ${formattedUnit}`.trim(),
-    scaleLabel: 'Escala relativa',
-    description: 'La escala compara el minimo y maximo observados para esta variable en el periodo seleccionado.',
+    lowLabel: `Bueno < ${t1} ${formattedUnit}`.trim(),
+    midLabel: `Mod. ${t1}–${t2} ${formattedUnit}`.trim(),
+    highLabel: `Alto ≥ ${t2} ${formattedUnit}`.trim(),
+    scaleLabel: 'Norma TULSMA Anexo 4',
+    description: 'Colores segun limites oficiales del Acuerdo Ministerial 097-A (TULSMA, Libro VI, Anexo 4).',
   };
 };
 
@@ -306,84 +300,115 @@ const normalizeLoadError = (loadError: unknown) => {
   return loadError.message;
 };
 
-const getQualityBand = (variableCode: string, value: number, values: number[]): QualityBand => {
-  if (variableCode === 'PM25') {
-    if (value < 10) {
-      return {
-        label: 'Bajo',
-        color: '#15803d',
-        background: '#dcfce7',
-        description: 'PM2.5 menor a 10 µg/m³',
-      };
-    }
-    if (value <= 25) {
-      return {
-        label: 'Moderado',
-        color: '#a16207',
-        background: '#fef9c3',
-        description: 'PM2.5 entre 10 y 25 µg/m³',
-      };
-    }
-    return {
-      label: 'Alto',
-      color: '#b91c1c',
-      background: '#fee2e2',
-      description: 'PM2.5 mayor a 25 µg/m³',
-    };
-  }
-
-  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
-  const observedMin = sorted[0];
-  const observedMax = sorted[sorted.length - 1];
-  if (sorted.length < 3 || observedMax - observedMin <= 0.05 || roundValue(observedMin) === roundValue(observedMax)) {
-    return {
-      label: 'Sin variacion relevante',
-      color: '#1d4ed8',
-      background: '#dbeafe',
-      description: 'Valores muy similares en el rango seleccionado',
-    };
-  }
-  const low = sorted[Math.floor(sorted.length * 0.33)];
-  const high = sorted[Math.floor(sorted.length * 0.66)];
-  if (value <= low) {
-    return { label: 'Bajo relativo', color: '#0f766e', background: '#ccfbf1', description: 'Tercio inferior del rango' };
-  }
-  if (value <= high) {
-    return { label: 'Medio relativo', color: '#a16207', background: '#fef3c7', description: 'Tercio medio del rango' };
-  }
-  return { label: 'Alto relativo', color: '#b91c1c', background: '#fee2e2', description: 'Tercio superior del rango' };
+// ── Umbrales TULSMA Anexo 4 / Acuerdo Ministerial 097-A ──────────────────────
+// [moderado, alto, muyAlto] — por debajo del primero = Bueno
+const TULSMA_THRESHOLDS: Record<string, [number, number, number]> = {
+  PM25: [15,  50,  75],  // µg/m³  anual:15 | 24h:50
+  PM10: [50, 100, 200],  // µg/m³  anual:50 | 24h:100
+  NO2:  [40, 200, 400],  // µg/m³  anual:40 | 1h:200
+  O3:   [60, 100, 200],  // µg/m³  8h:100
+  CO:   [ 5,  10,  30],  // mg/m³  8h≈10 | 1h≈30
+  SO2:  [40, 125, 350],  // µg/m³  24h:125
+  TMP:  [10,  28,  35],  // °C    confort térmico Quito
+  HUM:  [30,  70,  90],  // %     humedad relativa
+  VEL:  [ 2,   8,  15],  // m/s   Beaufort simplificado
+  IUV:  [ 3,   6,   8],  // índice UV (OMS)
+  RS:   [200, 600, 900], // W/m²  radiación solar
+  LLU:  [ 1,  10,  30],  // mm    precipitación
 };
 
-const colorForInterpolatedValue = (variableCode: string, value: number, values: number[]) => {
-  if (!Number.isFinite(value)) {
-    return '#509EE3';
+const TULSMA_BAND_LABELS = ['Bueno', 'Moderado', 'Alto', 'Muy alto'] as const;
+const TULSMA_BAND_COLORS = [
+  { color: '#15803d', background: '#dcfce7' }, // Bueno — verde
+  { color: '#a16207', background: '#fef9c3' }, // Moderado — ámbar
+  { color: '#c2410c', background: '#ffedd5' }, // Alto — naranja
+  { color: '#b91c1c', background: '#fee2e2' }, // Muy alto — rojo
+] as const;
+
+const getQualityBand = (variableCode: string, value: number): QualityBand => {
+  const thresholds = TULSMA_THRESHOLDS[variableCode];
+  if (!thresholds || !Number.isFinite(value)) {
+    return { label: 'Sin datos', color: '#64748b', background: '#f1f5f9', description: 'Sin umbral definido para esta variable' };
   }
-  return getQualityBand(variableCode, value, values).color;
+  const [t1, t2, t3] = thresholds;
+  let idx = 0;
+  if (value >= t3) idx = 3;
+  else if (value >= t2) idx = 2;
+  else if (value >= t1) idx = 1;
+  const { color, background } = TULSMA_BAND_COLORS[idx];
+  const label = TULSMA_BAND_LABELS[idx];
+  const unitStr = variableCode === 'CO' ? 'mg/m³' : variableCode === 'TMP' ? '°C' : (variableCode === 'HUM' || variableCode === 'IUV') ? '' : 'µg/m³';
+  const descriptions: Record<number, string> = {
+    0: `${variableCode} dentro del limite TULSMA (< ${t1} ${unitStr})`,
+    1: `${variableCode} sobre referencia anual TULSMA (${t1}–${t2} ${unitStr})`,
+    2: `${variableCode} sobre limite 24h/8h TULSMA (${t2}–${t3} ${unitStr})`,
+    3: `${variableCode} supera ampliamente el limite TULSMA (> ${t3} ${unitStr})`,
+  };
+  return { label, color, background, description: descriptions[idx] };
 };
 
-const distanceToNearestStation = (lat: number, lng: number, stations: PublicStationObservation[]) =>
-  Math.min(...stations.map((station) => Math.hypot(lat - station.latitude, lng - station.longitude)));
+const hexToRgb = (hex: string): [number, number, number] => {
+  const clean = hex.replace('#', '');
+  return [
+    Number.parseInt(clean.slice(0, 2), 16),
+    Number.parseInt(clean.slice(2, 4), 16),
+    Number.parseInt(clean.slice(4, 6), 16),
+  ];
+};
+
+const mixRgb = (from: [number, number, number], to: [number, number, number], ratio: number): [number, number, number] => {
+  const t = Math.max(0, Math.min(1, ratio));
+  return [
+    Math.round(from[0] + (to[0] - from[0]) * t),
+    Math.round(from[1] + (to[1] - from[1]) * t),
+    Math.round(from[2] + (to[2] - from[2]) * t),
+  ];
+};
+
+const interpolateSurfaceColor = (variableCode: string, value: number, values: number[]): [number, number, number] => {
+  const green = hexToRgb('#16a34a');
+  const yellow = hexToRgb('#facc15');
+  const orange = hexToRgb('#f97316');
+  const red = hexToRgb('#dc2626');
+  const thresholds = TULSMA_THRESHOLDS[variableCode];
+  if (thresholds) {
+    const [t1, t2, t3] = thresholds;
+    if (value < t1) return mixRgb(green, yellow, value / Math.max(t1, 1));
+    if (value < t2) return mixRgb(yellow, orange, (value - t1) / Math.max(t2 - t1, 1));
+    if (value < t3) return mixRgb(orange, red, (value - t2) / Math.max(t3 - t2, 1));
+    return red;
+  }
+
+  const finiteValues = values.filter(Number.isFinite);
+  const min = Math.min(...finiteValues);
+  const max = Math.max(...finiteValues);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min === max) return green;
+  const ratio = (value - min) / (max - min);
+  return ratio < 0.5 ? mixRgb(green, yellow, ratio * 2) : mixRgb(yellow, red, (ratio - 0.5) * 2);
+};
+
+const distanceMeters = (latA: number, lngA: number, latB: number, lngB: number) => {
+  const latMeters = (latA - latB) * 111_320;
+  const lngMeters = (lngA - lngB) * 111_320 * Math.cos((((latA + latB) / 2) * Math.PI) / 180);
+  return Math.hypot(latMeters, lngMeters);
+};
 
 const computeIdw = (lat: number, lng: number, stations: PublicStationObservation[]) => {
-  if (stations.length === 1) {
-    return stations[0].mean_value;
-  }
   let weightedSum = 0;
   let weightTotal = 0;
   for (const station of stations) {
-    const distance = Math.hypot(lat - station.latitude, lng - station.longitude);
-    if (distance < 0.008) {
-      return station.mean_value;
-    }
-    const weight = 1 / distance ** 3.4;
+    const distance = distanceMeters(lat, lng, station.latitude, station.longitude);
+    if (distance < 30) return station.mean_value;
+    const weight = 1 / distance ** 2.2;
     weightedSum += station.mean_value * weight;
     weightTotal += weight;
   }
   return weightTotal > 0 ? weightedSum / weightTotal : 0;
 };
 
-const stationCoverageRadiusMeters = (stationCount: number) => (stationCount <= 1 ? 5200 : 7000);
-const stationCoverageRadiusDegrees = (stationCount: number) => (stationCount <= 1 ? 0.048 : 0.064);
+const SURFACE_FULL_OPACITY_RADIUS_M = 4_800;
+const SURFACE_MAX_RADIUS_M = 11_500;
+const SURFACE_CANVAS_WIDTH = 520;
 
 const pointInPolygon = (lat: number, lng: number, polygon: [number, number][]) => {
   let inside = false;
@@ -410,6 +435,76 @@ const getPolygonBounds = (polygons: [number, number][][]) => {
     maxLat: Math.max(...points.map((point) => point[0])),
     minLng: Math.min(...points.map((point) => point[1])),
     maxLng: Math.max(...points.map((point) => point[1])),
+  };
+};
+
+const getSurfaceBounds = (stations: PublicStationObservation[]) => {
+  const polygonBounds = getPolygonBounds(QUITO_PUBLIC_MAP_POLYGONS);
+  const midLat = stations.reduce((sum, station) => sum + station.latitude, 0) / stations.length;
+  const latMargin = SURFACE_MAX_RADIUS_M / 111_320;
+  const lngMargin = SURFACE_MAX_RADIUS_M / (111_320 * Math.cos((midLat * Math.PI) / 180));
+  return {
+    minLat: Math.max(polygonBounds.minLat, Math.min(...stations.map((station) => station.latitude)) - latMargin),
+    maxLat: Math.min(polygonBounds.maxLat, Math.max(...stations.map((station) => station.latitude)) + latMargin),
+    minLng: Math.max(polygonBounds.minLng, Math.min(...stations.map((station) => station.longitude)) - lngMargin),
+    maxLng: Math.min(polygonBounds.maxLng, Math.max(...stations.map((station) => station.longitude)) + lngMargin),
+  };
+};
+
+const smoothStep = (edge0: number, edge1: number, value: number) => {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+};
+
+const distanceToNearestStationMeters = (lat: number, lng: number, stations: PublicStationObservation[]) =>
+  Math.min(...stations.map((station) => distanceMeters(lat, lng, station.latitude, station.longitude)));
+
+const buildSurfaceOverlay = (
+  stations: PublicStationObservation[],
+  selectedVariable: string,
+  values: number[],
+): { dataUrl: string; bounds: L.LatLngBoundsExpression } | null => {
+  const { minLat, maxLat, minLng, maxLng } = getSurfaceBounds(stations);
+  if (minLat >= maxLat || minLng >= maxLng) return null;
+
+  const surfaceWidthMeters = distanceMeters((minLat + maxLat) / 2, minLng, (minLat + maxLat) / 2, maxLng);
+  const surfaceHeightMeters = distanceMeters(minLat, (minLng + maxLng) / 2, maxLat, (minLng + maxLng) / 2);
+  const width = SURFACE_CANVAS_WIDTH;
+  const height = Math.max(180, Math.min(620, Math.round(width * (surfaceHeightMeters / Math.max(surfaceWidthMeters, 1)))));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+
+  const image = context.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    const lat = maxLat - ((y + 0.5) / height) * (maxLat - minLat);
+    for (let x = 0; x < width; x += 1) {
+      const lng = minLng + ((x + 0.5) / width) * (maxLng - minLng);
+      if (!pointInAnyPolygon(lat, lng, QUITO_PUBLIC_MAP_POLYGONS)) continue;
+
+      const nearestDistance = distanceToNearestStationMeters(lat, lng, stations);
+      if (nearestDistance > SURFACE_MAX_RADIUS_M) continue;
+
+      const value = computeIdw(lat, lng, stations);
+      const [red, green, blue] = interpolateSurfaceColor(selectedVariable, value, values);
+      const fade = 1 - smoothStep(SURFACE_FULL_OPACITY_RADIUS_M, SURFACE_MAX_RADIUS_M, nearestDistance);
+      const index = (y * width + x) * 4;
+      image.data[index] = red;
+      image.data[index + 1] = green;
+      image.data[index + 2] = blue;
+      image.data[index + 3] = Math.round(150 * fade);
+    }
+  }
+
+  context.putImageData(image, 0, 0);
+  return {
+    dataUrl: canvas.toDataURL('image/png'),
+    bounds: [
+      [minLat, minLng],
+      [maxLat, maxLng],
+    ],
   };
 };
 
@@ -572,60 +667,19 @@ function updateMapLayers({
 
   const values = stations.map((station) => station.mean_value);
   if (showSurface && stations.length >= 1) {
-    if (stations.length === 1) {
-      const station = stations[0];
-      const band = getQualityBand(selectedVariable, station.mean_value, values);
-      L.circle([station.latitude, station.longitude], {
-        radius: stationCoverageRadiusMeters(stations.length),
-        color: band.color,
-        fillColor: band.color,
-        fillOpacity: 0.22,
-        opacity: 0.55,
-        weight: 1,
+    const overlay = buildSurfaceOverlay(stations, selectedVariable, values);
+    if (overlay) {
+      L.imageOverlay(overlay.dataUrl, overlay.bounds, {
+        className: 'public-idw-surface',
         interactive: false,
+        opacity: 1,
       }).addTo(surfaceLayer);
-    } else {
-      const { minLat, maxLat, minLng, maxLng } = getPolygonBounds(QUITO_PUBLIC_MAP_POLYGONS);
-      const rows = 86;
-      const cols = 58;
-      const stepLat = (maxLat - minLat) / rows;
-      const stepLng = (maxLng - minLng) / cols;
-      const maxCoverageDistance = stationCoverageRadiusDegrees(stations.length);
-
-      for (let row = 0; row < rows; row += 1) {
-        for (let col = 0; col < cols; col += 1) {
-          const lat = minLat + stepLat * (row + 0.5);
-          const lng = minLng + stepLng * (col + 0.5);
-          if (!pointInAnyPolygon(lat, lng, QUITO_PUBLIC_MAP_POLYGONS)) {
-            continue;
-          }
-          if (distanceToNearestStation(lat, lng, stations) > maxCoverageDistance) {
-            continue;
-          }
-          const value = computeIdw(lat, lng, stations);
-          const fillColor = colorForInterpolatedValue(selectedVariable, value, values);
-          const rectangle = L.rectangle(
-            [
-              [minLat + stepLat * row, minLng + stepLng * col],
-              [minLat + stepLat * (row + 1), minLng + stepLng * (col + 1)],
-            ],
-            {
-              color: fillColor,
-              fillColor,
-              fillOpacity: 0.46,
-              opacity: 0,
-              interactive: false,
-            },
-          );
-          rectangle.addTo(surfaceLayer);
-        }
-      }
     }
   }
 
   if (showStations) {
     for (const station of stations) {
-      const band = getQualityBand(selectedVariable, station.mean_value, values);
+      const band = getQualityBand(selectedVariable, station.mean_value);
       const marker = L.circleMarker([station.latitude, station.longitude], {
         radius: 9,
         color: '#ffffff',
@@ -655,7 +709,223 @@ function updateMapLayers({
   }
 }
 
+// ─── Descripciones de cada banda por variable para el tooltip ────────────────
+const TULSMA_BAND_DESCRIPTIONS: Record<string, [string, string, string, string]> = {
+  PM25: [
+    'Bueno: PM2.5 < 15 µg/m³. Dentro del límite anual TULSMA. Sin riesgo para la salud general.',
+    'Moderado: PM2.5 15–50 µg/m³. Entre el límite anual y el límite de 24h TULSMA. Grupos sensibles podrían sentir leve molestia.',
+    'Alto: PM2.5 50–75 µg/m³. Supera el límite de 24h TULSMA (50 µg/m³). Se recomienda reducir actividad física al aire libre.',
+    'Muy alto: PM2.5 > 75 µg/m³. Supera ampliamente el límite TULSMA. Riesgo significativo para toda la población.',
+  ],
+  PM10: [
+    'Bueno: PM10 < 50 µg/m³. Dentro del límite anual TULSMA. Calidad de aire aceptable.',
+    'Moderado: PM10 50–100 µg/m³. Supera el límite anual (50 µg/m³) pero no el de 24h (100 µg/m³). Posibles molestias en personas sensibles.',
+    'Alto: PM10 100–200 µg/m³. Supera el límite de 24h TULSMA. Evitar exposición prolongada.',
+    'Muy alto: PM10 > 200 µg/m³. Nivel crítico. Riesgo serio para toda la población.',
+  ],
+  NO2: [
+    'Bueno: NO₂ < 40 µg/m³. Dentro del límite anual TULSMA. Sin efecto sobre salud respiratoria.',
+    'Moderado: NO₂ 40–200 µg/m³. Supera el límite anual. Puede afectar pulmones en exposición prolongada.',
+    'Alto: NO₂ 200–400 µg/m³. Supera el límite de 1 hora TULSMA. Irritación de vías respiratorias.',
+    'Muy alto: NO₂ > 400 µg/m³. Nivel de emergencia. Peligroso en exposición corta.',
+  ],
+  O3: [
+    'Bueno: O₃ < 60 µg/m³. Sin efectos observados en la salud. Nivel de referencia.',
+    'Moderado: O₃ 60–100 µg/m³. Cerca o sobre el límite de 8h TULSMA. Afecta sensibilidad respiratoria.',
+    'Alto: O₃ 100–200 µg/m³. Supera el límite de 8h TULSMA (100 µg/m³). Reducir actividad al aire libre.',
+    'Muy alto: O₃ > 200 µg/m³. Nivel peligroso. Afecta a toda la población.',
+  ],
+  CO: [
+    'Bueno: CO < 5 mg/m³. Concentración baja. Sin riesgo para salud.',
+    'Moderado: CO 5–10 mg/m³. Cerca del límite de 8h TULSMA. Personas con enfermedades cardíacas deben tener precaución.',
+    'Alto: CO 10–30 mg/m³. Supera el límite de 8h TULSMA. Peligroso en espacios cerrados.',
+    'Muy alto: CO > 30 mg/m³. Riesgo severo de intoxicación. Evacuación recomendada.',
+  ],
+  SO2: [
+    'Bueno: SO₂ < 40 µg/m³. Dentro del límite anual TULSMA. Sin impacto relevante.',
+    'Moderado: SO₂ 40–125 µg/m³. Posible irritación en personas asmáticas.',
+    'Alto: SO₂ 125–350 µg/m³. Supera el límite de 24h TULSMA. Irritación de mucosas.',
+    'Muy alto: SO₂ > 350 µg/m³. Nivel de emergencia. Afecta vías respiratorias gravemente.',
+  ],
+  TMP: [
+    'Confort: temperatura < 10 °C. Fresco. Se recomienda abrigo.',
+    'Confort: temperatura 10–28 °C. Rango cómodo para Quito.',
+    'Cálido: temperatura 28–35 °C. Por encima del confort térmico habitual de Quito.',
+    'Muy cálido: temperatura > 35 °C. Temperatura inusualmente alta para la zona.',
+  ],
+  HUM: [
+    'Bajo: humedad relativa < 30%. Ambiente seco. Posible irritación de mucosas.',
+    'Confort: humedad 30–70%. Rango óptimo de bienestar.',
+    'Húmedo: humedad 70–90%. Sensación de bochorno.',
+    'Muy húmedo: humedad > 90%. Malestar térmico y favorece hongos.',
+  ],
+  VEL: [
+    'Calma: viento < 2 m/s. Baja dispersión de contaminantes.',
+    'Brisa: viento 2–8 m/s. Dispersión moderada. Condiciones normales.',
+    'Viento fuerte: 8–15 m/s. Alta dispersión. Posibles molestias.',
+    'Temporal: viento > 15 m/s. Viento muy intenso.',
+  ],
+  IUV: [
+    'Bajo: UV < 3. Sin necesidad de protección especial.',
+    'Moderado: UV 3–6. Se recomienda protector solar.',
+    'Alto: UV 6–8. Protección solar obligatoria. Reducir exposición al mediodía.',
+    'Muy alto: UV > 8. Riesgo elevado. Evitar exposición directa.',
+  ],
+  RS: [
+    'Baja: radiación < 200 W/m². Condiciones nubladas o de alba/crepúsculo.',
+    'Moderada: 200–600 W/m². Día parcialmente soleado.',
+    'Alta: 600–900 W/m². Irradiación intensa. Protección UV necesaria.',
+    'Muy alta: > 900 W/m². Irradiación máxima. Riesgo UV extremo.',
+  ],
+  LLU: [
+    'Sin lluvia o llovizna: < 1 mm. Precipitación despreciable.',
+    'Lluvia leve: 1–10 mm. Precipitación normal.',
+    'Lluvia moderada: 10–30 mm. Posibles charcos y reducción de visibilidad.',
+    'Lluvia intensa: > 30 mm. Riesgo de inundaciones locales.',
+  ],
+};
+
+const ALL_TULSMA_ROWS = [
+  { code: 'PM25', label: 'PM2.5', unit: 'µg/m³', thresholds: TULSMA_THRESHOLDS.PM25 },
+  { code: 'PM10', label: 'PM10', unit: 'µg/m³', thresholds: TULSMA_THRESHOLDS.PM10 },
+  { code: 'NO2', label: 'NO₂', unit: 'µg/m³', thresholds: TULSMA_THRESHOLDS.NO2 },
+  { code: 'O3', label: 'O₃', unit: 'µg/m³', thresholds: TULSMA_THRESHOLDS.O3 },
+  { code: 'CO', label: 'CO', unit: 'mg/m³', thresholds: TULSMA_THRESHOLDS.CO },
+  { code: 'SO2', label: 'SO₂', unit: 'µg/m³', thresholds: TULSMA_THRESHOLDS.SO2 },
+  { code: 'TMP', label: 'Temp.', unit: '°C', thresholds: TULSMA_THRESHOLDS.TMP },
+  { code: 'HUM', label: 'Hum.', unit: '%', thresholds: TULSMA_THRESHOLDS.HUM },
+  { code: 'VEL', label: 'Viento', unit: 'm/s', thresholds: TULSMA_THRESHOLDS.VEL },
+  { code: 'IUV', label: 'UV', unit: 'idx', thresholds: TULSMA_THRESHOLDS.IUV },
+  { code: 'RS', label: 'RS', unit: 'W/m²', thresholds: TULSMA_THRESHOLDS.RS },
+  { code: 'LLU', label: 'Lluvia', unit: 'mm', thresholds: TULSMA_THRESHOLDS.LLU },
+];
+
+function TulsmaLegendPanel({
+  variableCode,
+  unit,
+  idwLegend,
+}: {
+  variableCode: string;
+  unit: string | null | undefined;
+  idwLegend: IdwLegendData;
+}) {
+  const [tableOpen, setTableOpen] = useState(false);
+  const [hoveredBand, setHoveredBand] = useState<number | null>(null);
+  const thresholds = TULSMA_THRESHOLDS[variableCode];
+  const descriptions = TULSMA_BAND_DESCRIPTIONS[variableCode];
+  const formattedUnit = getUnitLabel(unit);
+
+  // Segmentos de la barra: 4 bloques con sus colores y labels
+  const segments = [
+    { color: TULSMA_BAND_COLORS[0].color, bg: TULSMA_BAND_COLORS[0].background, label: idwLegend.lowLabel },
+    { color: TULSMA_BAND_COLORS[1].color, bg: TULSMA_BAND_COLORS[1].background, label: idwLegend.midLabel },
+    { color: TULSMA_BAND_COLORS[2].color, bg: TULSMA_BAND_COLORS[2].background, label: thresholds ? `Alto ≥ ${thresholds[1]} ${formattedUnit}`.trim() : 'Alto' },
+    { color: TULSMA_BAND_COLORS[3].color, bg: TULSMA_BAND_COLORS[3].background, label: thresholds ? `Muy alto ≥ ${thresholds[2]} ${formattedUnit}`.trim() : 'Muy alto' },
+  ];
+
+  return (
+    <div className="public-legend-panel public-glass-panel pointer-events-auto absolute bottom-6 left-1/2 z-[520] w-[min(800px,calc(100%-2rem))] -translate-x-1/2 overflow-visible rounded-2xl px-5 pb-3 pt-3">
+      {/* Tabla expandida — se despliega hacia arriba */}
+      {tableOpen && (
+        <div className="mb-3 overflow-hidden rounded-xl border border-slate-200/80 bg-white/97 shadow-xl">
+          <div className="px-3 py-2 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">
+            Umbrales TULSMA — Acuerdo Ministerial 097-A, Libro VI Anexo 4
+          </div>
+          <table className="w-full border-collapse text-[11px]">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="px-3 py-1.5 text-left font-semibold text-slate-500">Variable</th>
+                {(['Bueno', 'Moderado', 'Alto', 'Muy alto'] as const).map((label, i) => (
+                  <th key={label} className="px-3 py-1.5 text-left font-semibold" style={{ color: TULSMA_BAND_COLORS[i].color }}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ALL_TULSMA_ROWS.map((row) => {
+                const [t1, t2, t3] = row.thresholds;
+                const rowDescs = TULSMA_BAND_DESCRIPTIONS[row.code];
+                const isActive = row.code === variableCode;
+                return (
+                  <tr key={row.code} className={`border-b border-slate-50 transition-colors ${isActive ? 'bg-[#EDF6FF]' : 'hover:bg-slate-50'}`}>
+                    <td className={`px-3 py-1.5 font-bold ${isActive ? 'text-[#1f5f96]' : 'text-slate-700'}`}>
+                      {row.label} <span className="font-normal text-slate-400">({row.unit})</span>
+                    </td>
+                    {([
+                      { range: `< ${t1}`, desc: rowDescs?.[0] ?? '' },
+                      { range: `${t1}–${t2}`, desc: rowDescs?.[1] ?? '' },
+                      { range: `${t2}–${t3}`, desc: rowDescs?.[2] ?? '' },
+                      { range: `> ${t3}`, desc: rowDescs?.[3] ?? '' },
+                    ] as const).map((cell, ci) => (
+                      <td
+                        key={ci}
+                        className="group relative cursor-default px-3 py-1.5"
+                        style={{ color: TULSMA_BAND_COLORS[ci].color }}
+                        title={cell.desc}
+                      >
+                        <span className="font-semibold">{cell.range}</span>
+                        {/* Tooltip hover */}
+                        {cell.desc && (
+                          <span className="pointer-events-none absolute bottom-full left-1/2 z-[600] mb-1.5 hidden w-52 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/97 px-3 py-2 text-[10px] leading-relaxed text-slate-600 shadow-xl group-hover:block">
+                            {cell.desc}
+                          </span>
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Barra principal de leyenda */}
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">
+          {idwLegend.scaleLabel}
+        </span>
+        <div className="flex flex-1 overflow-hidden rounded-full border border-slate-200/60">
+          {segments.map((seg, i) => (
+            <div
+              key={i}
+              className="relative flex-1 cursor-default py-1.5 text-center transition-opacity"
+              style={{ background: seg.bg, borderRight: i < 3 ? '1px solid rgba(255,255,255,0.6)' : undefined }}
+              onMouseEnter={() => setHoveredBand(i)}
+              onMouseLeave={() => setHoveredBand(null)}
+            >
+              <span className="text-[10px] font-semibold leading-none" style={{ color: seg.color }}>
+                {seg.label}
+              </span>
+              {/* Tooltip por segmento */}
+              {hoveredBand === i && descriptions?.[i] && (
+                <div className="absolute bottom-full left-1/2 z-[600] mb-2 w-56 -translate-x-1/2 rounded-xl border border-slate-200 bg-white/97 px-3 py-2 text-left text-[10px] leading-relaxed text-slate-600 shadow-xl">
+                  {descriptions[i]}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        {/* Botón toggle tabla completa */}
+        <button
+          type="button"
+          onClick={() => setTableOpen((prev) => !prev)}
+          className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold transition ${
+            tableOpen
+              ? 'border-[#509EE3] bg-[#509EE3] text-white'
+              : 'border-slate-300 bg-white/80 text-slate-500 hover:border-[#509EE3] hover:text-[#509EE3]'
+          }`}
+          title="Ver tabla completa de umbrales TULSMA"
+          aria-label="Ver tabla TULSMA"
+        >
+          ?
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PublicDashboard({
+
   onGoToLogin,
   onGoToLanding,
   embedded = false,
@@ -861,7 +1131,7 @@ export function PublicDashboard({
   const periodSummary = snapshot?.period_summary;
   const periodUnit = periodSummary?.unit ?? snapshot?.unit;
   const displayMean = periodSummary?.avg_value ?? cityMean;
-  const cityBand = displayMean !== null && displayMean !== undefined && snapshot ? getQualityBand(snapshot.variable_code, displayMean, values) : null;
+  const cityBand = displayMean !== null && displayMean !== undefined && snapshot ? getQualityBand(snapshot.variable_code, displayMean) : null;
   const chartSource = trendSnapshot?.variable_code === (snapshot?.variable_code ?? selectedVariable) ? trendSnapshot : snapshot;
   const chartData: ChartPoint[] = useMemo(
     () =>
@@ -961,7 +1231,7 @@ export function PublicDashboard({
   );
   const selectedStationDetail = selectedStation === ALL_STATIONS ? null : (snapshot?.stations[0] ?? null);
   const selectedStationBand = selectedStationDetail
-    ? getQualityBand(snapshot?.variable_code ?? selectedVariable, selectedStationDetail.latest_value, values)
+    ? getQualityBand(snapshot?.variable_code ?? selectedVariable, selectedStationDetail.latest_value)
     : null;
 
   return (
@@ -1093,7 +1363,7 @@ export function PublicDashboard({
             <div className="space-y-2">
               {topRelativeStations.length > 0 ? (
                 topRelativeStations.map((station) => {
-                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.mean_value, values);
+                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.mean_value);
                   return (
                     <button
                       key={station.station_code}
@@ -1378,7 +1648,7 @@ export function PublicDashboard({
                 <div className="space-y-2">
                   {stationSnapshot.length > 0 ? (
                     stationSnapshot.map((station) => {
-                      const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value, values);
+                      const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value);
                       return (
                         <button
                           key={station.station_code}
@@ -1457,16 +1727,11 @@ export function PublicDashboard({
           )}
         </aside>
 
-        <div className="public-legend-panel public-glass-panel pointer-events-auto absolute bottom-6 left-1/2 z-[520] w-[min(760px,calc(100%-2rem))] -translate-x-1/2 rounded-full px-5 py-3">
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <span className="mr-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">{idwLegend.scaleLabel}</span>
-            <div className="h-2 w-40 rounded-full bg-[linear-gradient(90deg,#2e7d32,#fde047,#b91c1c)]" />
-            <span className="text-[11px] text-slate-500">{idwLegend.lowLabel}</span>
-            <span className="text-[11px] text-slate-500">{idwLegend.midLabel}</span>
-            <span className="text-[11px] text-slate-500">{idwLegend.highLabel}</span>
-          </div>
-          <p className="mt-1 text-center text-[10px] text-slate-400">{idwLegend.description}</p>
-        </div>
+        <TulsmaLegendPanel
+          variableCode={snapshot?.variable_code ?? selectedVariable}
+          unit={snapshot?.unit}
+          idwLegend={idwLegend}
+        />
       </div>
     </div>
   );
@@ -1959,7 +2224,7 @@ export function PublicDashboard({
               {stationSnapshot.length > 0 ? (
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {stationSnapshot.map((station) => {
-                    const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value, values);
+                    const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.latest_value);
                     return (
                       <div key={station.station_code} className="rounded-md border bg-[#F9FBFC] p-3">
                         <div className="flex items-start justify-between gap-3">
@@ -2178,7 +2443,7 @@ export function PublicDashboard({
                 .sort((a, b) => b.mean_value - a.mean_value)
                 .slice(0, 5)
                 .map((station) => {
-                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.mean_value, values);
+                  const band = getQualityBand(snapshot?.variable_code ?? selectedVariable, station.mean_value);
                   return (
                     <div key={station.station_code} className="flex items-center justify-between rounded-md border px-3 py-2">
                       <div>
@@ -2234,12 +2499,18 @@ function TraceRow({ label, value }: { label: string; value: string }) {
 }
 
 function gaugeMaxForVariable(variableCode: string) {
-  if (variableCode === 'PM25') return 50;
-  if (variableCode === 'PM10') return 150;
-  if (variableCode === 'NO2') return 200;
-  if (variableCode === 'O3') return 200;
-  if (variableCode === 'SO2') return 100;
-  if (variableCode === 'CO') return 10;
+  // Topes alineados con umbral "Muy alto" TULSMA Anexo 4
+  if (variableCode === 'PM25') return 75;   // µg/m³
+  if (variableCode === 'PM10') return 200;  // µg/m³
+  if (variableCode === 'NO2')  return 400;  // µg/m³
+  if (variableCode === 'O3')   return 200;  // µg/m³
+  if (variableCode === 'SO2')  return 350;  // µg/m³
+  if (variableCode === 'CO')   return 30;   // mg/m³
+  if (variableCode === 'TMP')  return 40;   // °C
+  if (variableCode === 'HUM')  return 100;  // %
+  if (variableCode === 'VEL')  return 20;   // m/s
+  if (variableCode === 'IUV')  return 11;   // índice UV extremo
+  if (variableCode === 'RS')   return 1000; // W/m²
   return 100;
 }
 
