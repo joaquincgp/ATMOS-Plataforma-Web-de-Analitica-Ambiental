@@ -112,17 +112,12 @@ jobs:
           AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
         run: |
           # Single revision mode means every deploy always serves 100% of
-          # traffic from the newest revision. Without this, a stale revision
-          # can keep answering requests even after a successful deploy.
+          # traffic from the newest revision automatically (Azure rejects
+          # explicit traffic-weight commands in this mode).
           az containerapp revision set-mode \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINER_APP_NAME" \
             --mode single \
-            --output none
-          az containerapp ingress traffic set \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --name "$AZURE_CONTAINER_APP_NAME" \
-            --revision-weight latest=100 \
             --output none
 
       - name: Resolve backend URL
