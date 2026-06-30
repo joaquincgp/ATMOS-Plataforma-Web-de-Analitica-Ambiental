@@ -287,6 +287,19 @@ deploy:containerapp:azure:
         --name "atmosprod-api"
         --image "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA"
         --output none
+    # Single revision mode means every deploy always serves 100% of traffic
+    # from the newest revision. Without this, a stale revision can keep
+    # answering requests even after a successful deploy of newer code.
+    - az containerapp revision set-mode
+        --resource-group "rg-atmos-prod"
+        --name "atmosprod-api"
+        --mode single
+        --output none
+    - az containerapp ingress traffic set
+        --resource-group "rg-atmos-prod"
+        --name "atmosprod-api"
+        --revision-weight latest=100
+        --output none
 
 deploy:frontend:azure:
   stage: deploy
