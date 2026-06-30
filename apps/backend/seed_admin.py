@@ -14,7 +14,7 @@ from app.services.auth_service import hash_password
 
 def main() -> None:
     init_db()
-    email = os.getenv("ATMOS_ADMIN_EMAIL", "admin@atmos.local").strip().lower()
+    email = os.getenv("ATMOS_ADMIN_EMAIL", "carmen.toledo@udla.edu.ec").strip().lower()
     full_name = os.getenv("ATMOS_ADMIN_NAME", "ATMOS Admin").strip()
     password = os.getenv("ATMOS_ADMIN_PASSWORD")
     if not password:

@@ -14,8 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models.email_verification_token import EmailVerificationToken
+from app.models.etl_run import EtlRun
+from app.models.manual_dataset import ManualDataset
+from app.models.measurement import DATA_ORIGIN_USER, Measurement
+from app.models.ml_experiment_run import MLExperimentRun
 from app.models.password_reset_token import PasswordResetToken
 from app.models.refresh_token import RefreshToken
+from app.models.source_file import SourceFile
 from app.models.user import User
 from app.models.workspace import Workspace
 from app.schemas.auth import (
@@ -42,6 +47,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 PASSWORD_HASH_PREFIX = "bcrypt_sha256"
+VERIFICATION_RESEND_COOLDOWN_SECONDS = 60
 
 
 class AuthError(Exception):
@@ -262,6 +268,20 @@ def resend_verification_email(db: Session, payload: ForgotPasswordRequest) -> Me
     if user is None or not user.is_active or user.is_verified:
         return generic_response
 
+    now = _utcnow()
+    recent_token = db.scalar(
+        select(EmailVerificationToken.id)
+        .where(
+            EmailVerificationToken.user_id == user.id,
+            EmailVerificationToken.used_at.is_(None),
+            EmailVerificationToken.created_at >= now - timedelta(seconds=VERIFICATION_RESEND_COOLDOWN_SECONDS),
+        )
+        .limit(1)
+    )
+    if recent_token is not None:
+        logger.info("Verification email resend skipped by cooldown for %s", user.email)
+        return generic_response
+
     try:
         _send_verification_email_for_user(db, user)
     except EmailDeliveryError as exc:
@@ -372,6 +392,62 @@ def deactivate_admin_user(db: Session, *, target_user_id: str, acting_user: User
     )
     db.commit()
     return MessageResponse(message="User access deactivated.")
+
+
+def delete_own_account(db: Session, user: User) -> MessageResponse:
+    if user.role == UserRole.admin.value:
+        raise AuthError("Admin accounts cannot be deleted from the user profile.")
+
+    user_id = user.id
+    source_file_ids = [
+        row[0]
+        for row in db.execute(
+            select(ManualDataset.source_file_id).where(
+                ManualDataset.owner_user_id == user_id,
+                ManualDataset.source_file_id.is_not(None),
+            )
+        ).all()
+    ]
+    etl_run_ids = [
+        row[0]
+        for row in db.execute(
+            select(ManualDataset.etl_run_id).where(
+                ManualDataset.owner_user_id == user_id,
+                ManualDataset.etl_run_id.is_not(None),
+            )
+        ).all()
+    ]
+
+    db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
+    db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    db.execute(delete(RefreshToken).where(RefreshToken.user_id == user_id))
+    db.execute(delete(MLExperimentRun).where(MLExperimentRun.owner_user_id == user_id))
+
+    if source_file_ids:
+        db.execute(
+            delete(Measurement).where(
+                Measurement.source_file_id.in_(source_file_ids),
+                Measurement.data_origin == DATA_ORIGIN_USER,
+            )
+        )
+    db.execute(delete(ManualDataset).where(ManualDataset.owner_user_id == user_id))
+    if source_file_ids:
+        db.execute(delete(SourceFile).where(SourceFile.id.in_(source_file_ids)))
+    db.execute(delete(Workspace).where(Workspace.owner_user_id == user_id))
+
+    for etl_run_id in etl_run_ids:
+        remaining_source_files = db.scalar(
+            select(func.count(SourceFile.id)).where(SourceFile.etl_run_id == etl_run_id)
+        )
+        remaining_datasets = db.scalar(
+            select(func.count(ManualDataset.id)).where(ManualDataset.etl_run_id == etl_run_id)
+        )
+        if (remaining_source_files or 0) == 0 and (remaining_datasets or 0) == 0:
+            db.execute(delete(EtlRun).where(EtlRun.id == etl_run_id))
+
+    db.delete(user)
+    db.commit()
+    return MessageResponse(message="Account deleted successfully.")
 
 
 def login_user(

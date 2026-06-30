@@ -7,13 +7,15 @@ from pathlib import Path
 import httpx
 import pandas as pd
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.models import (
+    EmailVerificationToken,
     EtlRun,
     ManualDataset,
     Measurement,
+    RefreshToken,
     SourceFile,
     Station,
     User,
@@ -149,6 +151,7 @@ def test_analytics_query_caps_rows_and_rejects_unsafe_sql(db_session) -> None:
 
 def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkeypatch) -> None:
     monkeypatch.setattr(auth_service.settings, "environment", "development")
+    monkeypatch.setattr(auth_service.settings, "email_provider", "log")
     user_email = "new.user@udla.edu.ec"
     registered = auth_service.register_user(
         db_session,
@@ -202,7 +205,8 @@ def test_auth_service_full_user_token_and_password_reset_flow(db_session, monkey
     assert updated.full_name == "Renamed User"
 
 
-def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session) -> None:
+def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session, monkeypatch) -> None:
+    monkeypatch.setattr(auth_service.settings, "email_provider", "log")
     user_email = "dupe@udla.edu.ec"
     auth_service.register_user(
         db_session,
@@ -240,6 +244,78 @@ def test_auth_service_rejects_duplicate_inactive_and_invalid_flows(db_session) -
             user_agent=None,
             ip_address=None,
         )
+
+
+def test_auth_service_resend_verification_uses_cooldown(db_session, monkeypatch) -> None:
+    monkeypatch.setattr(auth_service.settings, "email_provider", "log")
+    user = User(
+        email="pending@udla.edu.ec",
+        full_name="Pending User",
+        password_hash="hash",
+        role=UserRole.researcher.value,
+        status=UserStatus.pending_validation.value,
+        is_active=True,
+        is_verified=False,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    response = auth_service.resend_verification_email(db_session, ForgotPasswordRequest(email=user.email))
+    first_count = db_session.scalar(select(func.count(EmailVerificationToken.id)))
+    second_response = auth_service.resend_verification_email(db_session, ForgotPasswordRequest(email=user.email))
+    second_count = db_session.scalar(select(func.count(EmailVerificationToken.id)))
+
+    assert response.message == second_response.message
+    assert first_count == 1
+    assert second_count == 1
+
+
+def test_auth_service_delete_own_account_removes_records_and_blocks_admin(db_session) -> None:
+    researcher = User(
+        email="self-delete@udla.edu.ec",
+        full_name="Self Delete",
+        password_hash="hash",
+        role=UserRole.researcher.value,
+        status=UserStatus.active.value,
+        is_active=True,
+        is_verified=True,
+    )
+    admin = User(
+        email="protected-admin@udla.edu.ec",
+        full_name="Protected Admin",
+        password_hash="hash",
+        role=UserRole.admin.value,
+        status=UserStatus.active.value,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add_all([researcher, admin])
+    db_session.flush()
+    workspace = Workspace(
+        owner_user_id=researcher.id,
+        name="Delete Workspace",
+        slug="delete-workspace",
+        schema_name="workspace_delete",
+        storage_path="/tmp/delete-workspace",
+        is_active=True,
+    )
+    refresh_token = RefreshToken(
+        user_id=researcher.id,
+        token_hash=auth_service._token_hash("active-refresh-token"),
+        expires_at=datetime.now(UTC),
+    )
+    db_session.add_all([workspace, refresh_token])
+    db_session.commit()
+    researcher_id = researcher.id
+
+    response = auth_service.delete_own_account(db_session, researcher)
+
+    assert response.message == "Account deleted successfully."
+    assert db_session.get(User, researcher_id) is None
+    assert db_session.scalar(select(func.count(RefreshToken.id)).where(RefreshToken.user_id == researcher_id)) == 0
+    assert db_session.scalar(select(func.count(Workspace.id)).where(Workspace.owner_user_id == researcher_id)) == 0
+    with pytest.raises(AuthError, match="Admin accounts"):
+        auth_service.delete_own_account(db_session, admin)
 
 
 def test_admin_user_management_lists_updates_and_deactivates(db_session, tmp_path: Path) -> None:

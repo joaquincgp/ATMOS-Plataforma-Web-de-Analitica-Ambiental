@@ -18,7 +18,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 import { AnalyticalWorkspaceProvider } from '@/features/analysis/contexts/analytical-workspace-context';
 import { DashboardProvider } from '@/features/dashboard/contexts/dashboard-context';
-import { verifyEmail } from '@/api/modules/auth';
+import { resendVerificationEmail, verifyEmail } from '@/api/modules/auth';
 import type { AppView } from '@/store/app-store';
 
 function normalizePath(path: string): string {
@@ -251,6 +251,7 @@ function App() {
         onBackToLanding={() => navigate('/')}
         onOpenRegister={() => navigate('/register')}
         onOpenForgotPassword={() => navigate('/forgot-password')}
+        onResendVerification={resendVerificationEmail}
       />
     );
   }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { motion } from 'motion/react';
 import { AlertCircle, Cloud, Wind, Leaf, Droplets, Sun, CloudRain, TreeDeciduous, Waves } from 'lucide-react';
@@ -13,6 +13,7 @@ import { allowedEmailDomainLabel, isAllowedEmailDomain } from '@/features/auth/l
 
 interface LoginProps {
   onLogin: (payload: { email: string; password: string }) => Promise<void>;
+  onResendVerification?: (payload: { email: string }) => Promise<unknown>;
   onBackToLanding?: () => void;
   onOpenRegister?: () => void;
   onOpenForgotPassword?: () => void;
@@ -30,18 +31,46 @@ const floatingIcons = [
 ] as const;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const VERIFICATION_REQUIRED_MESSAGE = 'Verify your institutional email before signing in.';
+const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
 
-export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPassword }: LoginProps) {
+const getVerificationCooldownKey = (email: string) => `atmos:verification-resend:${email.trim().toLowerCase()}`;
+
+export function Login({ onLogin, onResendVerification, onBackToLanding, onOpenRegister, onOpenForgotPassword }: LoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [resendMessage, setResendMessage] = useState<string | null>(null);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const normalizedEmail = useMemo(() => email.trim().toLowerCase(), [email]);
+  const canOfferVerificationResend = error === VERIFICATION_REQUIRED_MESSAGE && Boolean(onResendVerification);
+
+  useEffect(() => {
+    if (!canOfferVerificationResend || !normalizedEmail) {
+      setResendCooldownSeconds(0);
+      return undefined;
+    }
+
+    const updateCooldown = () => {
+      const expiresAt = Number(window.localStorage.getItem(getVerificationCooldownKey(normalizedEmail)) ?? 0);
+      const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+      setResendCooldownSeconds(remaining);
+      if (remaining === 0 && expiresAt > 0) {
+        window.localStorage.removeItem(getVerificationCooldownKey(normalizedEmail));
+      }
+    };
+
+    updateCooldown();
+    const interval = window.setInterval(updateCooldown, 1000);
+    return () => window.clearInterval(interval);
+  }, [canOfferVerificationResend, normalizedEmail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const errors: Record<string, string> = {};
-    const normalizedEmail = email.trim().toLowerCase();
 
     if (!normalizedEmail) {
       errors.email = 'Ingresa tu correo electrónico.';
@@ -64,6 +93,7 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
     }
 
     setError(null);
+    setResendMessage(null);
     setIsSubmitting(true);
     try {
       await onLogin({ email: normalizedEmail, password });
@@ -71,6 +101,26 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
       setError(err instanceof Error ? err.message : 'Could not sign in.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!onResendVerification || !normalizedEmail || resendCooldownSeconds > 0) {
+      return;
+    }
+
+    setIsResendingVerification(true);
+    setResendMessage(null);
+    try {
+      await onResendVerification({ email: normalizedEmail });
+      const expiresAt = Date.now() + VERIFICATION_RESEND_COOLDOWN_SECONDS * 1000;
+      window.localStorage.setItem(getVerificationCooldownKey(normalizedEmail), String(expiresAt));
+      setResendCooldownSeconds(VERIFICATION_RESEND_COOLDOWN_SECONDS);
+      setResendMessage('Te enviamos un nuevo correo de verificación. Revisa tu bandeja de entrada.');
+    } catch (err) {
+      setResendMessage(err instanceof Error ? err.message : 'No se pudo reenviar el correo de verificación.');
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -160,6 +210,7 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
                   onChange={(e) => {
                     setEmail(e.target.value);
                     setFieldErrors((current) => ({ ...current, email: '' }));
+                    setResendMessage(null);
                   }}
                   className="bg-[#F9FBFC] border-gray-200 h-11 focus:border-[#509EE3] focus:ring-[#509EE3]"
                   aria-invalid={Boolean(fieldErrors.email)}
@@ -199,9 +250,33 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
               </div>
 
               {error && (
-                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" />
-                  <span>{error}</span>
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                  {canOfferVerificationResend ? (
+                    <div className="mt-3 border-t border-red-100 pt-3 text-red-800">
+                      <p className="text-xs">
+                        Si no encuentras el correo, puedes solicitar un nuevo enlace de verificación.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleResendVerification()}
+                        disabled={isResendingVerification || resendCooldownSeconds > 0}
+                        className="mt-2 h-8 border-red-200 bg-white text-red-700 hover:bg-red-100"
+                      >
+                        {isResendingVerification
+                          ? 'Enviando...'
+                          : resendCooldownSeconds > 0
+                            ? `Reenviar en ${resendCooldownSeconds}s`
+                            : 'Reenviar correo de verificación'}
+                      </Button>
+                      {resendMessage ? <p className="mt-2 text-xs text-red-700">{resendMessage}</p> : null}
+                    </div>
+                  ) : null}
                 </div>
               )}
 

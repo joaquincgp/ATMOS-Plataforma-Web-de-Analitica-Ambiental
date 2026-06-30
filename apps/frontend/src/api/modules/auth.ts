@@ -129,6 +129,14 @@ export function forgotPassword(payload: ForgotPasswordRequest): Promise<ForgotPa
   });
 }
 
+export function resendVerificationEmail(payload: ForgotPasswordRequest): Promise<MessageResponse> {
+  return apiRequest<MessageResponse>('/api/v1/auth/resend-verification', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    auth: false,
+  });
+}
+
 export function resetPassword(payload: ResetPasswordRequest): Promise<MessageResponse> {
   return apiRequest<MessageResponse>('/api/v1/auth/reset-password', {
     method: 'POST',
@@ -148,6 +156,12 @@ export function updateProfile(payload: UpdateProfileRequest): Promise<UserRespon
   return apiRequest<UserResponse>('/api/v1/auth/profile', {
     method: 'PATCH',
     body: JSON.stringify(payload),
+  });
+}
+
+export function deleteOwnAccount(): Promise<MessageResponse> {
+  return apiRequest<MessageResponse>('/api/v1/auth/profile', {
+    method: 'DELETE',
   });
 }
 

@@ -11,6 +11,7 @@ import {
 
 import { configureHttpClientAuth } from '@/api/http-client';
 import {
+  deleteOwnAccount,
   forgotPassword,
   getSession,
   loginUser,
@@ -50,6 +51,7 @@ interface AuthContextValue {
   resetPassword: (payload: ResetPasswordRequest) => Promise<void>;
   refreshSession: () => Promise<boolean>;
   updateUserProfile: (payload: UpdateProfileRequest) => Promise<void>;
+  deleteAccount: () => Promise<void>;
 }
 
 const AUTH_STORAGE_KEY = 'atmos.auth.v1';
@@ -211,6 +213,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAuthState((current) => ({ ...current, user: updated }));
   }, []);
 
+  const deleteAccount = useCallback(async () => {
+    await deleteOwnAccount();
+    clearAuthState();
+  }, [clearAuthState]);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user: authState.user,
@@ -225,6 +232,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       resetPassword: confirmPasswordReset,
       refreshSession,
       updateUserProfile,
+      deleteAccount,
     }),
     [
       authState.user,
@@ -238,6 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       confirmPasswordReset,
       refreshSession,
       updateUserProfile,
+      deleteAccount,
     ],
   );
 

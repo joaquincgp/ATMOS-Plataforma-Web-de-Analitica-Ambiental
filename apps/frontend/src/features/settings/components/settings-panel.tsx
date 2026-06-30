@@ -19,6 +19,7 @@ import {
   Save,
   Search,
   Shield,
+  Trash2,
   User,
   Users,
   Zap,
@@ -135,8 +136,9 @@ function roleBadgeClass(role: UserRole) {
 }
 
 export function SettingsPanel() {
-  const { user, updateUserProfile } = useAuth();
+  const { user, updateUserProfile, deleteAccount } = useAuth();
   const isAdmin = user?.role === 'admin';
+  const canDeleteOwnAccount = user?.role === 'researcher' || user?.role === 'generic';
 
   const [profile, setProfile] = useState({
     fullName: '',
@@ -149,6 +151,9 @@ export function SettingsPanel() {
   const [profileStatus, setProfileStatus] = useState<SaveStatus>('idle');
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileFieldErrors, setProfileFieldErrors] = useState<Record<string, string>>({});
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const [activeAdminSection, setActiveAdminSection] = useState<AdminSection>('users');
   const [users, setUsers] = useState<AdminUserResponse[]>([]);
@@ -279,6 +284,22 @@ export function SettingsPanel() {
     } catch (err) {
       setProfileStatus('idle');
       setProfileError(err instanceof Error ? err.message : 'Could not update profile.');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleteError(null);
+    if (deleteConfirmation.trim() !== 'DELETE') {
+      setDeleteError('Type DELETE to confirm account deletion.');
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    try {
+      await deleteAccount();
+    } catch (err) {
+      setIsDeletingAccount(false);
+      setDeleteError(err instanceof Error ? err.message : 'Could not delete account.');
     }
   };
 
@@ -585,7 +606,7 @@ export function SettingsPanel() {
             </TabsList>
           </div>
 
-          <TabsContent value="profile" className="mx-auto w-full max-w-6xl">
+          <TabsContent value="profile" className="mx-auto w-full max-w-6xl space-y-4">
             <Card className="w-full border-0 bg-white shadow-lg">
               <CardHeader className="p-6 lg:p-8">
                 <CardTitle>Profile Information</CardTitle>
@@ -743,6 +764,53 @@ export function SettingsPanel() {
                 </Button>
               </CardContent>
             </Card>
+
+            {canDeleteOwnAccount ? (
+              <Card className="w-full border border-red-100 bg-white shadow-lg">
+                <CardHeader className="p-6 pb-4 lg:p-8 lg:pb-4">
+                  <CardTitle className="flex items-center text-red-700">
+                    <Trash2 className="mr-2 size-5" />
+                    Delete Account
+                  </CardTitle>
+                  <CardDescription>
+                    Permanently delete your account and sign out of ATMOS.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 p-6 pt-0 lg:p-8 lg:pt-0">
+                  <div className="max-w-sm space-y-2">
+                    <Label htmlFor="deleteConfirmation" className="text-sm font-medium text-red-800">
+                      Type DELETE to confirm
+                    </Label>
+                    <Input
+                      id="deleteConfirmation"
+                      value={deleteConfirmation}
+                      onChange={(event) => {
+                        setDeleteConfirmation(event.target.value);
+                        setDeleteError(null);
+                      }}
+                      className="h-11 border-red-200 bg-[#F9FBFC] focus:border-red-400 focus:ring-red-400"
+                      autoComplete="off"
+                    />
+                  </div>
+                  {deleteError ? (
+                    <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                      <span>{deleteError}</span>
+                    </div>
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void handleDeleteAccount()}
+                    disabled={isDeletingAccount}
+                    className="border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800"
+                  >
+                    <Trash2 className="mr-2 size-4" />
+                    {isDeletingAccount ? 'Deleting...' : 'Delete My Account'}
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : null}
           </TabsContent>
 
           {isAdmin && (
