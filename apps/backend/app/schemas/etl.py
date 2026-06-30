@@ -86,6 +86,7 @@ class ManualDatasetRoleMapping(BaseModel):
 class ManualDatasetOperation(BaseModel):
     type: str
     columns: list[str] | None = None
+    type_map: dict[str, str] | None = None
     numeric_columns: list[str] | None = None
     categorical_columns: list[str] | None = None
     sample_pct: int | None = None

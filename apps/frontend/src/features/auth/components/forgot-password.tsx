@@ -12,28 +12,22 @@ interface ForgotPasswordValues {
 }
 
 interface ForgotPasswordProps {
-  onSend: (email: string) => Promise<{ message: string; debug_reset_token?: string | null }>;
+  onSend: (email: string) => Promise<{ message: string }>;
   onBackToLogin: () => void;
-  onOpenResetPassword: (token?: string) => void;
 }
 
-export function ForgotPassword({ onSend, onBackToLogin, onOpenResetPassword }: ForgotPasswordProps) {
+export function ForgotPassword({ onSend, onBackToLogin }: ForgotPasswordProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [tokenHint, setTokenHint] = useState<string | null>(null);
 
   const form = useForm<ForgotPasswordValues>({ defaultValues: { email: '' } });
 
   const submit = form.handleSubmit(async (values) => {
     setMessage(null);
     setError(null);
-    setTokenHint(null);
     try {
       const response = await onSend(values.email.trim().toLowerCase());
       setMessage(response.message);
-      if (response.debug_reset_token) {
-        setTokenHint(response.debug_reset_token);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start password reset.');
     }
@@ -78,20 +72,6 @@ export function ForgotPassword({ onSend, onBackToLogin, onOpenResetPassword }: F
                 <span>{error}</span>
               </div>
             )}
-            {tokenHint && (
-              <div className="rounded-md border border-[#509EE3]/30 bg-[#f0f7ff] p-2 text-xs">
-                <p className="font-semibold text-[#1F5A8A]">Development reset token:</p>
-                <p className="mt-1 break-all">{tokenHint}</p>
-                <button
-                  type="button"
-                  onClick={() => onOpenResetPassword(tokenHint)}
-                  className="mt-2 text-[#509EE3] hover:underline"
-                >
-                  Continue to reset form
-                </button>
-              </div>
-            )}
-
             <Button type="submit" className="w-full bg-[#509EE3] hover:bg-[#509EE3]/90 text-white">
               Send reset link
             </Button>

@@ -64,6 +64,50 @@ def test_apply_pipeline_selects_casts_samples_melts_and_adds_date_features() -> 
     assert len(result) == 4
 
 
+def test_apply_pipeline_cast_types_from_type_map() -> None:
+    pipeline = ManualPipeline()
+    dataframe = pd.DataFrame(
+        {
+            "name": [1, "sensor-b"],
+            "integer_value": ["10", "10.5"],
+            "float_value": ["1.25", "bad"],
+            "double_value": ["2.5", "3.5"],
+            "enabled": ["yes", "0"],
+            "date_only": ["2025-01-01 10:30:00", "bad"],
+            "timestamp": ["2025-01-01 10:30:00", "2025-01-02 11:45:00"],
+        }
+    )
+    operations = [
+        ManualDatasetOperation(
+            type="cast_types",
+            type_map={
+                "name": "string",
+                "integer_value": "int",
+                "float_value": "float",
+                "double_value": "double",
+                "enabled": "boolean",
+                "date_only": "date",
+                "timestamp": "datetime",
+            },
+        )
+    ]
+
+    result = pipeline._apply_pipeline(dataframe, operations, ManualDatasetRoleMapping())
+
+    assert str(result["name"].dtype) == "string"
+    assert str(result["integer_value"].dtype) == "Int64"
+    assert pd.isna(result.loc[1, "integer_value"])
+    assert str(result["float_value"].dtype) == "Float32"
+    assert pd.isna(result.loc[1, "float_value"])
+    assert str(result["double_value"].dtype) == "Float64"
+    assert str(result["enabled"].dtype) == "boolean"
+    assert result["enabled"].tolist() == [True, False]
+    assert str(result["date_only"].dtype).startswith("datetime64")
+    assert result.loc[0, "date_only"].hour == 0
+    assert str(result["timestamp"].dtype).startswith("datetime64")
+    assert result.loc[0, "timestamp"].hour == 10
+
+
 def test_summary_profile_preview_and_sync_dataset_state_are_consistent() -> None:
     pipeline = ManualPipeline()
     dataframe = pd.DataFrame(

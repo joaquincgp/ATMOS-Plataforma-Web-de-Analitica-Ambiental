@@ -1,4 +1,4 @@
-export const ECUADOR_TIME_ZONE = 'America/Guayaquil';
+const ECUADOR_TIME_ZONE = 'America/Guayaquil';
 
 const TIME_ZONE_PATTERN = /(?:Z|[+-]\d{2}:?\d{2})$/;
 

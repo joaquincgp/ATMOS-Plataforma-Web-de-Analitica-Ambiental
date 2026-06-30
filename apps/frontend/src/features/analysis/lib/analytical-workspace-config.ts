@@ -38,17 +38,6 @@ export type LabSection =
   | 'correlation'
   | 'summary';
 
-export const CHART_OPTIONS: {
-  id: ChartType;
-  label: string;
-  icon: typeof LineChartIcon;
-}[] = [
-  { id: 'line', label: 'Line', icon: LineChartIcon },
-  { id: 'bar', label: 'Bar', icon: BarChart3 },
-  { id: 'scatter', label: 'Scatter', icon: Orbit },
-  { id: 'heatmap', label: 'Heatmap', icon: Database },
-];
-
 export const ANALYSIS_SECTIONS: { value: LabSection; label: string; icon: typeof Database; color: string }[] = [
   { value: 'load-data', label: 'Load Data', icon: Upload, color: '#509EE3' },
   { value: 'summary', label: 'Summary', icon: BarChart3, color: '#14B8A6' },
@@ -153,7 +142,7 @@ export function isTimeNavigableSection(section: LabSection): boolean {
   );
 }
 
-export function formatDate(date: Date): string {
+function formatDate(date: Date): string {
   const year = date.getUTCFullYear();
   const month = `${date.getUTCMonth() + 1}`.padStart(2, '0');
   const day = `${date.getUTCDate()}`.padStart(2, '0');

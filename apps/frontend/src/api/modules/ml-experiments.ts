@@ -2,7 +2,7 @@ import { apiRequest } from '@/api/http-client';
 
 export type MLAlgorithm = 'lstm' | 'gru' | 'transformer';
 export type MLTargetVariable = 'PM25' | 'PM10' | 'NO2' | 'O3';
-export type MLRunStatus = 'pending' | 'running' | 'completed' | 'failed';
+type MLRunStatus = 'pending' | 'running' | 'completed' | 'failed';
 
 export interface MLExperimentRunRequest {
   workspace_id: string;
@@ -19,23 +19,23 @@ export interface MLExperimentRunRequest {
   train_split?: number;
 }
 
-export interface MLLossPoint {
+interface MLLossPoint {
   epoch: number;
   train_loss: number;
   val_loss: number;
 }
 
-export interface MLRmsePoint {
+interface MLRmsePoint {
   epoch: number;
   rmse: number;
 }
 
-export interface MLFeatureImportance {
+interface MLFeatureImportance {
   feature: string;
   importance: number;
 }
 
-export interface MLPredictionPoint {
+interface MLPredictionPoint {
   actual: number;
   predicted: number;
 }
@@ -125,9 +125,9 @@ export function clearMLExperimentRunHistory(workspaceId: string): Promise<{ clea
 // Isolated from Data Manager / Advanced Analytics: a source synced here never
 // appears there, and vice versa (see backend ManualDataset.created_for).
 
-export type MLExperimentSourceStatus = 'syncing' | 'draft' | 'failed';
+type MLExperimentSourceStatus = 'syncing' | 'draft' | 'failed';
 
-export interface MLExperimentSourceMetadata {
+interface MLExperimentSourceMetadata {
   target_variable_code?: string;
   variable_codes?: string[];
   station_codes?: string[];

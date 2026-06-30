@@ -10,7 +10,7 @@ export interface AnalyticsSourceOption {
   variable_codes: string[];
 }
 
-export interface AnalyticsStationOption {
+interface AnalyticsStationOption {
   code: string;
   name: string;
   latitude: number | null;
@@ -18,7 +18,7 @@ export interface AnalyticsStationOption {
   region: string | null;
 }
 
-export interface AnalyticsVariableOption {
+interface AnalyticsVariableOption {
   code: string;
   name: string;
 }
@@ -61,42 +61,6 @@ export interface AnalyticsQueryResponse {
   truncated: boolean;
 }
 
-export interface SqlPreviewRequest {
-  sql: string;
-  limit?: number;
-}
-
-export interface SqlPreviewResponse {
-  columns: string[];
-  rows: Record<string, string | number | boolean | null>[];
-  row_count: number;
-  truncated: boolean;
-}
-
-export interface StationLatestVariable {
-  variable_code: string;
-  variable_name: string;
-  value: number;
-  unit: string | null;
-  observed_at: string;
-}
-
-export interface StationLiveSnapshotResponseItem {
-  station_code: string;
-  station_name: string;
-  latitude: number | null;
-  longitude: number | null;
-  region: string | null;
-  variables: StationLatestVariable[];
-  latest_observed_at: string;
-}
-
-export interface StationLiveSnapshotResponse {
-  stations: StationLiveSnapshotResponseItem[];
-  total: number;
-  latest_observed_at: string | null;
-}
-
 export function getAnalyticsFilters(): Promise<AnalyticsFilterOptionsResponse> {
   return apiRequest<AnalyticsFilterOptionsResponse>('/api/v1/analytics/filters');
 }
@@ -106,21 +70,4 @@ export function runAnalyticsQuery(payload: AnalyticsQueryRequest): Promise<Analy
     method: 'POST',
     body: JSON.stringify(payload),
   });
-}
-
-export function runSqlPreview(payload: SqlPreviewRequest): Promise<SqlPreviewResponse> {
-  return apiRequest<SqlPreviewResponse>('/api/v1/analytics/sql/preview', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export function getStationLiveSnapshot(stationCodes: string[] = []): Promise<StationLiveSnapshotResponse> {
-  const params = new URLSearchParams();
-  for (const code of stationCodes) {
-    params.append('station_codes', code);
-  }
-  const query = params.toString();
-  const path = query ? `/api/v1/analytics/station-live?${query}` : '/api/v1/analytics/station-live';
-  return apiRequest<StationLiveSnapshotResponse>(path);
 }

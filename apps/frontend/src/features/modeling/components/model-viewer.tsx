@@ -248,10 +248,7 @@ export function ModelViewer() {
               </div>
             ) : selectedSourceFile ? (
               <pre className="p-4 text-sm font-mono text-white leading-relaxed">
-                <code
-                  className="language-python"
-                  dangerouslySetInnerHTML={{ __html: highlightPython(selectedSourceFile.content) }}
-                />
+                <code className="language-python">{selectedSourceFile.content}</code>
               </pre>
             ) : (
               <p className="p-4 text-sm text-white/70">Selecciona un archivo para ver su código.</p>
@@ -261,45 +258,4 @@ export function ModelViewer() {
       </div>
     </div>
   );
-}
-
-// Simple Python syntax highlighter
-function highlightPython(code: string): string {
-  // Keywords
-  let highlighted = code.replace(
-    /\b(import|from|class|def|if|else|elif|for|while|return|self|try|except|with|as|in|is|not|and|or|None|True|False|raise|ValueError)\b/g,
-    '<span style="color: #C586C0;">$1</span>'
-  );
-
-  // Strings
-  highlighted = highlighted.replace(
-    /("""[\s\S]*?"""|'''[\s\S]*?'''|"[^"]*"|'[^']*')/g,
-    '<span style="color: #CE9178;">$1</span>'
-  );
-
-  // Comments
-  highlighted = highlighted.replace(
-    /(#.*$)/gm,
-    '<span style="color: #6A9955;">$1</span>'
-  );
-
-  // Function names
-  highlighted = highlighted.replace(
-    /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g,
-    '<span style="color: #DCDCAA;">$1</span>('
-  );
-
-  // Numbers
-  highlighted = highlighted.replace(
-    /\b(\d+\.?\d*)\b/g,
-    '<span style="color: #B5CEA8;">$1</span>'
-  );
-
-  // Built-in / framework names
-  highlighted = highlighted.replace(
-    /\b(print|len|range|enumerate|zip|map|filter|str|int|float|list|dict|set|tuple|np|pd|torch|nn)\b/g,
-    '<span style="color: #4EC9B0;">$1</span>'
-  );
-
-  return highlighted;
 }

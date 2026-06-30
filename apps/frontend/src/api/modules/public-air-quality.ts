@@ -1,6 +1,6 @@
 import { apiRequest } from '@/api/http-client';
 
-export interface PublicAirQualityVariableOption {
+interface PublicAirQualityVariableOption {
   code: string;
   name: string;
   category: string;
@@ -23,7 +23,7 @@ export interface PublicStationObservation {
   variables: PublicStationVariableObservation[];
 }
 
-export interface PublicStationVariableObservation {
+interface PublicStationVariableObservation {
   variable_code: string;
   variable_name: string;
   category: string;
@@ -32,7 +32,7 @@ export interface PublicStationVariableObservation {
   observed_at: string;
 }
 
-export interface PublicTimeSeriesPoint {
+interface PublicTimeSeriesPoint {
   timestamp: string;
   mean_value: number;
   min_value: number;
@@ -69,7 +69,7 @@ export interface PublicVariableSummary {
   station_count: number;
 }
 
-export interface PublicSyncSummary {
+interface PublicSyncSummary {
   status: string;
   latest_run_started_at: string | null;
   latest_run_finished_at: string | null;
@@ -82,7 +82,7 @@ export interface PublicSyncSummary {
   archives_processed: number;
 }
 
-export interface PublicPeriodSummary {
+interface PublicPeriodSummary {
   max_value: number | null;
   avg_value: number | null;
   rds: number;

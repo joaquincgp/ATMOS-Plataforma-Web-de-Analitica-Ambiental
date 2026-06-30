@@ -16,7 +16,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 interface ManualDataIngestionWizardProps {
@@ -41,6 +40,23 @@ const EMPTY_MAPPING: ManualDatasetRoleMapping = {
   normalized_datetime_column_name: 'observed_at',
 };
 
+type CastDataType = 'original' | 'string' | 'int' | 'float' | 'double' | 'boolean' | 'date' | 'datetime';
+
+const CAST_TYPE_OPTIONS: { value: CastDataType; label: string }[] = [
+  { value: 'original', label: 'Keep original' },
+  { value: 'string', label: 'String' },
+  { value: 'int', label: 'Integer' },
+  { value: 'float', label: 'Float' },
+  { value: 'double', label: 'Double' },
+  { value: 'boolean', label: 'Boolean' },
+  { value: 'date', label: 'Date' },
+  { value: 'datetime', label: 'Datetime' },
+];
+
+const NUMERIC_CAST_TYPES = new Set<CastDataType>(['int', 'float', 'double']);
+const CATEGORICAL_CAST_TYPES = new Set<CastDataType>(['string']);
+const DATE_CAST_TYPES = new Set<CastDataType>(['date', 'datetime']);
+
 export function ManualDataIngestionWizard({
   workspaceId,
   dataset: controlledDataset,
@@ -54,18 +70,8 @@ export function ManualDataIngestionWizard({
   const [sourceUrl, setSourceUrl] = useState('');
   const [internalDataset, setInternalDataset] = useState<ManualDatasetResponse | null>(null);
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
-  const [numericColumns, setNumericColumns] = useState<string[]>([]);
-  const [categoricalColumns, setCategoricalColumns] = useState<string[]>([]);
   const [mapping, setMapping] = useState<ManualDatasetRoleMapping>(EMPTY_MAPPING);
-  const [samplePct, setSamplePct] = useState(100);
-  const [meltEnabled, setMeltEnabled] = useState(false);
-  const [meltIdVars, setMeltIdVars] = useState<string[]>([]);
-  const [dateFeaturesEnabled, setDateFeaturesEnabled] = useState(false);
-  const [dateFeatureColumn, setDateFeatureColumn] = useState('');
-  const [dateFeatureDayFirst, setDateFeatureDayFirst] = useState(true);
-  const [castDateFormat, setCastDateFormat] = useState('');
-  const [castDateDayFirst, setCastDateDayFirst] = useState(true);
-  const [castDateFuzzy, setCastDateFuzzy] = useState(true);
+  const [columnCasts, setColumnCasts] = useState<Record<string, CastDataType>>({});
   const [loading, setLoading] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -79,26 +85,8 @@ export function ManualDataIngestionWizard({
 
   const hydrateDataset = (nextDataset: ManualDatasetResponse) => {
     setSelectedColumns(nextDataset.columns.map((column) => column.name));
-    setNumericColumns(nextDataset.mapping.numeric_columns);
-    setCategoricalColumns(nextDataset.mapping.categorical_columns);
     setMapping(nextDataset.mapping);
-    setSamplePct(extractSamplePct(nextDataset.operation_pipeline));
-
-    const meltOperation = nextDataset.operation_pipeline.find((operation) => operation.type === 'melt');
-    setMeltEnabled(Boolean(meltOperation));
-    setMeltIdVars(meltOperation?.id_vars ?? []);
-
-    const dateFeatureOperation = nextDataset.operation_pipeline.find((operation) => operation.type === 'date_features');
-    setDateFeaturesEnabled(Boolean(dateFeatureOperation));
-    setDateFeatureColumn(dateFeatureOperation?.date_column ?? nextDataset.mapping.datetime_column ?? '');
-    setDateFeatureDayFirst(dateFeatureOperation?.dayfirst ?? true);
-
-    const castOperation = nextDataset.operation_pipeline.find((operation) => operation.type === 'cast_datetime');
-    if (castOperation) {
-      setCastDateFormat(castOperation.date_format ?? '');
-      setCastDateDayFirst(castOperation.dayfirst ?? true);
-      setCastDateFuzzy(castOperation.fuzzy_parse ?? true);
-    }
+    setColumnCasts(buildColumnCastState(nextDataset));
   };
 
   const syncLocalState = (nextDataset: ManualDatasetResponse) => {
@@ -151,52 +139,43 @@ export function ManualDataIngestionWizard({
 
   const buildPayload = () => {
     const safeSelectedColumns = selectedColumns.filter((column) => availableColumns.includes(column));
-    const safeNumericColumns = numericColumns.filter((column) => safeSelectedColumns.includes(column));
-    const safeCategoricalColumns = categoricalColumns.filter((column) => safeSelectedColumns.includes(column));
+    const typeMap = buildTypeMap(columnCasts, safeSelectedColumns);
+    const safeNumericColumns = safeSelectedColumns.filter((column) =>
+      NUMERIC_CAST_TYPES.has(typeMap[column] as CastDataType),
+    );
+    const safeCategoricalColumns = safeSelectedColumns.filter((column) =>
+      CATEGORICAL_CAST_TYPES.has(typeMap[column] as CastDataType),
+    );
+    const castDatetimeColumns = safeSelectedColumns.filter((column) =>
+      DATE_CAST_TYPES.has(typeMap[column] as CastDataType),
+    );
 
     const operations: ManualDatasetOperation[] = [];
     if (safeSelectedColumns.length > 0 && safeSelectedColumns.length < availableColumns.length) {
       operations.push({ type: 'select_columns', columns: safeSelectedColumns });
     }
-    operations.push({
-      type: 'cast_types',
-      numeric_columns: safeNumericColumns,
-      categorical_columns: safeCategoricalColumns,
-    });
-    if (samplePct < 100) {
-      operations.push({ type: 'subsample', sample_pct: samplePct });
-    }
-    if (meltEnabled && meltIdVars.length > 0) {
+    if (Object.keys(typeMap).length > 0) {
       operations.push({
-        type: 'melt',
-        id_vars: meltIdVars.filter((column) => safeSelectedColumns.includes(column)),
-        var_name: 'variable',
-        value_name: 'value',
-      });
-    }
-    if (dateFeaturesEnabled && dateFeatureColumn) {
-      operations.push({
-        type: 'date_features',
-        date_column: dateFeatureColumn,
-        dayfirst: dateFeatureDayFirst,
-      });
-    }
-    if (mapping.datetime_column && safeSelectedColumns.includes(mapping.datetime_column)) {
-      operations.push({
-        type: 'cast_datetime',
-        date_column: mapping.datetime_column,
-        date_format: castDateFormat || null,
-        dayfirst: castDateDayFirst,
-        fuzzy_parse: castDateFuzzy,
+        type: 'cast_types',
+        type_map: typeMap,
+        numeric_columns: safeNumericColumns,
+        categorical_columns: safeCategoricalColumns,
+        dayfirst: true,
+        fuzzy_parse: true,
         year_default: new Date().getFullYear(),
       });
     }
+
+    const mappedDatetimeColumn = coerceOptionalColumn(mapping.datetime_column, safeSelectedColumns);
+    const fallbackDatetimeColumn = castDatetimeColumns.includes(mappedDatetimeColumn ?? '')
+      ? mappedDatetimeColumn
+      : castDatetimeColumns[0] ?? mappedDatetimeColumn;
 
     const nextMapping: ManualDatasetRoleMapping = {
       ...mapping,
       numeric_columns: safeNumericColumns,
       categorical_columns: safeCategoricalColumns,
-      datetime_column: coerceOptionalColumn(mapping.datetime_column, safeSelectedColumns),
+      datetime_column: fallbackDatetimeColumn,
       date_column: coerceOptionalColumn(mapping.date_column, safeSelectedColumns),
       time_column: coerceOptionalColumn(mapping.time_column, safeSelectedColumns),
       station_code_column: coerceOptionalColumn(mapping.station_code_column, safeSelectedColumns),
@@ -364,7 +343,7 @@ export function ManualDataIngestionWizard({
                 {dataset.source_url ?? dataset.original_file_name}
               </div>
 
-              <CollapsibleSection title="Columns" defaultOpen>
+              <CollapsibleSection title="Column Casting" defaultOpen>
                 <div className="space-y-4">
                   <ScrollArea className="h-44 rounded-md border p-3">
                     <div className="grid gap-2 md:grid-cols-2">
@@ -373,108 +352,62 @@ export function ManualDataIngestionWizard({
                           key={column}
                           checked={selectedColumns.includes(column)}
                           label={column}
-                          onCheckedChange={() => toggleItem(column, selectedColumns, setSelectedColumns)}
+                          onCheckedChange={() => toggleColumnSelection(column, selectedColumns, setSelectedColumns)}
                         />
                       ))}
                     </div>
                   </ScrollArea>
 
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <ColumnPicker
-                      title="Numeric"
-                      columns={selectedColumns}
-                      selected={numericColumns}
-                      onToggle={(column) => {
-                        toggleItem(column, numericColumns, setNumericColumns);
-                        setCategoricalColumns((current) => current.filter((item) => item !== column));
-                      }}
-                    />
-                    <ColumnPicker
-                      title="Categorical"
-                      columns={selectedColumns}
-                      selected={categoricalColumns}
-                      onToggle={(column) => {
-                        toggleItem(column, categoricalColumns, setCategoricalColumns);
-                        setNumericColumns((current) => current.filter((item) => item !== column));
-                      }}
-                    />
-                  </div>
+                <div className="h-80 rounded-md border overflow-auto">
+                  <Table className="w-full min-w-[680px] table-fixed">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[40%]">Column</TableHead>
+                        <TableHead className="w-[25%]">Current type</TableHead>
+                        <TableHead className="w-[35%]">Cast to</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dataset.columns.filter((column) => selectedColumns.includes(column.name)).map((column) => (
+                        <TableRow key={`cast-${column.name}`}>
+                          <TableCell className="font-medium" title={column.name}>
+                            <div className="truncate">{column.name}</div>
+                          </TableCell>
+                          <TableCell title={`${column.inferred_kind} / ${column.pandas_dtype}`}>
+                            <div className="truncate text-muted-foreground">
+                              {column.inferred_kind} · {column.pandas_dtype}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <select
+                              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              value={columnCasts[column.name] ?? 'original'}
+                              onChange={(event) =>
+                                setColumnCasts((current) => ({
+                                  ...current,
+                                  [column.name]: event.target.value as CastDataType,
+                                }))
+                              }
+                            >
+                              {CAST_TYPE_OPTIONS.map((option) => (
+                                <option key={`${column.name}-${option.value}`} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {selectedColumns.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-center text-muted-foreground">
+                            Select at least one column.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
                 </div>
-              </CollapsibleSection>
-
-              <CollapsibleSection title="Date Casting">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <MappingSelect
-                    label="Datetime Column"
-                    value={mapping.datetime_column}
-                    options={selectedColumns}
-                    onChange={(value) => setMapping((current) => ({ ...current, datetime_column: value }))}
-                  />
-                  <div className="space-y-1.5">
-                    <Label>Format String (Optional)</Label>
-                    <Input 
-                      placeholder="e.g. %b-%y for nov-1"
-                      value={castDateFormat}
-                      onChange={e => setCastDateFormat(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Checkbox checked={castDateDayFirst} onCheckedChange={(checked) => setCastDateDayFirst(checked === true)} />
-                    <span className="text-sm">Europe/Latam day-first logic</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Checkbox checked={castDateFuzzy} onCheckedChange={(checked) => setCastDateFuzzy(checked === true)} />
-                    <span className="text-sm">Fuzzy auto-parsing</span>
-                  </div>
-                </div>
-              </CollapsibleSection>
-
-              <CollapsibleSection title="Options">
-                <div className="grid gap-6 lg:grid-cols-3">
-                  <div className="space-y-3">
-                    <SectionTitle title="Subsample" />
-                    <Input
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={samplePct}
-                      onChange={(event) => setSamplePct(Math.max(1, Math.min(100, Number(event.target.value) || 100)))}
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <SectionTitle title="Melt" />
-                      <Switch checked={meltEnabled} onCheckedChange={setMeltEnabled} />
-                    </div>
-                    <ScrollArea className="h-28 rounded-md border p-3">
-                      <div className="grid gap-2">
-                        {selectedColumns.map((column) => (
-                          <CheckboxRow
-                            key={`melt-${column}`}
-                            checked={meltIdVars.includes(column)}
-                            label={column}
-                            onCheckedChange={() => toggleItem(column, meltIdVars, setMeltIdVars)}
-                          />
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  </div>
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <SectionTitle title="Date Features" />
-                      <Switch checked={dateFeaturesEnabled} onCheckedChange={setDateFeaturesEnabled} />
-                    </div>
-                    <MappingSelect
-                      label="Source"
-                      value={dateFeatureColumn || null}
-                      options={selectedColumns}
-                      onChange={(value) => setDateFeatureColumn(value ?? '')}
-                    />
-                    <div className="flex items-center gap-2">
-                      <Checkbox checked={dateFeatureDayFirst} onCheckedChange={(checked) => setDateFeatureDayFirst(checked === true)} />
-                      <span className="text-sm text-muted-foreground">Day first</span>
-                    </div>
-                  </div>
                 </div>
               </CollapsibleSection>
 
@@ -578,11 +511,6 @@ export function ManualDataIngestionWizard({
   );
 }
 
-function extractSamplePct(operations: ManualDatasetOperation[]): number {
-  const subsample = operations.find((operation) => operation.type === 'subsample');
-  return subsample?.sample_pct ?? 100;
-}
-
 function coerceOptionalColumn(value: string | null, allowedColumns: string[]): string | null {
   if (!value) {
     return null;
@@ -590,8 +518,82 @@ function coerceOptionalColumn(value: string | null, allowedColumns: string[]): s
   return allowedColumns.includes(value) ? value : null;
 }
 
-function toggleItem(value: string, current: string[], setter: (next: string[]) => void) {
+function toggleColumnSelection(value: string, current: string[], setter: (next: string[]) => void) {
   setter(current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);
+}
+
+function CheckboxRow({
+  checked,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean;
+  label: string;
+  onCheckedChange: () => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-foreground">
+      <Checkbox checked={checked} onCheckedChange={() => onCheckedChange()} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function buildTypeMap(columnCasts: Record<string, CastDataType>, allowedColumns: string[]): Record<string, string> {
+  return allowedColumns.reduce<Record<string, string>>((typeMap, column) => {
+    const castType = columnCasts[column];
+    if (castType && castType !== 'original') {
+      typeMap[column] = castType;
+    }
+    return typeMap;
+  }, {});
+}
+
+function buildColumnCastState(dataset: ManualDatasetResponse): Record<string, CastDataType> {
+  const castOperation = dataset.operation_pipeline.find((operation) => operation.type === 'cast_types');
+  const typeMap = castOperation?.type_map ?? {};
+  const legacyNumericColumns = new Set(castOperation?.numeric_columns ?? []);
+  const legacyCategoricalColumns = new Set(castOperation?.categorical_columns ?? []);
+
+  return dataset.columns.reduce<Record<string, CastDataType>>((casts, column) => {
+    const savedType = normalizeCastDataType(typeMap[column.name]);
+    if (savedType) {
+      casts[column.name] = savedType;
+    } else if (legacyNumericColumns.has(column.name)) {
+      casts[column.name] = 'double';
+    } else if (legacyCategoricalColumns.has(column.name)) {
+      casts[column.name] = 'string';
+    } else {
+      casts[column.name] = 'original';
+    }
+    return casts;
+  }, {});
+}
+
+function normalizeCastDataType(value: string | undefined): CastDataType | null {
+  if (!value) {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'str' || normalized === 'text') {
+    return 'string';
+  }
+  if (normalized === 'integer' || normalized === 'int64') {
+    return 'int';
+  }
+  if (normalized === 'float32') {
+    return 'float';
+  }
+  if (normalized === 'float64') {
+    return 'double';
+  }
+  if (normalized === 'bool') {
+    return 'boolean';
+  }
+  if (normalized === 'timestamp') {
+    return 'datetime';
+  }
+  return CAST_TYPE_OPTIONS.some((option) => option.value === normalized) ? (normalized as CastDataType) : null;
 }
 
 function stringifyCell(value: unknown): string {
@@ -613,10 +615,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SectionTitle({ title }: { title: string }) {
-  return <p className="text-sm font-medium text-foreground">{title}</p>;
-}
-
 function CollapsibleSection({
   title,
   defaultOpen = false,
@@ -631,82 +629,5 @@ function CollapsibleSection({
       <summary className="cursor-pointer list-none text-sm font-medium text-foreground">{title}</summary>
       <div className="mt-4">{children}</div>
     </details>
-  );
-}
-
-function CheckboxRow({
-  checked,
-  label,
-  onCheckedChange,
-}: {
-  checked: boolean;
-  label: string;
-  onCheckedChange: () => void;
-}) {
-  return (
-    <label className="flex items-center gap-2 text-sm text-foreground">
-      <Checkbox checked={checked} onCheckedChange={() => onCheckedChange()} />
-      <span>{label}</span>
-    </label>
-  );
-}
-
-function ColumnPicker({
-  title,
-  columns,
-  selected,
-  onToggle,
-}: {
-  title: string;
-  columns: string[];
-  selected: string[];
-  onToggle: (column: string) => void;
-}) {
-  return (
-    <div className="rounded-md border p-3">
-      <p className="mb-3 text-sm font-medium text-foreground">{title}</p>
-      <ScrollArea className="h-40">
-        <div className="grid gap-2">
-          {columns.map((column) => (
-            <CheckboxRow
-              key={`${title}-${column}`}
-              checked={selected.includes(column)}
-              label={column}
-              onCheckedChange={() => onToggle(column)}
-            />
-          ))}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function MappingSelect({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: string | null;
-  options: string[];
-  onChange: (value: string | null) => void;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <select
-        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-        value={value ?? '__none__'}
-        onChange={(event) => onChange(event.target.value === '__none__' ? null : event.target.value)}
-      >
-        <option value="__none__">None</option>
-        {options.map((option) => (
-          <option key={`${label}-${option}`} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    </div>
   );
 }

@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     acs_email_connection_string: str = ""
     acs_email_sender_address: str = ""
     email_from_name: str = "ATMOS"
+    email_atmos_logo_url: str = ""
+    email_udla_logo_url: str = ""
 
     remmaq_base_url: str = "https://datosambiente.quito.gob.ec/"
     remmaq_proxy_base_url: str = ""

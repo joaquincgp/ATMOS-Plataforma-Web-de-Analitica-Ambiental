@@ -4,7 +4,6 @@ import type { AnalyticsDataRow } from '@/api/modules/analytics';
 import {
   addDays,
   buildLocalSummary,
-  formatDate,
   getLabSectionDescription,
   isTimeNavigableSection,
   normalizeDateRange,
@@ -47,8 +46,7 @@ describe('analytical workspace config helpers', () => {
     });
   });
 
-  it('formats and shifts UTC dates deterministically', () => {
-    expect(formatDate(new Date('2025-01-05T20:30:00Z'))).toBe('2025-01-05');
+  it('shifts UTC dates deterministically', () => {
     expect(addDays('2025-01-05', 3)).toBe('2025-01-08');
   });
 

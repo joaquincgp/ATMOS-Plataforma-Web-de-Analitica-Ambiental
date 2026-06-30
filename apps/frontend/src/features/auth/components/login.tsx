@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import atmosLogo from '@/assets/brand/atmos-logo.png';
 import udlaLogo from '@/assets/brand/udla-logo.png';
+import { allowedEmailDomainLabel, isAllowedEmailDomain } from '@/features/auth/lib/email-domain';
 
 interface LoginProps {
   onLogin: (payload: { email: string; password: string }) => Promise<void>;
@@ -29,7 +30,6 @@ const floatingIcons = [
 ] as const;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const INSTITUTIONAL_DOMAIN = '@udla.edu.ec';
 
 export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPassword }: LoginProps) {
   const [email, setEmail] = useState('');
@@ -47,8 +47,8 @@ export function Login({ onLogin, onBackToLanding, onOpenRegister, onOpenForgotPa
       errors.email = 'Ingresa tu correo electrónico.';
     } else if (!EMAIL_PATTERN.test(normalizedEmail)) {
       errors.email = 'Ingresa un correo válido.';
-    } else if (!normalizedEmail.endsWith(INSTITUTIONAL_DOMAIN)) {
-      errors.email = 'Usa tu correo institucional @udla.edu.ec.';
+    } else if (!isAllowedEmailDomain(normalizedEmail)) {
+      errors.email = `Usa un correo permitido (${allowedEmailDomainLabel()}).`;
     }
 
     if (!password.trim()) {

@@ -24,6 +24,24 @@ VARIABLE_ROLE_HINTS = {"variable", "variable_code", "pollutant", "contaminante",
 
 
 class ManualDatasetPipelineMixin:
+    _SUPPORTED_CAST_TYPES = {
+        "string",
+        "str",
+        "text",
+        "integer",
+        "int",
+        "int64",
+        "float",
+        "float32",
+        "double",
+        "float64",
+        "boolean",
+        "bool",
+        "date",
+        "datetime",
+        "timestamp",
+    }
+
     _DATE_FORMAT_PATTERNS = [
         "%Y-%m-%d",
         "%Y/%m/%d",
@@ -153,15 +171,29 @@ class ManualDatasetPipelineMixin:
                 if columns:
                     working = working[columns].copy()
             elif operation.type == "cast_types":
-                numeric_columns = [column for column in operation.numeric_columns or [] if column in working.columns]
-                categorical_columns = [
-                    column for column in operation.categorical_columns or [] if column in working.columns
-                ]
-                for column in numeric_columns:
-                    working[column] = pd.to_numeric(working[column], errors="coerce")
-                for column in categorical_columns:
-                    working[column] = working[column].astype("string")
-                    working[column] = working[column].replace({"nan": pd.NA})
+                if operation.type_map:
+                    for column, dtype in operation.type_map.items():
+                        if column in working.columns:
+                            working[column] = self._cast_series_to_type(
+                                working[column],
+                                dtype,
+                                dayfirst=bool(operation.dayfirst),
+                                date_format=operation.date_format,
+                                year_default=operation.year_default,
+                                fuzzy=bool(operation.fuzzy_parse),
+                            )
+                else:
+                    numeric_columns = [
+                        column for column in operation.numeric_columns or [] if column in working.columns
+                    ]
+                    categorical_columns = [
+                        column for column in operation.categorical_columns or [] if column in working.columns
+                    ]
+                    for column in numeric_columns:
+                        working[column] = pd.to_numeric(working[column], errors="coerce")
+                    for column in categorical_columns:
+                        working[column] = working[column].astype("string")
+                        working[column] = working[column].replace({"nan": pd.NA})
             elif operation.type == "subsample":
                 if operation.sample_pct is not None:
                     sample_pct = max(1, min(100, int(operation.sample_pct)))
@@ -211,6 +243,79 @@ class ManualDatasetPipelineMixin:
             working[column] = working[column].replace({"nan": pd.NA})
 
         return working.reset_index(drop=True)
+
+    def _cast_series_to_type(
+        self,
+        series: pd.Series,
+        dtype: str,
+        *,
+        dayfirst: bool = True,
+        date_format: str | None = None,
+        year_default: int | None = None,
+        fuzzy: bool = True,
+    ) -> pd.Series:
+        normalized_dtype = dtype.strip().lower()
+        if normalized_dtype not in self._SUPPORTED_CAST_TYPES:
+            return series
+
+        if normalized_dtype in {"string", "str", "text"}:
+            result = series.astype("string")
+            return result.replace({"nan": pd.NA, "None": pd.NA, "NaT": pd.NA})
+
+        if normalized_dtype in {"integer", "int", "int64"}:
+            numeric = pd.to_numeric(series, errors="coerce")
+            integral = numeric.where(numeric.isna() | (numeric % 1 == 0))
+            return integral.astype("Int64")
+
+        if normalized_dtype in {"float", "float32"}:
+            return pd.to_numeric(series, errors="coerce").astype("Float32")
+
+        if normalized_dtype in {"double", "float64"}:
+            return pd.to_numeric(series, errors="coerce").astype("Float64")
+
+        if normalized_dtype in {"boolean", "bool"}:
+            return self._cast_series_to_boolean(series)
+
+        if normalized_dtype in {"datetime", "timestamp"}:
+            return self._robust_parse_datetime(
+                series,
+                dayfirst=dayfirst,
+                date_format=date_format,
+                year_default=year_default,
+                fuzzy=fuzzy,
+            )
+
+        parsed = self._robust_parse_datetime(
+            series,
+            dayfirst=dayfirst,
+            date_format=date_format,
+            year_default=year_default,
+            fuzzy=fuzzy,
+        )
+        return parsed.dt.normalize()
+
+    def _cast_series_to_boolean(self, series: pd.Series) -> pd.Series:
+        truthy = {"true", "t", "yes", "y", "si", "sí", "1", "on"}
+        falsy = {"false", "f", "no", "n", "0", "off"}
+
+        def _cast_one(value: Any) -> Any:
+            if pd.isna(value):
+                return pd.NA
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                if value == 1:
+                    return True
+                if value == 0:
+                    return False
+            normalized = str(value).strip().lower()
+            if normalized in truthy:
+                return True
+            if normalized in falsy:
+                return False
+            return pd.NA
+
+        return series.apply(_cast_one).astype("boolean")
 
     def _build_summary(self, dataframe: pd.DataFrame) -> ManualDatasetSummary:
         numeric_columns = list(dataframe.select_dtypes(include="number").columns)

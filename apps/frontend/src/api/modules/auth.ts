@@ -65,7 +65,6 @@ export interface ForgotPasswordRequest {
 
 export interface ForgotPasswordResponse {
   message: string;
-  debug_reset_token?: string | null;
 }
 
 export interface ResetPasswordRequest {
@@ -122,20 +121,8 @@ export function getSession(): Promise<SessionResponse> {
   return apiRequest<SessionResponse>('/api/v1/auth/session');
 }
 
-export function getMe(): Promise<UserResponse> {
-  return apiRequest<UserResponse>('/api/v1/auth/me');
-}
-
 export function forgotPassword(payload: ForgotPasswordRequest): Promise<ForgotPasswordResponse> {
   return apiRequest<ForgotPasswordResponse>('/api/v1/auth/forgot-password', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-    auth: false,
-  });
-}
-
-export function resendVerification(payload: ForgotPasswordRequest): Promise<MessageResponse> {
-  return apiRequest<MessageResponse>('/api/v1/auth/resend-verification', {
     method: 'POST',
     body: JSON.stringify(payload),
     auth: false,

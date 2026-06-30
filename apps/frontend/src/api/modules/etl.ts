@@ -69,7 +69,7 @@ export interface EtlPreviewResponse {
   rows: EtlPreviewRowResponse[];
 }
 
-export interface ManualDatasetColumnProfile {
+interface ManualDatasetColumnProfile {
   name: string;
   pandas_dtype: string;
   inferred_kind: string;
@@ -79,7 +79,7 @@ export interface ManualDatasetColumnProfile {
   sample_values: string[];
 }
 
-export interface ManualDatasetSummary {
+interface ManualDatasetSummary {
   row_count: number;
   column_count: number;
   numeric_columns: string[];
@@ -103,6 +103,7 @@ export interface ManualDatasetRoleMapping {
 export interface ManualDatasetOperation {
   type: 'select_columns' | 'cast_types' | 'subsample' | 'melt' | 'date_features' | 'cast_datetime';
   columns?: string[];
+  type_map?: Record<string, string>;
   numeric_columns?: string[];
   categorical_columns?: string[];
   sample_pct?: number;
@@ -141,14 +142,6 @@ export interface ManualDatasetResponse {
   error_message: string | null;
 }
 
-export interface ManualDatasetCreateFromRemmaqRequest {
-  workspace_id: string;
-  variable_codes: string[];
-  max_archives?: number;
-  observed_from?: string;
-  observed_to?: string;
-}
-
 export interface SyncRemmaqParams {
   forceReprocess?: boolean;
   variableCodes?: string[];
@@ -177,26 +170,6 @@ export function initializeDatabase(): Promise<DbInitResponse> {
   return apiRequest<DbInitResponse>('/api/v1/etl/db/init', { method: 'POST' });
 }
 
-export function syncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunResponse> {
-  const searchParams = new URLSearchParams();
-  searchParams.set('force_reprocess', String(params.forceReprocess ?? false));
-  if (params.variableCodes?.length) {
-    for (const code of params.variableCodes) {
-      searchParams.append('variable_codes', code);
-    }
-  }
-  if (params.observedFrom) {
-    searchParams.set('observed_from', params.observedFrom);
-  }
-  if (params.observedTo) {
-    searchParams.set('observed_to', params.observedTo);
-  }
-
-  return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq?${searchParams.toString()}`, {
-    method: 'POST',
-  });
-}
-
 export function startSyncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunResponse> {
   const searchParams = new URLSearchParams();
   searchParams.set('force_reprocess', String(params.forceReprocess ?? false));
@@ -215,36 +188,6 @@ export function startSyncRemmaq(params: SyncRemmaqParams = {}): Promise<EtlRunRe
   return apiRequest<EtlRunResponse>(`/api/v1/etl/sync/remmaq/start?${searchParams.toString()}`, {
     method: 'POST',
   });
-}
-
-export async function uploadEtlFile(file: File, forceReprocess = false): Promise<EtlRunResponse> {
-  const formData = new FormData();
-  formData.append('file', file);
-  const accessToken = getStoredAccessToken();
-
-  const response = await fetch(
-    `${env.apiBaseUrl}/api/v1/etl/upload?force_reprocess=${forceReprocess}`,
-    {
-      method: 'POST',
-      body: formData,
-      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-    },
-  );
-
-  if (!response.ok) {
-    let detail = `Upload failed: ${response.status}`;
-    try {
-      const payload = (await response.json()) as { detail?: string };
-      if (payload.detail) {
-        detail = payload.detail;
-      }
-    } catch {
-      // Keep fallback detail
-    }
-    throw new Error(detail);
-  }
-
-  return (await response.json()) as EtlRunResponse;
 }
 
 export async function startUploadEtlFile(file: File, forceReprocess = false): Promise<EtlRunResponse> {
@@ -339,19 +282,6 @@ export function createManualDatasetFromUrl(payload: {
     method: 'POST',
     body: JSON.stringify(payload),
   });
-}
-
-export function createManualDatasetFromRemmaq(
-  payload: ManualDatasetCreateFromRemmaqRequest,
-): Promise<ManualDatasetResponse> {
-  return apiRequest<ManualDatasetResponse>('/api/v1/etl/manual-datasets/from-remmaq', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-export function getManualDataset(datasetId: string): Promise<ManualDatasetResponse> {
-  return apiRequest<ManualDatasetResponse>(`/api/v1/etl/manual-datasets/${datasetId}`);
 }
 
 export function getManualDatasetAnalyticsPreview(

@@ -109,8 +109,6 @@ function App() {
   const { activeWorkspace, activeWorkspaceId, setActiveWorkspaceId, isLoading: isLoadingWorkspace } = useWorkspace();
 
   const [activeView, setActiveView] = useState<AppView>('home');
-  const [resetTokenPrefill, setResetTokenPrefill] = useState<string | undefined>(undefined);
-
   const isGenericUser = user?.role === 'generic';
   const isPrivatePath = path.startsWith('/app');
   const isAuthPath = ['/login', '/register', '/forgot-password', '/reset-password', '/verify-email'].includes(path);
@@ -223,10 +221,6 @@ function App() {
         <ForgotPassword
           onSend={forgotPassword}
           onBackToLogin={() => navigate('/login')}
-          onOpenResetPassword={(token) => {
-            setResetTokenPrefill(token);
-            navigate('/reset-password');
-          }}
         />
       );
     }
@@ -235,7 +229,7 @@ function App() {
       const queryToken = new URLSearchParams(window.location.search).get('token') ?? undefined;
       return (
         <ResetPassword
-          initialToken={resetTokenPrefill ?? queryToken}
+          initialToken={queryToken}
           onReset={async (payload) => {
             await resetPassword(payload);
           }}

@@ -1,6 +1,6 @@
 import { apiRequest } from '@/api/http-client';
 
-export type EdaSection =
+type EdaSection =
   | 'rolling'
   | 'distribution'
   | 'scatter'
@@ -90,7 +90,7 @@ export interface EdaPlotRequest {
   facet_columns?: number;
 }
 
-export interface EdaSecondaryFigure {
+interface EdaSecondaryFigure {
   key: string;
   title: string;
   description: string | null;

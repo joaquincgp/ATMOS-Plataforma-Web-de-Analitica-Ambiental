@@ -1128,8 +1128,8 @@ export function PublicDashboard({
                       type="button"
                       onClick={() => setSelectedVariable(variable.code)}
                       className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${selectedVariable === variable.code
-                          ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
-                          : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
+                        ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
+                        : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
                         }`}
                     >
                       {getVariableLabel(variable.code)}
@@ -1147,8 +1147,8 @@ export function PublicDashboard({
                       onClick={() => setRangePreset(option.value)}
                       title={RANGE_LABELS[option.value]}
                       className={`rounded-md border px-2 py-1.5 text-[10px] font-bold transition ${rangePreset === option.value
-                          ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
-                          : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
+                        ? 'border-[#509EE3] bg-[#EDF6FF] text-[#1f5f96]'
+                        : 'border-slate-200 bg-white/75 text-slate-600 hover:border-[#509EE3]/50'
                         }`}
                     >
                       {option.label}

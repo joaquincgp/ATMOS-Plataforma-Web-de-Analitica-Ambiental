@@ -1,6 +1,6 @@
 import { apiRequest } from '@/api/http-client';
 
-export type AppConfigGroup = 'analytics' | 'workspace';
+type AppConfigGroup = 'analytics' | 'workspace';
 
 export interface AppConfigItem {
   key: string;
