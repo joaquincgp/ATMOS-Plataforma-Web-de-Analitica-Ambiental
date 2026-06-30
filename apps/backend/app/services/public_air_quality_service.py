@@ -1139,7 +1139,11 @@ def _load_latest_station_observations(
                 longitude=float(longitude),
                 region=reference.region if reference else None,
                 latest_value=latest_value,
-                mean_value=float(aggregate.mean_value) if aggregate and aggregate.mean_value is not None else latest_value,
+                mean_value=(
+                    float(aggregate.mean_value)
+                    if aggregate and aggregate.mean_value is not None
+                    else latest_value
+                ),
                 min_value=float(aggregate.min_value) if aggregate and aggregate.min_value is not None else latest_value,
                 max_value=float(aggregate.max_value) if aggregate and aggregate.max_value is not None else latest_value,
                 sample_count=int(aggregate.sample_count or 1) if aggregate else 1,
