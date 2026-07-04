@@ -388,6 +388,7 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         elif action == "impute_knn_mode":
             cleaned_df = self._impute_missing_values_knn_mode(dataframe).reset_index(drop=True)
             operation_label = "imputed-knn-mode"
+            default_name = f"{source_dataset.name} - imputed missing values"
             operation_metadata = {
                 "action": action,
                 "rows_before": original_rows,
@@ -826,59 +827,27 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         ]
 
         if numeric_columns:
-            working[numeric_columns] = self._knn_impute_numeric(working[numeric_columns])
+            imputed_numeric = self._knn_impute_numeric(working[numeric_columns])
+        else:
+            imputed_numeric = pd.DataFrame(index=working.index)
 
         for column in categorical_columns:
             mode = working[column].mode(dropna=True)
             if not mode.empty:
                 working[column] = working[column].fillna(mode.iloc[0])
 
-        return working
+        return pd.concat([imputed_numeric, working[categorical_columns]], axis=1)
 
     def _knn_impute_numeric(self, numeric_df: pd.DataFrame, *, n_neighbors: int = 5) -> pd.DataFrame:
         if numeric_df.empty:
             return numeric_df.copy()
 
+        from sklearn.impute import KNNImputer
+
         result = numeric_df.astype("float64").copy()
-        medians = result.median(numeric_only=True)
-        means = result.mean(numeric_only=True)
-
-        for target_column in result.columns:
-            missing_index = result.index[result[target_column].isna()]
-            observed_index = result.index[result[target_column].notna()]
-            if len(missing_index) == 0:
-                continue
-            if len(observed_index) == 0:
-                fallback = medians.get(target_column)
-                if pd.isna(fallback):
-                    fallback = means.get(target_column)
-                result.loc[missing_index, target_column] = 0.0 if pd.isna(fallback) else float(fallback)
-                continue
-
-            feature_columns = [column for column in result.columns if column != target_column]
-            for row_index in missing_index:
-                distances: list[tuple[float, object]] = []
-                if feature_columns:
-                    row_values = result.loc[row_index, feature_columns]
-                    for candidate_index in observed_index:
-                        candidate_values = result.loc[candidate_index, feature_columns]
-                        valid = row_values.notna() & candidate_values.notna()
-                        if not bool(valid.any()):
-                            continue
-                        diff = row_values[valid].astype(float) - candidate_values[valid].astype(float)
-                        scaled_distance = float(((diff**2).sum() / int(valid.sum())) ** 0.5)
-                        distances.append((scaled_distance, candidate_index))
-
-                if distances:
-                    nearest_indices = [index for _, index in sorted(distances, key=lambda item: item[0])[:n_neighbors]]
-                    fill_value = result.loc[nearest_indices, target_column].mean()
-                else:
-                    fill_value = medians.get(target_column)
-                if pd.isna(fill_value):
-                    fill_value = means.get(target_column)
-                result.at[row_index, target_column] = 0.0 if pd.isna(fill_value) else float(fill_value)
-
-        return result
+        imputer = KNNImputer(n_neighbors=n_neighbors, weights="uniform", metric="nan_euclidean")
+        imputed_values = imputer.fit_transform(result)
+        return pd.DataFrame(imputed_values, columns=list(result.columns), index=result.index)
 
     def _coerce_mapping_to_dataframe(
         self,

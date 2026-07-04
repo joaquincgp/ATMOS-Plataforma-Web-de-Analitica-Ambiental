@@ -834,9 +834,6 @@ export function AnalyticalWorkspaceScreen() {
   const activeSection = ANALYSIS_SECTIONS.find((section) => section.value === labSection) ?? ANALYSIS_SECTIONS[0];
   const ActiveSectionIcon = activeSection.icon;
   const isDescriptiveSection = DESCRIPTIVE_ANALYTICS_SECTIONS.includes(labSection);
-  const descriptiveSections = ANALYSIS_SECTIONS.filter((section) =>
-    DESCRIPTIVE_ANALYTICS_SECTIONS.includes(section.value),
-  );
   const activeSelectedVariableLabels = activeSelectedVariables.map(
     (code) => availableVariables.find((variable) => variable.code === code)?.name ?? code,
   );
@@ -1031,30 +1028,6 @@ export function AnalyticalWorkspaceScreen() {
                 />
               ) : (
                 <div className="space-y-6">
-                  <div className="rounded-lg border border-[#dce5f1] bg-white px-3 py-2">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {descriptiveSections.map((section) => {
-                        const Icon = section.icon;
-                        const active = labSection === section.value;
-                        return (
-                          <button
-                            key={`descriptive-tab-${section.value}`}
-                            type="button"
-                            onClick={() => setLabSection(section.value)}
-                            className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-xs font-medium transition-colors ${
-                              active
-                                ? 'bg-[#24384d] text-white shadow-sm'
-                                : 'text-[#008c7a] hover:bg-[#eef6ff] hover:text-[#1F5A8A]'
-                            }`}
-                          >
-                            <Icon className="h-3.5 w-3.5" />
-                            {section.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
                   <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                     <KpiCard label="Sources" value={selectedDataSourceCount.toString()} icon={Database} />
                     <KpiCard label="Samples" value={statSamples.toLocaleString()} icon={Table2} />
