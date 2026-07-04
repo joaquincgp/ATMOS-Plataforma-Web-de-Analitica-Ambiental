@@ -1,5 +1,18 @@
 import { useState } from 'react';
-import { Home, FolderOpen, Database, Settings, Code, Cpu, BarChart3, ChevronDown, ChevronRight, PanelLeft } from 'lucide-react';
+import {
+  Home,
+  FolderOpen,
+  Database,
+  Settings,
+  Code,
+  Cpu,
+  BarChart3,
+  ChevronDown,
+  ChevronRight,
+  PanelLeft,
+  Rows3,
+  Workflow,
+} from 'lucide-react';
 import type { AppView } from '@/store/app-store';
 
 interface AdvancedSidebarProps {
@@ -10,6 +23,15 @@ interface AdvancedSidebarProps {
   onCloseProject: () => void;
 }
 
+interface DataManagerNavProps {
+  activeView: AppView;
+  collapsed: boolean;
+  sectionsCollapsed: boolean;
+  items: { id: AppView; icon: typeof Workflow; label: string }[];
+  onNavigate: (view: AppView) => void;
+  onToggleSections: () => void;
+}
+
 export function AdvancedSidebar({
   activeView,
   onNavigate,
@@ -18,12 +40,17 @@ export function AdvancedSidebar({
 }: AdvancedSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [projectAssetsCollapsed, setProjectAssetsCollapsed] = useState(false);
+  const [dataManagerCollapsed, setDataManagerCollapsed] = useState(false);
 
   const baseNavItems: { id: AppView; icon: typeof Home; label: string }[] = [
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'projects', icon: FolderOpen, label: 'Projects' },
-    { id: 'data-sources', icon: Database, label: 'Data Manager' },
     { id: 'settings', icon: Settings, label: 'Settings' },
+  ];
+
+  const dataManagerItems: { id: AppView; icon: typeof Workflow; label: string }[] = [
+    { id: 'data-sources', icon: Workflow, label: 'ETL Flow' },
+    { id: 'data-sources-missing', icon: Rows3, label: 'Missing Data' },
   ];
 
   const projectAssets: { id: AppView; icon: typeof Code; label: string }[] = [
@@ -64,7 +91,7 @@ export function AdvancedSidebar({
       {/* Main Navigation */}
       <nav className="flex-1 p-2 overflow-y-auto overflow-x-hidden">
         <ul className="space-y-1">
-          {baseNavItems.map((item) => {
+          {baseNavItems.map((item, index) => {
             const Icon = item.icon;
             const isActive = activeView === item.id;
 
@@ -94,6 +121,16 @@ export function AdvancedSidebar({
                     {item.label}
                   </span>
                 </button>
+                {index === 1 && (
+                  <DataManagerNav
+                    activeView={activeView}
+                    collapsed={collapsed}
+                    sectionsCollapsed={dataManagerCollapsed}
+                    items={dataManagerItems}
+                    onNavigate={onNavigate}
+                    onToggleSections={() => setDataManagerCollapsed((current) => !current)}
+                  />
+                )}
               </li>
             );
           })}
@@ -190,5 +227,76 @@ export function AdvancedSidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+function DataManagerNav({
+  activeView,
+  collapsed,
+  sectionsCollapsed,
+  items,
+  onNavigate,
+  onToggleSections,
+}: DataManagerNavProps) {
+  const isDataManagerActive = items.some((item) => item.id === activeView);
+  return (
+    <div className={`${collapsed ? 'mt-1' : 'mt-1 space-y-1'}`}>
+      <button
+        type="button"
+        onClick={onToggleSections}
+        title={collapsed ? 'Data Manager' : undefined}
+        className={`
+          w-full flex items-center py-2.5 rounded-lg transition-all duration-200
+          ${collapsed ? 'justify-center px-2' : 'gap-3 px-3'}
+          ${isDataManagerActive
+            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
+            : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+          }
+        `}
+      >
+        <Database className="w-5 h-5 shrink-0" />
+        <span
+          className={`
+            flex-1 text-left text-sm whitespace-nowrap overflow-hidden transition-[max-width,opacity] duration-200 ease-in-out
+            ${collapsed ? 'max-w-0 opacity-0' : 'max-w-[160px] opacity-100'}
+          `}
+        >
+          Data Manager
+        </span>
+        {!collapsed ? (
+          sectionsCollapsed ? (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          )
+        ) : null}
+      </button>
+
+      {!collapsed && !sectionsCollapsed && (
+        <ul className="ml-4 border-l border-sidebar-border pl-2">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeView === item.id;
+            return (
+              <li key={item.id}>
+                <button
+                  onClick={() => onNavigate(item.id)}
+                  className={`
+                    w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors
+                    ${isActive
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                    }
+                  `}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{item.label}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
   );
 }

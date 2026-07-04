@@ -5,6 +5,7 @@ import {
   BarChart3,
   Box,
   Circle,
+  Download,
   Edit3,
   GripVertical,
   Hash,
@@ -123,6 +124,126 @@ function figureWithColor(figure: DashboardFigure, color: string): DashboardFigur
       };
     }),
   };
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function serializeForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replaceAll('<', '\\u003c')
+    .replaceAll('>', '\\u003e')
+    .replaceAll('&', '\\u0026')
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029');
+}
+
+function dashboardCardGridClass(size: DashboardCardSize): string {
+  if (size === 'sm') return 'span-4';
+  if (size === 'md') return 'span-6';
+  return 'span-12';
+}
+
+function buildDashboardHtml(cards: DashboardCard[]): string {
+  const exportedAt = new Date().toLocaleString('es-EC');
+  const cardMarkup = cards
+    .map((card) => {
+      const chartId = `chart-${card.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+      return `
+        <section class="card ${dashboardCardGridClass(card.size)}">
+          <header>
+            <div>
+              <h2>${escapeHtml(card.title)}</h2>
+              ${card.description ? `<p>${escapeHtml(card.description)}</p>` : ''}
+            </div>
+            ${card.sourceLabel ? `<span>${escapeHtml(card.sourceLabel)}</span>` : ''}
+          </header>
+          ${
+            card.figure
+              ? `<div id="${chartId}" class="chart"></div>`
+              : '<div class="empty">Esta tarjeta no tiene una figura renderizable.</div>'
+          }
+        </section>`;
+    })
+    .join('\n');
+  const figures = cards
+    .filter((card) => card.figure)
+    .map((card) => ({
+      id: `chart-${card.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`,
+      figure: card.figure,
+    }));
+
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ATMOS Dashboard BI</title>
+  <script src="https://cdn.plot.ly/plotly-3.0.1.min.js"></script>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f8fafc; color: #0f172a; }
+    main { padding: 28px; }
+    .top { margin-bottom: 22px; display: flex; justify-content: space-between; gap: 18px; align-items: end; }
+    h1 { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 800; }
+    .meta { margin-top: 6px; color: #64748b; font-size: 13px; }
+    .counter { border: 1px solid #e2e8f0; background: white; border-radius: 10px; padding: 10px 12px; color: #475569; font-size: 12px; white-space: nowrap; }
+    .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+    .card { background: white; border: 1px solid #e2e8f0; border-radius: 14px; overflow: hidden; box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06); }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-12 { grid-column: span 12; }
+    .card header { min-height: 48px; padding: 13px 16px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; gap: 12px; align-items: start; }
+    .card h2 { margin: 0; font-size: 14px; line-height: 1.35; font-weight: 800; color: #0f172a; }
+    .card p { margin: 4px 0 0; color: #94a3b8; font-size: 12px; line-height: 1.45; }
+    .card span { flex: none; border-radius: 999px; background: #eff6ff; color: #2563eb; padding: 4px 8px; font-size: 11px; font-weight: 700; }
+    .chart { height: 360px; padding: 8px; }
+    .empty { height: 300px; display: grid; place-items: center; color: #94a3b8; font-size: 14px; }
+    @media (max-width: 1024px) { .span-4, .span-6 { grid-column: span 12; } .top { align-items: start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top">
+      <div>
+        <h1>ATMOS Dashboard BI</h1>
+        <div class="meta">Exportado el ${escapeHtml(exportedAt)}</div>
+      </div>
+      <div class="counter">${cards.length} bloques</div>
+    </div>
+    <div class="grid">
+      ${cardMarkup || '<section class="card span-12"><div class="empty">Dashboard vacio.</div></section>'}
+    </div>
+  </main>
+  <script>
+    const figures = ${serializeForScript(figures)};
+    figures.forEach(({ id, figure }) => {
+      const target = document.getElementById(id);
+      if (!target || !figure) return;
+      Plotly.newPlot(target, figure.data || [], figure.layout || {}, { responsive: true, displaylogo: false });
+    });
+  </script>
+</body>
+</html>`;
+}
+
+function downloadDashboardHtml(cards: DashboardCard[]): void {
+  const html = buildDashboardHtml(cards);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `atmos-dashboard-${new Date().toISOString().slice(0, 10)}.html`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 
@@ -866,6 +987,10 @@ export function ProjectAnalyticsDashboard() {
           <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
             {totalCards} bloques · {wideCards} completos
           </div>
+          <Button variant="outline" onClick={() => downloadDashboardHtml(cards)} disabled={cards.length === 0}>
+            <Download className="mr-2 h-4 w-4" />
+            Exportar HTML
+          </Button>
           <Button onClick={() => setShowBuilder(true)} className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90">
             <Plus className="mr-2 h-4 w-4" />
             Agregar visualizacion

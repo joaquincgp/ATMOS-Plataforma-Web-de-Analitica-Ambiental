@@ -182,6 +182,14 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
 
 
 def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
+    return _query_data(db, payload, apply_default_limit=True)
+
+
+def export_query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryResponse:
+    return _query_data(db, payload, apply_default_limit=False)
+
+
+def _query_data(db: Session, payload: AnalyticsQueryRequest, *, apply_default_limit: bool) -> AnalyticsQueryResponse:
     default_query_limit = get_config_int(db, "analytics.default_query_limit")
     statement = (
         select(
@@ -229,12 +237,17 @@ def query_data(db: Session, payload: AnalyticsQueryRequest) -> AnalyticsQueryRes
         statement = statement.where(Measurement.observed_at <= payload.view_to)
 
     ordered_statement = statement.order_by(Measurement.observed_at.asc())
-    dataset_max_rows = _resolve_dataset_max_rows(db, payload.source_file_ids)
-    requested_limit = max(1, payload.limit if payload.limit is not None else default_query_limit)
-    effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
-    result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
-    truncated = len(result_rows) > effective_limit
-    capped_rows = result_rows[:effective_limit]
+    if apply_default_limit:
+        dataset_max_rows = _resolve_dataset_max_rows(db, payload.source_file_ids)
+        requested_limit = max(1, payload.limit if payload.limit is not None else default_query_limit)
+        effective_limit = min(requested_limit, dataset_max_rows) if dataset_max_rows > 0 else requested_limit
+        result_rows = db.execute(ordered_statement.limit(effective_limit + 1)).all()
+        truncated = len(result_rows) > effective_limit
+        capped_rows = result_rows[:effective_limit]
+    else:
+        result_rows = db.execute(ordered_statement).all()
+        truncated = False
+        capped_rows = result_rows
 
     return AnalyticsQueryResponse(
         rows=[

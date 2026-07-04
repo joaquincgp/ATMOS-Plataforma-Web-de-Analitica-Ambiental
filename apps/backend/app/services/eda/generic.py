@@ -52,8 +52,22 @@ class EdaGenericMixin:
                     frame["_filter_datetime"] < pd.Timestamp(payload.date_to, tz="UTC") + pd.Timedelta(days=1)
                 ]
 
+        date_role_columns = {
+            column
+            for column in (
+                context.mapping.datetime_column,
+                context.mapping.date_column,
+                context.mapping.time_column,
+            )
+            if column
+        }
         for column_name in [payload.x_axis, payload.hue, payload.facet_row, payload.facet_col]:
-            if column_name and column_name in frame.columns and self._is_categorical(frame[column_name]):
+            if (
+                column_name
+                and column_name in frame.columns
+                and column_name not in date_role_columns
+                and self._is_categorical(frame[column_name])
+            ):
                 frame = self._limit_categories(frame, column_name, warnings)
 
         frame = frame.reset_index(drop=True)

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_roles
@@ -21,6 +22,8 @@ from app.schemas.etl import (
     ManualDatasetCreateFromRemmaqRequest,
     ManualDatasetCreateFromUrlRequest,
     ManualDatasetFinalizeRequest,
+    ManualDatasetMissingDataActionRequest,
+    ManualDatasetMissingDataOverviewResponse,
     ManualDatasetResponse,
     ManualDatasetUpdateRequest,
 )
@@ -334,6 +337,62 @@ def get_manual_dataset(
         return service.get_dataset(dataset_id=dataset_id, user=user)
     except ManualDatasetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/manual-datasets/{dataset_id}/download")
+def download_manual_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> Response:
+    service = ManualDatasetService(db)
+    try:
+        content, filename = service.export_dataset_csv(dataset_id=dataset_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    encoded_filename = quote(filename)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+        },
+    )
+
+
+@router.get(
+    "/manual-datasets/{dataset_id}/missing-data",
+    response_model=ManualDatasetMissingDataOverviewResponse,
+)
+def get_manual_dataset_missing_data(
+    dataset_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetMissingDataOverviewResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.get_missing_data_overview(dataset_id=dataset_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/manual-datasets/{dataset_id}/missing-data", response_model=ManualDatasetResponse)
+def apply_manual_dataset_missing_data_action(
+    dataset_id: str,
+    payload: ManualDatasetMissingDataActionRequest,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> ManualDatasetResponse:
+    service = ManualDatasetService(db)
+    try:
+        return service.create_missing_data_derivative(
+            dataset_id=dataset_id,
+            user=user,
+            action=payload.action,
+            dataset_name=payload.dataset_name,
+        )
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/manual-datasets/{dataset_id}/analytics-preview", response_model=AnalyticsQueryResponse)
