@@ -505,6 +505,16 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
     });
   };
 
+  useEffect(() => {
+    if (!actionMessage && !error && !manualDatasetsError) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setActionMessage(null);
+    }, 4500);
+    return () => window.clearTimeout(timeout);
+  }, [actionMessage, error, manualDatasetsError]);
+
   const toggleManagerSourceFile = (sourceFileId: number) => {
     setManagerSelectedSourceFiles((current) =>
       current.includes(sourceFileId)
@@ -582,6 +592,16 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
 
   return (
     <div className="h-full overflow-y-auto bg-[#F9FBFC]">
+      {(error !== null || actionMessage !== null || manualDatasetsError !== null) && (
+        <FloatingNotification
+          message={{
+            type: error || manualDatasetsError ? 'error' : (actionMessage?.type ?? 'info'),
+            text: error ?? manualDatasetsError ?? actionMessage?.text ?? '',
+          }}
+          onClose={() => setActionMessage(null)}
+        />
+      )}
+
       <div className="px-6 py-5">
         <div className="mb-5">
           <h1 className="mb-2 text-2xl font-semibold text-foreground">Data Manager</h1>
@@ -593,28 +613,6 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
             <Stepper currentStep={currentStep} onStepClick={handleStepClick} />
           </CardContent>
         </Card>
-
-        {(error !== null || actionMessage !== null || manualDatasetsError !== null) && (
-          <Card className="mb-6 border-l-4 border-l-[#509EE3] bg-white">
-            <CardContent className="py-4">
-              {error && <p className="text-sm text-red-700">{error}</p>}
-              {manualDatasetsError && <p className="text-sm text-red-700">{manualDatasetsError}</p>}
-              {actionMessage && (
-                <p
-                  className={`text-sm ${
-                    actionMessage.type === 'error'
-                      ? 'text-red-700'
-                      : actionMessage.type === 'success'
-                        ? 'text-green-700'
-                        : 'text-[#3B82F6]'
-                  }`}
-                >
-                  {actionMessage.text}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        )}
 
         <div className="mx-auto max-w-7xl">
           {currentStep === 1 && (
@@ -666,6 +664,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
                 setManagerError(null);
               }}
               onDeleteDataset={handleDeleteExistingDataset}
+              onNotify={setActionMessage}
             />
           )}
 
@@ -678,6 +677,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
               existingDataset={selectedExistingDataset}
               onExistingDatasetChange={handleExistingDatasetChange}
               previewRows={sourceType === 'sync' ? previewRows : existingQueryPreviewRows}
+              onNotify={setActionMessage}
             />
           )}
 
@@ -757,6 +757,7 @@ interface SourceStepProps {
   deletingDatasetId: string | null;
   onSelectExistingDataset: (datasetId: string) => void;
   onDeleteDataset: (datasetId: string) => Promise<void>;
+  onNotify: (message: StepMessage) => void;
 }
 
 function SourceStep({
@@ -803,6 +804,7 @@ function SourceStep({
   deletingDatasetId,
   onSelectExistingDataset,
   onDeleteDataset,
+  onNotify,
 }: SourceStepProps) {
   return (
     <div className="space-y-6">
@@ -843,6 +845,7 @@ function SourceStep({
               workspaceId={activeWorkspaceId}
               dataset={manualDataset}
               onDatasetChange={onManualDatasetChange}
+              onNotify={onNotify}
               mode="load"
               loadTitle="Manual input"
               loadDescription="Upload a file or paste a raw CSV link."
@@ -1031,6 +1034,7 @@ function MappingContent({
   existingDataset,
   onExistingDatasetChange,
   previewRows,
+  onNotify,
 }: {
   sourceType: SourceMode;
   workspaceId: string | null;
@@ -1039,6 +1043,7 @@ function MappingContent({
   existingDataset: ManualDatasetResponse | null;
   onExistingDatasetChange: (dataset: ManualDatasetResponse | null) => void;
   previewRows: PreviewMeasurementRow[];
+  onNotify: (message: StepMessage) => void;
 }) {
   if (sourceType === 'manual') {
     return manualDataset ? (
@@ -1046,6 +1051,7 @@ function MappingContent({
         workspaceId={workspaceId}
         dataset={manualDataset}
         onDatasetChange={onManualDatasetChange}
+        onNotify={onNotify}
         mode="mapping"
       />
     ) : (
@@ -1063,6 +1069,7 @@ function MappingContent({
         workspaceId={workspaceId}
         dataset={existingDataset}
         onDatasetChange={onExistingDatasetChange}
+        onNotify={onNotify}
         mode="mapping"
       />
     );
@@ -2240,6 +2247,32 @@ function MeasurementRowsTable({
             )}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+function FloatingNotification({
+  message,
+  onClose,
+}: {
+  message: StepMessage;
+  onClose: () => void;
+}) {
+  const isError = message.type === 'error';
+  const Icon = isError ? AlertCircle : CheckCircle2;
+  return (
+    <div className="fixed right-5 top-5 z-50 w-[min(420px,calc(100vw-2.5rem))] rounded-lg border bg-white p-4 shadow-lg">
+      <div className="flex gap-3">
+        <Icon
+          className={`mt-0.5 h-5 w-5 shrink-0 ${
+            isError ? 'text-red-600' : message.type === 'success' ? 'text-green-600' : 'text-[#509EE3]'
+          }`}
+        />
+        <p className={`min-w-0 flex-1 text-sm ${isError ? 'text-red-700' : 'text-foreground'}`}>{message.text}</p>
+        <button type="button" onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground">
+          Close
+        </button>
       </div>
     </div>
   );

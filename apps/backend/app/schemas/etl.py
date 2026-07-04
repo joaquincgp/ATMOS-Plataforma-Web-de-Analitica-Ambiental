@@ -113,6 +113,26 @@ class ManualDatasetCreateFromRemmaqRequest(BaseModel):
     observed_to: date | None = None
 
 
+class ManualDatasetMissingDataColumn(BaseModel):
+    column: str
+    missing_values: int
+    percentage_missing: float
+
+
+class ManualDatasetMissingDataOverviewResponse(BaseModel):
+    dataset_id: str
+    dataset_name: str
+    row_count: int
+    column_count: int
+    total_missing_values: int
+    columns: list[ManualDatasetMissingDataColumn] = Field(default_factory=list)
+
+
+class ManualDatasetMissingDataActionRequest(BaseModel):
+    action: str = Field(pattern="^(remove_rows|impute_knn_mode)$")
+    dataset_name: str | None = None
+
+
 class ManualDatasetUpdateRequest(BaseModel):
     operation_pipeline: list[ManualDatasetOperation] = Field(default_factory=list)
     mapping: ManualDatasetRoleMapping = Field(default_factory=ManualDatasetRoleMapping)

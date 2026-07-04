@@ -22,6 +22,8 @@ from app.schemas.auth import UserRole
 from app.schemas.etl import (
     ManualDatasetColumnProfile,
     ManualDatasetFinalizeRequest,
+    ManualDatasetMissingDataColumn,
+    ManualDatasetMissingDataOverviewResponse,
     ManualDatasetOperation,
     ManualDatasetResponse,
     ManualDatasetRoleMapping,
@@ -325,6 +327,102 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
     def get_dataset(self, *, dataset_id: str, user: User) -> ManualDatasetResponse:
         dataset = self._get_dataset(dataset_id=dataset_id, user=user)
         return self._to_response(dataset)
+
+    def get_missing_data_overview(
+        self,
+        *,
+        dataset_id: str,
+        user: User,
+    ) -> ManualDatasetMissingDataOverviewResponse:
+        dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        dataframe = self._read_dataframe_for_query(dataset).replace({None: pd.NA})
+        return self._build_missing_data_overview(dataset=dataset, dataframe=dataframe)
+
+    def create_missing_data_derivative(
+        self,
+        *,
+        dataset_id: str,
+        user: User,
+        action: str,
+        dataset_name: str | None = None,
+    ) -> ManualDatasetResponse:
+        source_dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        workspace = self._get_workspace(workspace_id=source_dataset.workspace_id, user=user)
+        dataframe = self._read_dataframe_for_query(source_dataset).replace({None: pd.NA})
+        original_rows = int(len(dataframe))
+        total_missing = int(dataframe.isna().sum().sum())
+        if total_missing == 0:
+            raise ManualDatasetError("Este dataset no tiene valores faltantes para limpiar.")
+
+        if action == "remove_rows":
+            cleaned_df = dataframe.dropna().reset_index(drop=True)
+            dropped_rows = original_rows - int(len(cleaned_df))
+            operation_label = "remove-missing-rows"
+            default_name = f"{source_dataset.name} - rows without missing values"
+            operation_metadata = {
+                "action": action,
+                "rows_before": original_rows,
+                "rows_after": int(len(cleaned_df)),
+                "rows_dropped": dropped_rows,
+            }
+        elif action == "impute_knn_mode":
+            cleaned_df = self._impute_missing_values_knn_mode(dataframe).reset_index(drop=True)
+            operation_label = "imputed-knn-mode"
+            operation_metadata = {
+                "action": action,
+                "rows_before": original_rows,
+                "rows_after": int(len(cleaned_df)),
+                "numeric_strategy": "knn",
+                "categorical_strategy": "mode",
+            }
+        else:
+            raise ManualDatasetError("Accion de limpieza no soportada.")
+
+        cleaned_name = " ".join((dataset_name or default_name).split()).strip() or default_name
+        self._validate_dataset_name_uniqueness(workspace_id=workspace.id, dataset_name=cleaned_name)
+
+        derivative_id = str(uuid.uuid4())
+        final_dir = self._build_dataset_dir(workspace, derivative_id)
+        final_dir.mkdir(parents=True, exist_ok=True)
+        original_stem = Path(source_dataset.original_file_name).stem or "manual-dataset"
+        generated_filename = self._safe_filename(f"{original_stem}-{operation_label}.csv")
+        raw_path = final_dir / generated_filename
+        raw_bytes = cleaned_df.to_csv(index=False).encode("utf-8")
+        raw_path.write_bytes(raw_bytes)
+        processed_path = self._write_processed_dataframe(cleaned_df, final_dir / "processed")
+
+        mapping = ManualDatasetRoleMapping.model_validate(source_dataset.mapping_config or {})
+        mapping = self._coerce_mapping_to_dataframe(mapping, cleaned_df)
+        operations = [ManualDatasetOperation.model_validate(item) for item in source_dataset.operation_pipeline or []]
+        operations.append(ManualDatasetOperation(type=action))
+
+        derivative = ManualDataset(
+            id=derivative_id,
+            workspace_id=workspace.id,
+            owner_user_id=user.id,
+            name=cleaned_name,
+            source_kind=source_dataset.source_kind,
+            source_url=source_dataset.source_url,
+            original_file_name=generated_filename,
+            raw_file_path=str(raw_path.resolve()),
+            processed_file_path=str(processed_path.resolve()),
+            checksum_sha256=compute_sha256(raw_bytes),
+            status="finalized_generic",
+            storage_format=processed_path.suffix.lstrip(".") or "csv",
+            dataset_kind="generic",
+            created_for=source_dataset.created_for,
+            source_metadata={
+                **(source_dataset.source_metadata or {}),
+                "derived_from_dataset_id": source_dataset.id,
+                "derived_from_dataset_name": source_dataset.name,
+                "missing_data_operation": operation_metadata,
+            },
+        )
+        self._sync_dataset_state(derivative, cleaned_df, operations, mapping)
+        self.db.add(derivative)
+        self.db.commit()
+        self.db.refresh(derivative)
+        return self._to_response(derivative)
 
     def list_datasets(self, *, workspace_id: str, user: User) -> list[ManualDatasetResponse]:
         workspace = self._get_workspace(workspace_id=workspace_id, user=user)
@@ -671,4 +769,116 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             error_message=dataset.error_message,
             created_for=dataset.created_for,
             source_metadata=dataset.source_metadata,
+        )
+
+    def _build_missing_data_overview(
+        self,
+        *,
+        dataset: ManualDataset,
+        dataframe: pd.DataFrame,
+    ) -> ManualDatasetMissingDataOverviewResponse:
+        missing_data = dataframe.isna().sum()
+        denominator = max(1, len(dataframe))
+        columns = [
+            ManualDatasetMissingDataColumn(
+                column=str(column),
+                missing_values=int(missing_data[column]),
+                percentage_missing=round(float(missing_data[column]) / denominator * 100, 2),
+            )
+            for column in dataframe.columns
+        ]
+        return ManualDatasetMissingDataOverviewResponse(
+            dataset_id=dataset.id,
+            dataset_name=dataset.name,
+            row_count=int(len(dataframe)),
+            column_count=int(len(dataframe.columns)),
+            total_missing_values=int(missing_data.sum()),
+            columns=columns,
+        )
+
+    def _impute_missing_values_knn_mode(self, dataframe: pd.DataFrame) -> pd.DataFrame:
+        working = dataframe.copy()
+        numeric_columns = list(working.select_dtypes(include="number").columns)
+        categorical_columns = [
+            column
+            for column in working.columns
+            if column not in numeric_columns and not pd.api.types.is_datetime64_any_dtype(working[column])
+        ]
+
+        if numeric_columns:
+            working[numeric_columns] = self._knn_impute_numeric(working[numeric_columns])
+
+        for column in categorical_columns:
+            mode = working[column].mode(dropna=True)
+            if not mode.empty:
+                working[column] = working[column].fillna(mode.iloc[0])
+
+        return working
+
+    def _knn_impute_numeric(self, numeric_df: pd.DataFrame, *, n_neighbors: int = 5) -> pd.DataFrame:
+        if numeric_df.empty:
+            return numeric_df.copy()
+
+        result = numeric_df.astype("float64").copy()
+        medians = result.median(numeric_only=True)
+        means = result.mean(numeric_only=True)
+
+        for target_column in result.columns:
+            missing_index = result.index[result[target_column].isna()]
+            observed_index = result.index[result[target_column].notna()]
+            if len(missing_index) == 0:
+                continue
+            if len(observed_index) == 0:
+                fallback = medians.get(target_column)
+                if pd.isna(fallback):
+                    fallback = means.get(target_column)
+                result.loc[missing_index, target_column] = 0.0 if pd.isna(fallback) else float(fallback)
+                continue
+
+            feature_columns = [column for column in result.columns if column != target_column]
+            for row_index in missing_index:
+                distances: list[tuple[float, object]] = []
+                if feature_columns:
+                    row_values = result.loc[row_index, feature_columns]
+                    for candidate_index in observed_index:
+                        candidate_values = result.loc[candidate_index, feature_columns]
+                        valid = row_values.notna() & candidate_values.notna()
+                        if not bool(valid.any()):
+                            continue
+                        diff = row_values[valid].astype(float) - candidate_values[valid].astype(float)
+                        scaled_distance = float(((diff**2).sum() / int(valid.sum())) ** 0.5)
+                        distances.append((scaled_distance, candidate_index))
+
+                if distances:
+                    nearest_indices = [index for _, index in sorted(distances, key=lambda item: item[0])[:n_neighbors]]
+                    fill_value = result.loc[nearest_indices, target_column].mean()
+                else:
+                    fill_value = medians.get(target_column)
+                if pd.isna(fill_value):
+                    fill_value = means.get(target_column)
+                result.at[row_index, target_column] = 0.0 if pd.isna(fill_value) else float(fill_value)
+
+        return result
+
+    def _coerce_mapping_to_dataframe(
+        self,
+        mapping: ManualDatasetRoleMapping,
+        dataframe: pd.DataFrame,
+    ) -> ManualDatasetRoleMapping:
+        columns = set(str(column) for column in dataframe.columns)
+
+        def _column(value: str | None) -> str | None:
+            return value if value in columns else None
+
+        return ManualDatasetRoleMapping(
+            numeric_columns=[column for column in mapping.numeric_columns if column in columns],
+            categorical_columns=[column for column in mapping.categorical_columns if column in columns],
+            datetime_column=_column(mapping.datetime_column),
+            date_column=_column(mapping.date_column),
+            time_column=_column(mapping.time_column),
+            station_code_column=_column(mapping.station_code_column),
+            variable_code_column=_column(mapping.variable_code_column),
+            value_column=_column(mapping.value_column),
+            unit_column=_column(mapping.unit_column),
+            normalized_datetime_column_name=mapping.normalized_datetime_column_name,
         )

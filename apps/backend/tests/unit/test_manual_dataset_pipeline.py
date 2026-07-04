@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pandas as pd
 
 from app.schemas.etl import ManualDatasetOperation, ManualDatasetRoleMapping
+from app.services.manual_dataset import ManualDatasetService
 from app.services.manual_dataset.pipeline import ManualDatasetPipelineMixin
 
 
@@ -168,3 +169,35 @@ def test_pipeline_scalar_helpers_handle_empty_and_timezone_values() -> None:
     assert str(pipeline._to_utc_timestamp("2025-01-01T00:00:00-05:00")) == "2025-01-01 05:00:00+00:00"
     assert pipeline._stringify_sample({"key": "valor"}) == '{"key": "valor"}'
     assert pipeline._stringify_sample(["a", "b"]) == '["a", "b"]'
+
+
+def test_missing_data_overview_reports_counts_and_percentages() -> None:
+    service = ManualDatasetService(db=None)
+    dataset = SimpleNamespace(id="dataset-1", name="demo")
+    dataframe = pd.DataFrame({"value": [1.0, None, 3.0], "label": ["a", None, None]})
+
+    overview = service._build_missing_data_overview(dataset=dataset, dataframe=dataframe)
+
+    assert overview.total_missing_values == 3
+    assert overview.columns[0].column == "value"
+    assert overview.columns[0].missing_values == 1
+    assert overview.columns[0].percentage_missing == 33.33
+    assert overview.columns[1].missing_values == 2
+
+
+def test_missing_data_imputation_uses_knn_for_numeric_and_mode_for_categorical() -> None:
+    service = ManualDatasetService(db=None)
+    dataframe = pd.DataFrame(
+        {
+            "nearest_feature": [1.0, 2.0, 100.0],
+            "value": [10.0, None, 90.0],
+            "category": ["north", None, "north"],
+        }
+    )
+
+    numeric_result = service._knn_impute_numeric(dataframe[["nearest_feature", "value"]], n_neighbors=1)
+    result = service._impute_missing_values_knn_mode(dataframe)
+
+    assert result["value"].isna().sum() == 0
+    assert numeric_result.loc[1, "value"] == 10.0
+    assert result.loc[1, "category"] == "north"

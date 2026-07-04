@@ -7,6 +7,7 @@ import { Login } from '@/features/auth/components/login';
 import { ResetPassword } from '@/features/auth/components/reset-password';
 import { SignUp } from '@/features/auth/components/sign-up';
 import { DataSources } from '@/features/data-sources/components/data-sources';
+import { MissingDataSection } from '@/features/data-sources/components/missing-data-section';
 import { ProjectAnalyticsWorkspace } from '@/features/dashboard/components/project-analytics-workspace';
 import { MLExperimentRunner } from '@/features/modeling/components/ml-experiment-runner';
 import { ModelViewer } from '@/features/modeling/components/model-viewer';
@@ -185,6 +186,8 @@ function App() {
         return <Projects onSelectProject={handleSelectWorkspace} />;
       case 'data-sources':
         return <DataSources onOpenAnalytics={() => setActiveView('analytical-workspace')} />;
+      case 'data-sources-missing':
+        return <MissingDataSection />;
       case 'code-editor':
         return activeWorkspaceId ? <ModelViewer /> : <Projects onSelectProject={handleSelectWorkspace} />;
       case 'ml-experiments':

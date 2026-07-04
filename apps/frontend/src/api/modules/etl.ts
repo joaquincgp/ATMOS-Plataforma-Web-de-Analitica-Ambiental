@@ -101,7 +101,15 @@ export interface ManualDatasetRoleMapping {
 }
 
 export interface ManualDatasetOperation {
-  type: 'select_columns' | 'cast_types' | 'subsample' | 'melt' | 'date_features' | 'cast_datetime';
+  type:
+    | 'select_columns'
+    | 'cast_types'
+    | 'subsample'
+    | 'melt'
+    | 'date_features'
+    | 'cast_datetime'
+    | 'remove_rows'
+    | 'impute_knn_mode';
   columns?: string[];
   type_map?: Record<string, string>;
   numeric_columns?: string[];
@@ -140,7 +148,26 @@ export interface ManualDatasetResponse {
   created_at: string;
   updated_at: string;
   error_message: string | null;
+  created_for?: string | null;
+  source_metadata?: Record<string, unknown> | null;
 }
+
+export interface ManualDatasetMissingDataColumn {
+  column: string;
+  missing_values: number;
+  percentage_missing: number;
+}
+
+export interface ManualDatasetMissingDataOverviewResponse {
+  dataset_id: string;
+  dataset_name: string;
+  row_count: number;
+  column_count: number;
+  total_missing_values: number;
+  columns: ManualDatasetMissingDataColumn[];
+}
+
+export type ManualDatasetMissingDataAction = 'remove_rows' | 'impute_knn_mode';
 
 export interface SyncRemmaqParams {
   forceReprocess?: boolean;
@@ -319,6 +346,27 @@ export function getManualDatasetAnalyticsPreview(
     params.append('variable_codes', variableCode);
   }
   return apiRequest<AnalyticsQueryResponse>(`/api/v1/etl/manual-datasets/${datasetId}/analytics-preview?${params.toString()}`);
+}
+
+export function getManualDatasetMissingDataOverview(
+  datasetId: string,
+): Promise<ManualDatasetMissingDataOverviewResponse> {
+  return apiRequest<ManualDatasetMissingDataOverviewResponse>(
+    `/api/v1/etl/manual-datasets/${datasetId}/missing-data`,
+  );
+}
+
+export function applyManualDatasetMissingDataAction(
+  datasetId: string,
+  payload: {
+    action: ManualDatasetMissingDataAction;
+    dataset_name?: string;
+  },
+): Promise<ManualDatasetResponse> {
+  return apiRequest<ManualDatasetResponse>(`/api/v1/etl/manual-datasets/${datasetId}/missing-data`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function listManualDatasets(workspaceId: string): Promise<ManualDatasetResponse[]> {
