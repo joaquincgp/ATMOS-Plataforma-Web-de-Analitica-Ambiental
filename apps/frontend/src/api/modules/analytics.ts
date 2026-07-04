@@ -123,7 +123,7 @@ export async function exportAnalyticsQuery(payload: AnalyticsQueryRequest): Prom
   const quotedMatch = /filename="?([^"]+)"?/i.exec(disposition);
   const filename = encodedMatch?.[1]
     ? decodeURIComponent(encodedMatch[1])
-    : quotedMatch?.[1] || 'remmaq-records.csv';
+    : quotedMatch?.[1] ?? 'remmaq-records.csv';
 
   return { blob: await response.blob(), filename };
 }
