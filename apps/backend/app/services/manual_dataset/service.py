@@ -328,6 +328,26 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         dataset = self._get_dataset(dataset_id=dataset_id, user=user)
         return self._to_response(dataset)
 
+    def export_dataset_csv(self, *, dataset_id: str, user: User) -> tuple[bytes, str]:
+        dataset = self._get_dataset(dataset_id=dataset_id, user=user)
+        dataframe = self._read_dataframe_for_query(dataset)
+        if dataset.source_kind == "remmaq":
+            readable_columns = [
+                "observed_at",
+                "station_code",
+                "variable_code",
+                "value",
+                "unit",
+                "source_file_name",
+                "source_url",
+            ]
+            ordered_columns = [column for column in readable_columns if column in dataframe.columns]
+            ordered_columns.extend([column for column in dataframe.columns if column not in ordered_columns])
+            dataframe = dataframe[ordered_columns].copy()
+        csv_bytes = dataframe.to_csv(index=False).encode("utf-8-sig")
+        filename_stem = self._safe_filename(dataset.name).rsplit(".", 1)[0] or "dataset"
+        return csv_bytes, f"{filename_stem}.csv"
+
     def get_missing_data_overview(
         self,
         *,

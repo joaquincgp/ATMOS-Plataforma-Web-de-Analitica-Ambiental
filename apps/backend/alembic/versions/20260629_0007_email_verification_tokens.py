@@ -23,7 +23,12 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_email_verification_tokens_expires_at"), "email_verification_tokens", ["expires_at"])
-    op.create_index(op.f("ix_email_verification_tokens_token_hash"), "email_verification_tokens", ["token_hash"], unique=True)
+    op.create_index(
+        op.f("ix_email_verification_tokens_token_hash"),
+        "email_verification_tokens",
+        ["token_hash"],
+        unique=True,
+    )
     op.create_index(op.f("ix_email_verification_tokens_user_id"), "email_verification_tokens", ["user_id"])
 
 

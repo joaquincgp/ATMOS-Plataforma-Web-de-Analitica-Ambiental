@@ -373,6 +373,35 @@ export function listManualDatasets(workspaceId: string): Promise<ManualDatasetRe
   return apiRequest<ManualDatasetResponse[]>(`/api/v1/etl/manual-datasets?workspace_id=${workspaceId}`);
 }
 
+export async function downloadManualDataset(datasetId: string): Promise<{ blob: Blob; filename: string }> {
+  const accessToken = getStoredAccessToken();
+  const response = await fetch(`${env.apiBaseUrl}/api/v1/etl/manual-datasets/${datasetId}/download`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+  });
+
+  if (!response.ok) {
+    let detail = `Download failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      if (payload.detail) {
+        detail = payload.detail;
+      }
+    } catch {
+      // Keep fallback detail
+    }
+    throw new Error(detail);
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const quotedMatch = /filename="?([^"]+)"?/i.exec(disposition);
+  const filename = encodedMatch?.[1]
+    ? decodeURIComponent(encodedMatch[1])
+    : (quotedMatch?.[1] ?? `dataset-${datasetId}.csv`);
+
+  return { blob: await response.blob(), filename };
+}
+
 export function previewManualDataset(
   datasetId: string,
   payload: {

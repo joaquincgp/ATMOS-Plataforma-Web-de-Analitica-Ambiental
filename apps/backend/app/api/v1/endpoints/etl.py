@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session, require_roles
@@ -336,6 +337,27 @@ def get_manual_dataset(
         return service.get_dataset(dataset_id=dataset_id, user=user)
     except ManualDatasetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/manual-datasets/{dataset_id}/download")
+def download_manual_dataset(
+    dataset_id: str,
+    db: Session = Depends(get_db_session),
+    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
+) -> Response:
+    service = ManualDatasetService(db)
+    try:
+        content, filename = service.export_dataset_csv(dataset_id=dataset_id, user=user)
+    except ManualDatasetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    encoded_filename = quote(filename)
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}",
+        },
+    )
 
 
 @router.get(

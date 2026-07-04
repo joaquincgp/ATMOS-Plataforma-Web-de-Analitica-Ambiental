@@ -1,4 +1,26 @@
+import { env } from '@/shared/config/env';
+
 import { apiRequest } from '@/api/http-client';
+
+const AUTH_STORAGE_KEY = 'atmos.auth.v1';
+
+function getStoredAccessToken(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { accessToken?: string };
+    return parsed.accessToken ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export interface AnalyticsSourceOption {
   id: number;
@@ -70,4 +92,38 @@ export function runAnalyticsQuery(payload: AnalyticsQueryRequest): Promise<Analy
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+export async function exportAnalyticsQuery(payload: AnalyticsQueryRequest): Promise<{ blob: Blob; filename: string }> {
+  const accessToken = getStoredAccessToken();
+  const response = await fetch(`${env.apiBaseUrl}/api/v1/analytics/export`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+  });
+
+  if (!response.ok) {
+    let detail = `Export failed: ${response.status}`;
+    try {
+      const errorPayload = (await response.json()) as { detail?: string };
+      if (errorPayload.detail) {
+        detail = errorPayload.detail;
+      }
+    } catch {
+      // Keep fallback detail
+    }
+    throw new Error(detail);
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  const quotedMatch = /filename="?([^"]+)"?/i.exec(disposition);
+  const filename = encodedMatch?.[1]
+    ? decodeURIComponent(encodedMatch[1])
+    : quotedMatch?.[1] || 'remmaq-records.csv';
+
+  return { blob: await response.blob(), filename };
 }

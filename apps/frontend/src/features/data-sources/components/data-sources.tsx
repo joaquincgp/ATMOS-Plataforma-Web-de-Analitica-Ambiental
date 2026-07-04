@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   Database,
+  Download,
   FolderOpen,
   Loader2,
   RefreshCw,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 
 import {
+  exportAnalyticsQuery,
   getAnalyticsFilters,
   runAnalyticsQuery,
   type AnalyticsDataRow,
@@ -21,6 +23,7 @@ import {
 import { getAppConfig } from '@/api/modules/app-config';
 import {
   deleteManualDataset,
+  downloadManualDataset,
   listManualDatasets,
   REMMAQ_VARIABLE_OPTIONS,
   type EtlPreviewRowResponse,
@@ -129,6 +132,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
   const [managerRows, setManagerRows] = useState<AnalyticsDataRow[]>([]);
   const [managerLoading, setManagerLoading] = useState(false);
   const [managerQuerying, setManagerQuerying] = useState(false);
+  const [managerExporting, setManagerExporting] = useState(false);
   const [managerError, setManagerError] = useState<string | null>(null);
   const [managerSelectedSourceFiles, setManagerSelectedSourceFiles] = useState<number[]>([]);
   const [managerSelectedStations, setManagerSelectedStations] = useState<string[]>([]);
@@ -143,6 +147,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
   const [manualDatasetsError, setManualDatasetsError] = useState<string | null>(null);
   const [selectedExistingDatasetId, setSelectedExistingDatasetId] = useState<string | null>(null);
   const [deletingDatasetId, setDeletingDatasetId] = useState<string | null>(null);
+  const [downloadingDatasetId, setDownloadingDatasetId] = useState<string | null>(null);
   const [clearingRunHistory, setClearingRunHistory] = useState(false);
 
   const { runs, currentRun, metrics, previewRows, loading, refreshing, error, triggerRemmaqSync, clearRunHistory } =
@@ -181,10 +186,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
 
   const latestRun = useMemo(() => currentRun ?? runs[0] ?? null, [currentRun, runs]);
   const finalizedManualDatasets = useMemo(
-    () =>
-      manualDatasets.filter(
-        (dataset) => dataset.status.startsWith('finalized') && dataset.source_kind !== 'remmaq',
-      ),
+    () => manualDatasets.filter((dataset) => dataset.status.startsWith('finalized')),
     [manualDatasets],
   );
   const selectedExistingDataset = useMemo(
@@ -346,6 +348,38 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
       setManagerError(err instanceof Error ? err.message : 'Query failed.');
     } finally {
       setManagerQuerying(false);
+    }
+  };
+
+  const buildManagerQueryPayload = (includePreviewLimit: boolean) => ({
+    source_file_ids: managerSelectedSourceFiles.length > 0 ? managerSelectedSourceFiles : undefined,
+    station_codes: managerSelectedStations.length > 0 ? managerSelectedStations : undefined,
+    variable_codes: managerSelectedVariables.length > 0 ? managerSelectedVariables : undefined,
+    date_from: managerDateFrom || undefined,
+    date_to: managerDateTo || undefined,
+    limit: includePreviewLimit ? clampRowLimit(managerLimit, managerMaxLimit) : undefined,
+  });
+
+  const handleExportManagerQuery = async () => {
+    setManagerExporting(true);
+    setManagerError(null);
+    try {
+      const { blob, filename } = await exportAnalyticsQuery(buildManagerQueryPayload(false));
+      const selectedSources = (managerFilters?.sources ?? []).filter((source) =>
+        managerSelectedSourceFiles.includes(source.id),
+      );
+      const exportFilename =
+        selectedSources.length === 1
+          ? toCsvDownloadFilename(selectedSources[0].name, filename)
+          : selectedSources.length > 1
+            ? toCsvDownloadFilename(`${selectedSources[0].name} + ${selectedSources.length - 1} more`, filename)
+            : filename;
+      downloadBlob(blob, exportFilename);
+      setActionMessage({ type: 'success', text: 'Filtered records downloaded.' });
+    } catch (err) {
+      setManagerError(err instanceof Error ? err.message : 'Could not export records.');
+    } finally {
+      setManagerExporting(false);
     }
   };
 
@@ -569,6 +603,27 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
     }
   };
 
+  const handleDownloadExistingDataset = async (datasetId: string) => {
+    const dataset = manualDatasets.find((item) => item.id === datasetId);
+    setDownloadingDatasetId(datasetId);
+    setActionMessage(null);
+    try {
+      const { blob, filename } = await downloadManualDataset(datasetId);
+      downloadBlob(blob, toCsvDownloadFilename(dataset?.name ?? filename, filename));
+      setActionMessage({
+        type: 'success',
+        text: `Dataset "${dataset?.name ?? filename}" downloaded.`,
+      });
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Could not download the dataset.',
+      });
+    } finally {
+      setDownloadingDatasetId(null);
+    }
+  };
+
   const handleClearRunHistory = async () => {
     const confirmed = window.confirm('Clear REMMAQ sync history from Data Manager? Loaded data will not be deleted.');
     if (!confirmed) {
@@ -595,7 +650,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
       {(error !== null || actionMessage !== null || manualDatasetsError !== null) && (
         <FloatingNotification
           message={{
-            type: error || manualDatasetsError ? 'error' : (actionMessage?.type ?? 'info'),
+            type: error !== null || manualDatasetsError !== null ? 'error' : (actionMessage?.type ?? 'info'),
             text: error ?? manualDatasetsError ?? actionMessage?.text ?? '',
           }}
           onClose={() => setActionMessage(null)}
@@ -639,6 +694,7 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
               managerRows={managerRows}
               managerLoading={managerLoading}
               managerQuerying={managerQuerying}
+              managerExporting={managerExporting}
               managerError={managerError}
               managerSelectedSourceFiles={managerSelectedSourceFiles}
               managerSelectedStations={managerSelectedStations}
@@ -654,16 +710,19 @@ export function DataSources({ onOpenAnalytics }: { onOpenAnalytics?: () => void 
               onManagerToggleStation={toggleManagerStation}
               onManagerToggleVariable={toggleManagerVariable}
               onRunManagerQuery={handleRunManagerQuery}
+              onExportManagerQuery={handleExportManagerQuery}
               manualDatasets={finalizedManualDatasets}
               manualDatasetsLoading={manualDatasetsLoading}
               selectedExistingDatasetId={selectedExistingDatasetId}
               deletingDatasetId={deletingDatasetId}
+              downloadingDatasetId={downloadingDatasetId}
               onSelectExistingDataset={(datasetId) => {
                 setSelectedExistingDatasetId(datasetId);
                 setManagerRows([]);
                 setManagerError(null);
               }}
               onDeleteDataset={handleDeleteExistingDataset}
+              onDownloadDataset={handleDownloadExistingDataset}
               onNotify={setActionMessage}
             />
           )}
@@ -736,6 +795,7 @@ interface SourceStepProps {
   managerRows: AnalyticsDataRow[];
   managerLoading: boolean;
   managerQuerying: boolean;
+  managerExporting: boolean;
   managerError: string | null;
   managerSelectedSourceFiles: number[];
   managerSelectedStations: string[];
@@ -751,12 +811,15 @@ interface SourceStepProps {
   onManagerToggleStation: (stationCode: string) => void;
   onManagerToggleVariable: (variableCode: string) => void;
   onRunManagerQuery: () => Promise<void>;
+  onExportManagerQuery: () => Promise<void>;
   manualDatasets: ManualDatasetResponse[];
   manualDatasetsLoading: boolean;
   selectedExistingDatasetId: string | null;
   deletingDatasetId: string | null;
+  downloadingDatasetId: string | null;
   onSelectExistingDataset: (datasetId: string) => void;
   onDeleteDataset: (datasetId: string) => Promise<void>;
+  onDownloadDataset: (datasetId: string) => Promise<void>;
   onNotify: (message: StepMessage) => void;
 }
 
@@ -783,6 +846,7 @@ function SourceStep({
   managerRows,
   managerLoading,
   managerQuerying,
+  managerExporting,
   managerError,
   managerSelectedSourceFiles,
   managerSelectedStations,
@@ -798,12 +862,15 @@ function SourceStep({
   onManagerToggleStation,
   onManagerToggleVariable,
   onRunManagerQuery,
+  onExportManagerQuery,
   manualDatasets,
   manualDatasetsLoading,
   selectedExistingDatasetId,
   deletingDatasetId,
+  downloadingDatasetId,
   onSelectExistingDataset,
   onDeleteDataset,
+  onDownloadDataset,
   onNotify,
 }: SourceStepProps) {
   return (
@@ -997,6 +1064,7 @@ function SourceStep({
               rows={managerRows}
               loading={managerLoading}
               querying={managerQuerying}
+              exporting={managerExporting}
               error={managerError}
               selectedSourceFiles={managerSelectedSourceFiles}
               selectedStations={managerSelectedStations}
@@ -1012,12 +1080,15 @@ function SourceStep({
               onToggleStation={onManagerToggleStation}
               onToggleVariable={onManagerToggleVariable}
               onRunQuery={onRunManagerQuery}
+              onExportQuery={onExportManagerQuery}
               manualDatasets={manualDatasets}
               manualDatasetsLoading={manualDatasetsLoading}
               selectedExistingDatasetId={selectedExistingDatasetId}
               deletingDatasetId={deletingDatasetId}
+              downloadingDatasetId={downloadingDatasetId}
               onSelectExistingDataset={onSelectExistingDataset}
               onDeleteDataset={onDeleteDataset}
+              onDownloadDataset={onDownloadDataset}
             />
           )}
         </CardContent>
@@ -1184,6 +1255,7 @@ interface ExistingDataPanelProps {
   rows: AnalyticsDataRow[];
   loading: boolean;
   querying: boolean;
+  exporting: boolean;
   error: string | null;
   selectedSourceFiles: number[];
   selectedStations: string[];
@@ -1199,12 +1271,15 @@ interface ExistingDataPanelProps {
   onToggleStation: (stationCode: string) => void;
   onToggleVariable: (variableCode: string) => void;
   onRunQuery: () => Promise<void>;
+  onExportQuery: () => Promise<void>;
   manualDatasets: ManualDatasetResponse[];
   manualDatasetsLoading: boolean;
   selectedExistingDatasetId: string | null;
   deletingDatasetId: string | null;
+  downloadingDatasetId: string | null;
   onSelectExistingDataset: (datasetId: string) => void;
   onDeleteDataset: (datasetId: string) => Promise<void>;
+  onDownloadDataset: (datasetId: string) => Promise<void>;
 }
 
 function ExistingDataPanel({
@@ -1212,6 +1287,7 @@ function ExistingDataPanel({
   rows,
   loading,
   querying,
+  exporting,
   error,
   selectedSourceFiles,
   selectedStations,
@@ -1227,12 +1303,15 @@ function ExistingDataPanel({
   onToggleStation,
   onToggleVariable,
   onRunQuery,
+  onExportQuery,
   manualDatasets,
   manualDatasetsLoading,
   selectedExistingDatasetId,
   deletingDatasetId,
+  downloadingDatasetId,
   onSelectExistingDataset,
   onDeleteDataset,
+  onDownloadDataset,
 }: ExistingDataPanelProps) {
   const sourceCount = filters?.sources.length ?? 0;
   const selectedSavedDataset =
@@ -1283,7 +1362,7 @@ function ExistingDataPanel({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="manager-date-from" className="text-xs text-muted-foreground">
               Date from
@@ -1307,22 +1386,6 @@ function ExistingDataPanel({
               onChange={(event) => onDateToChange(event.target.value)}
               className="h-9"
             />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="manager-limit" className="text-xs text-muted-foreground">
-              Row limit
-            </Label>
-            <Input
-              id="manager-limit"
-              type="number"
-              min={100}
-              max={maxLimit}
-              step={100}
-              value={limit}
-              onChange={(event) => onLimitChange(clampRowLimit(Number(event.target.value || 100), maxLimit))}
-              className="h-9"
-            />
-            <p className="text-[11px] text-muted-foreground">Max configured: {maxLimit.toLocaleString()}</p>
           </div>
         </div>
 
@@ -1378,10 +1441,36 @@ function ExistingDataPanel({
           <Badge className="border border-[#509EE3]/25 bg-[#e9f3fd] text-[#1F5A8A] hover:bg-[#e9f3fd]">
             {rows.length.toLocaleString()} rows in view
           </Badge>
-          <Button className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90" onClick={() => void onRunQuery()} disabled={querying}>
-            {querying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
-            Run query
-          </Button>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="w-36 space-y-1">
+              <Label htmlFor="manager-limit" className="text-xs text-muted-foreground">
+                Preview limit
+              </Label>
+              <Input
+                id="manager-limit"
+                type="number"
+                min={100}
+                max={maxLimit}
+                step={100}
+                value={limit}
+                onChange={(event) => onLimitChange(clampRowLimit(Number(event.target.value || 100), maxLimit))}
+                className="h-9"
+              />
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void onExportQuery()}
+              disabled={exporting || selectedSourceFiles.length === 0}
+              title={selectedSourceFiles.length === 0 ? 'Select one or more file cards first.' : undefined}
+            >
+              {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+              Download CSV
+            </Button>
+            <Button className="bg-[#509EE3] text-white hover:bg-[#509EE3]/90" onClick={() => void onRunQuery()} disabled={querying}>
+              {querying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Database className="mr-2 h-4 w-4" />}
+              Run query
+            </Button>
+          </div>
         </div>
 
         {error && <p className="text-sm text-[#1F5A8A]">{error}</p>}
@@ -1462,6 +1551,20 @@ function ExistingDataPanel({
                   </button>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={dataset.status} />
+                    <button
+                      type="button"
+                      onClick={() => void onDownloadDataset(dataset.id)}
+                      disabled={downloadingDatasetId === dataset.id}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#509EE3]/30 text-[#1F5A8A] transition-colors hover:bg-[#e9f3fd] disabled:cursor-not-allowed disabled:opacity-60"
+                      aria-label={`Download ${dataset.name}`}
+                      title={dataset.source_kind === 'remmaq' ? 'Download readable REMMAQ CSV' : 'Download dataset CSV'}
+                    >
+                      {downloadingDatasetId === dataset.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={() => void onDeleteDataset(dataset.id)}
@@ -2250,6 +2353,29 @@ function MeasurementRowsTable({
       </div>
     </div>
   );
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function toCsvDownloadFilename(label: string, fallback = 'dataset.csv') {
+  const cleaned = label
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^\.+/, '')
+    .slice(0, 140);
+  const fallbackStem = fallback.replace(/\.[^.]+$/, '') || 'dataset';
+  const stem = (cleaned || fallbackStem).replace(/\.[^.]+$/, '');
+  return `${stem}.csv`;
 }
 
 function FloatingNotification({
