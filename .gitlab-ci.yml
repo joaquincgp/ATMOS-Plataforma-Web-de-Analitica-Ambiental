@@ -286,6 +286,7 @@ deploy:containerapp:azure:
         --resource-group "rg-atmos-prod"
         --name "atmosprod-api"
         --image "$ACR_LOGIN_SERVER/$BACKEND_IMAGE_NAME:$CI_COMMIT_SHA"
+        --min-replicas 1
         --output none
     # Single revision mode means every deploy always serves 100% of traffic
     # from the newest revision automatically (Azure rejects explicit traffic-
