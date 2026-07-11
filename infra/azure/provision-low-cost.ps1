@@ -279,7 +279,7 @@ if (Test-AzCommand { az containerapp show --resource-group $ResourceGroup --name
     --image "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest" `
     --target-port 8000 `
     --ingress external `
-    --min-replicas 0 `
+    --min-replicas 1 `
     --max-replicas 1 `
     --cpu 0.5 `
     --memory 1Gi `
