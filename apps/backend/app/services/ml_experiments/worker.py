@@ -17,7 +17,7 @@ from app.models.manual_dataset import ManualDataset
 from app.models.ml_experiment_run import MLExperimentRun
 from app.models.user import User
 from app.services.manual_dataset import ManualDatasetError, ManualDatasetService
-from app.services.ml_experiments import get_runner
+from app.services.ml_experiments import get_runner_lazy
 from app.services.ml_experiments.dataset import MLExperimentError, build_ml_dataset
 from app.services.ml_experiments.registry import ModelNotImplementedError
 
@@ -129,7 +129,17 @@ def _load_source_frame(db: Session, run: MLExperimentRun) -> pd.DataFrame | None
     try:
         frame = service.get_source_dataframe(dataset_id=run.manual_dataset_id, user=owner)
     except ManualDatasetError as exc:
-        raise MLExperimentError(f"No se pudo leer la fuente seleccionada: {exc}") from exc
+        # The source file was lost (container restarted and ephemeral disk was
+        # wiped). Fall back to the shared measurements table — the ETL sync that
+        # created this dataset also wrote the same rows there, so training still
+        # produces correct results. Log so the issue is visible in the logs.
+        logger.warning(
+            "Archivo físico del dataset %s no disponible (%s). "
+            "El entrenamiento usará las mediciones en base de datos como alternativa.",
+            run.manual_dataset_id,
+            exc,
+        )
+        return None
     frame = frame.copy()
     frame["observed_at"] = pd.to_datetime(frame["observed_at"], errors="coerce")
     return frame
@@ -154,7 +164,7 @@ def _execute_job(run_id: str) -> None:
                 train_split=run.train_split,
                 source_frame=source_frame,
             )
-            runner = get_runner(run.algorithm)
+            runner = get_runner_lazy(run.algorithm)
             result = runner.train(
                 dataset,
                 epochs=run.epochs,
