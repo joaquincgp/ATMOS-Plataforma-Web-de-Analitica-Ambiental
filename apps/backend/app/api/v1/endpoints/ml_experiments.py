@@ -21,6 +21,7 @@ from app.schemas.ml_experiment import (
     MLModelSourcesResponse,
 )
 from app.services.manual_dataset import ManualDatasetError, ManualDatasetService
+from app.services.ml_experiments import _register_all
 from app.services.ml_experiments.registry import list_available_algorithms
 from app.services.ml_experiments.service import MLExperimentService, MLExperimentServiceError
 from app.services.ml_experiments.source_code import list_model_source_files
@@ -51,6 +52,7 @@ def _run_ml_experiment_source_sync_background(
 
 @router.get("/algorithms", response_model=MLAlgorithmsResponse)
 def get_available_ml_algorithms() -> MLAlgorithmsResponse:
+    _register_all()
     return MLAlgorithmsResponse(algorithms=list_available_algorithms())
 
 
