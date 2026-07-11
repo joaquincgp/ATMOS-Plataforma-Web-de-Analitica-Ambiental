@@ -85,11 +85,22 @@ export function useMLExperiments(workspaceId: string | null): UseMLExperimentsSt
   }, [workspaceId]);
 
   const pollRun = useCallback(async (runId: string): Promise<MLExperimentRunDetail | null> => {
+    let consecutiveErrors = 0;
     for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-      const run = await getMLExperimentRun(runId);
-      setCurrentRun(run);
-      if (run.status !== 'pending' && run.status !== 'running') {
-        return run;
+      try {
+        const run = await getMLExperimentRun(runId);
+        consecutiveErrors = 0;
+        setCurrentRun(run);
+        if (run.status !== 'pending' && run.status !== 'running') {
+          return run;
+        }
+      } catch (err) {
+        consecutiveErrors += 1;
+        // Allow up to 5 consecutive network errors (transient Azure hiccups,
+        // brief deploy restarts) before giving up and surfacing the error.
+        if (consecutiveErrors >= 5) {
+          throw err;
+        }
       }
       await new Promise((resolve) => {
         window.setTimeout(resolve, POLL_INTERVAL_MS);
@@ -164,21 +175,30 @@ export function useMLExperiments(workspaceId: string | null): UseMLExperimentsSt
       return; // Already tracked by another poll loop (e.g. syncSource's own call).
     }
     polledSourceIdsRef.current.add(sourceId);
+    let consecutiveSourceErrors = 0;
     try {
       for (let attempt = 0; attempt < MAX_SOURCE_POLL_ATTEMPTS; attempt += 1) {
         if (sourcePollAbortRef.current) {
           return;
         }
-        const source = await getMLExperimentSource(sourceId);
-        setSources((previous) => {
-          const exists = previous.some((item) => item.id === source.id);
-          return exists ? previous.map((item) => (item.id === source.id ? source : item)) : [source, ...previous];
-        });
-        if (source.status !== 'syncing') {
-          if (source.status === 'failed') {
-            setSourceError(source.error_message ?? 'No se pudo sincronizar la fuente REMMAQ.');
+        try {
+          const source = await getMLExperimentSource(sourceId);
+          consecutiveSourceErrors = 0;
+          setSources((previous) => {
+            const exists = previous.some((item) => item.id === source.id);
+            return exists ? previous.map((item) => (item.id === source.id ? source : item)) : [source, ...previous];
+          });
+          if (source.status !== 'syncing') {
+            if (source.status === 'failed') {
+              setSourceError(source.error_message ?? 'No se pudo sincronizar la fuente REMMAQ.');
+            }
+            return;
           }
-          return;
+        } catch (err) {
+          consecutiveSourceErrors += 1;
+          if (consecutiveSourceErrors >= 5) {
+            throw err;
+          }
         }
         await new Promise((resolve) => {
           window.setTimeout(resolve, SOURCE_POLL_INTERVAL_MS);
