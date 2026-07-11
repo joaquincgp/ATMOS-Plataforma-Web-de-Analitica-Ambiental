@@ -21,10 +21,14 @@ import argparse
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
+from starlette.responses import StreamingResponse
 
 REMMAQ_BASE_URL = "https://datosambiente.quito.gob.ec"
 DEFAULT_PORT = 8080
-REQUEST_TIMEOUT_SECONDS = 60
+
+# Separate timeouts: allow up to 10 minutes to read large RAR files from
+# REMMAQ (TMP/HUM/VEL archives can be slow), but fail fast on connection.
+_TIMEOUT = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=10.0)
 
 _BROWSER_HEADERS = {
     "User-Agent": (
@@ -45,10 +49,14 @@ app = FastAPI(title="REMMAQ reverse proxy")
 @app.api_route("/{path:path}", methods=["GET", "HEAD"])
 async def proxy(path: str, request: Request) -> Response:
     target_url = f"{REMMAQ_BASE_URL}/{path}"
+    client = httpx.AsyncClient(follow_redirects=True, timeout=_TIMEOUT)
     try:
-        async with httpx.AsyncClient(follow_redirects=True, timeout=REQUEST_TIMEOUT_SECONDS) as client:
-            upstream = await client.get(target_url, params=request.query_params, headers=_BROWSER_HEADERS)
+        req = client.build_request(
+            "GET", target_url, params=dict(request.query_params), headers=_BROWSER_HEADERS
+        )
+        upstream = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
+        await client.aclose()
         print(f"[REMMAQ-PROXY] {request.method} {path} -> error: {exc!r}", flush=True)
         return Response(
             content=f"No se pudo contactar a REMMAQ a traves de este proxy: {exc}",
@@ -56,12 +64,24 @@ async def proxy(path: str, request: Request) -> Response:
             media_type="text/plain",
         )
 
-    print(
-        f"[REMMAQ-PROXY] {request.method} {path} -> {upstream.status_code} ({len(upstream.content)} bytes)",
-        flush=True,
-    )
     headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _EXCLUDED_RESPONSE_HEADERS}
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=headers)
+    status = upstream.status_code
+    print(f"[REMMAQ-PROXY] {request.method} {path} -> {status} (streaming)", flush=True)
+
+    async def _stream():
+        try:
+            async for chunk in upstream.aiter_bytes(chunk_size=65536):
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        _stream(),
+        status_code=status,
+        headers=headers,
+        media_type=upstream.headers.get("content-type", "application/octet-stream"),
+    )
 
 
 if __name__ == "__main__":
