@@ -1295,9 +1295,54 @@ export function PublicDashboard({
             margin: 12px;
           }
         }
+        @keyframes sk-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
+        }
+        .sk { animation: sk-pulse 1.8s ease-in-out infinite; background: #dce5f1; border-radius: 6px; }
       `}</style>
 
       <div ref={mapContainerRef} className="public-map-canvas absolute inset-0 z-0 h-full w-full" />
+
+      {loading && !snapshot && (
+        <div className="pointer-events-none absolute inset-0 z-[600] flex items-stretch">
+          {/* left panel skeleton */}
+          <div className="public-glass-panel pointer-events-auto absolute bottom-4 left-4 top-4 flex w-[316px] flex-col gap-4 overflow-hidden rounded-[20px] p-5">
+            <div className="flex items-center gap-3">
+              <div className="sk h-11 w-11 shrink-0 rounded-[10px]" />
+              <div className="flex flex-1 flex-col gap-2">
+                <div className="sk h-4 w-24" />
+                <div className="sk h-3 w-36" />
+              </div>
+            </div>
+            <div className="sk h-[140px] w-full rounded-xl" />
+            <div className="sk h-8 w-full rounded-lg" />
+            <div className="sk h-8 w-full rounded-lg" />
+            <div className="mt-2 flex flex-col gap-2">
+              {[1,2,3,4,5,6].map((i) => (
+                <div key={i} className="sk h-10 w-full rounded-lg" />
+              ))}
+            </div>
+          </div>
+          {/* right panel skeleton */}
+          <div className="public-glass-panel pointer-events-auto absolute bottom-4 right-4 top-4 flex w-[340px] flex-col gap-4 overflow-hidden rounded-[20px] p-5">
+            <div className="sk h-5 w-40" />
+            <div className="sk h-[180px] w-full rounded-xl" />
+            <div className="sk h-5 w-32" />
+            <div className="sk h-[140px] w-full rounded-xl" />
+            <div className="mt-auto flex flex-col gap-2">
+              {[1,2,3].map((i) => (
+                <div key={i} className="sk h-9 w-full rounded-lg" />
+              ))}
+            </div>
+          </div>
+          {/* bottom legend skeleton */}
+          <div className="public-glass-panel pointer-events-auto absolute bottom-6 left-1/2 flex h-14 w-[min(600px,calc(100%-2rem))] -translate-x-1/2 items-center gap-3 rounded-2xl px-5">
+            <div className="sk h-4 flex-1 rounded" />
+            <div className="sk h-4 w-24 rounded" />
+          </div>
+        </div>
+      )}
 
       <div className="public-dashboard-shell pointer-events-none absolute inset-0 z-[500]">
         <aside className="public-left-panel public-glass-panel pointer-events-auto absolute bottom-4 left-4 top-4 flex w-[316px] flex-col overflow-x-hidden overflow-y-auto rounded-[20px]">
