@@ -24,13 +24,39 @@ async def _public_snapshot_refresh_loop() -> None:
     every 4 minutes, just before the 5-minute cache TTL expires. This means
     every user request hits a pre-built snapshot and never pays the cold-build
     cost of 30-50 synchronous DB queries.
+
+    Defers the rebuild whenever ML training or a REMMAQ source sync is active
+    so the two CPU/memory-intensive workloads never compete.
     """
     await asyncio.sleep(3)
     loop = asyncio.get_running_loop()
     while True:
         try:
             from app.db.session import SessionLocal
+            from app.models.manual_dataset import ManualDataset
+            from app.models.ml_experiment_run import MLExperimentRun
             from app.services.public_air_quality_service import get_public_air_quality_snapshot
+            from sqlalchemy import select
+
+            def _is_ml_busy() -> bool:
+                db = SessionLocal()
+                try:
+                    has_active_run = db.execute(
+                        select(MLExperimentRun.id)
+                        .where(MLExperimentRun.status.in_(["pending", "running"]))
+                        .limit(1)
+                    ).scalar_one_or_none() is not None
+                    has_active_sync = db.execute(
+                        select(ManualDataset.id)
+                        .where(
+                            ManualDataset.status == "syncing",
+                            ManualDataset.created_for == "ml_experiments",
+                        )
+                        .limit(1)
+                    ).scalar_one_or_none() is not None
+                    return has_active_run or has_active_sync
+                finally:
+                    db.close()
 
             def _build() -> None:
                 db = SessionLocal()
@@ -39,8 +65,12 @@ async def _public_snapshot_refresh_loop() -> None:
                 finally:
                     db.close()
 
-            await loop.run_in_executor(None, _build)
-            logger.info("Public dashboard snapshot refreshed.")
+            busy = await loop.run_in_executor(None, _is_ml_busy)
+            if busy:
+                logger.debug("Snapshot refresh deferred: ML training or source sync in progress.")
+            else:
+                await loop.run_in_executor(None, _build)
+                logger.info("Public dashboard snapshot refreshed.")
         except Exception:
             logger.warning("Public dashboard snapshot refresh failed (non-fatal).", exc_info=True)
         await asyncio.sleep(240)
