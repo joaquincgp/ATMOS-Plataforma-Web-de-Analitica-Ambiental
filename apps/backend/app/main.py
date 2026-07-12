@@ -32,11 +32,12 @@ async def _public_snapshot_refresh_loop() -> None:
     loop = asyncio.get_running_loop()
     while True:
         try:
+            from sqlalchemy import select
+
             from app.db.session import SessionLocal
             from app.models.manual_dataset import ManualDataset
             from app.models.ml_experiment_run import MLExperimentRun
             from app.services.public_air_quality_service import get_public_air_quality_snapshot
-            from sqlalchemy import select
 
             def _is_ml_busy() -> bool:
                 db = SessionLocal()
