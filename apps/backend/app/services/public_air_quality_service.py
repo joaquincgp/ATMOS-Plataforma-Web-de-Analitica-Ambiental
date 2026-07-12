@@ -124,7 +124,7 @@ PUBLIC_METHODOLOGY_NOTES = [
     "El rango por defecto usa las ultimas lecturas disponibles por variable; no usa datos quemados.",
     "Los resumenes por variable pueden tener fechas distintas porque REMMAQ no siempre publica todas al mismo tiempo.",
 ]
-PUBLIC_SNAPSHOT_CACHE_TTL = timedelta(minutes=1)
+PUBLIC_SNAPSHOT_CACHE_TTL = timedelta(minutes=5)
 _PUBLIC_SNAPSHOT_CACHE: dict[
     tuple[int, str, date | None, date | None, int, str, int | None, str | None],
     tuple[datetime, PublicAirQualityResponse],

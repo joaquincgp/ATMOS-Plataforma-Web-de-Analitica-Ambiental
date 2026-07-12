@@ -17,6 +17,35 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+async def _public_snapshot_refresh_loop() -> None:
+    """Keeps the public dashboard snapshot cache always warm.
+
+    Runs once at startup (after a short delay for DB init to settle) and then
+    every 4 minutes, just before the 5-minute cache TTL expires. This means
+    every user request hits a pre-built snapshot and never pays the cold-build
+    cost of 30-50 synchronous DB queries.
+    """
+    await asyncio.sleep(3)
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            from app.db.session import SessionLocal
+            from app.services.public_air_quality_service import get_public_air_quality_snapshot
+
+            def _build() -> None:
+                db = SessionLocal()
+                try:
+                    get_public_air_quality_snapshot(db, use_cache=False)
+                finally:
+                    db.close()
+
+            await loop.run_in_executor(None, _build)
+            logger.info("Public dashboard snapshot refreshed.")
+        except Exception:
+            logger.warning("Public dashboard snapshot refresh failed (non-fatal).", exc_info=True)
+        await asyncio.sleep(240)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if settings.auto_init_db_on_startup:
@@ -31,14 +60,17 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.warning("Orphaned ML job reconciliation skipped due to a database error at startup.", exc_info=True)
 
     worker_task = asyncio.create_task(ml_job_worker_loop())
+    snapshot_task = asyncio.create_task(_public_snapshot_refresh_loop())
     try:
         yield
     finally:
         worker_task.cancel()
-        try:
-            await worker_task
-        except asyncio.CancelledError:
-            pass
+        snapshot_task.cancel()
+        for task in (worker_task, snapshot_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
