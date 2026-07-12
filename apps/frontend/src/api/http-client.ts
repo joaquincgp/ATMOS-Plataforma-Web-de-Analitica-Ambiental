@@ -1,5 +1,7 @@
 import { env } from '@/shared/config/env';
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   auth?: boolean;
@@ -79,34 +81,44 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     }
   }
 
-  const response = await fetch(url.toString(), {
-    ...options,
-    headers,
-  });
+  const controller = !options.signal ? new AbortController() : null;
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS)
+    : null;
 
-  if (withAuth && response.status === 401 && unauthorizedHandler) {
-    unauthorizedHandler();
-  }
+  try {
+    const response = await fetch(url.toString(), {
+      ...options,
+      headers,
+      signal: options.signal ?? controller?.signal,
+    });
 
-  if (!response.ok) {
-    let detail = `API request failed: ${response.status}`;
-    try {
-      const payload = (await response.json()) as unknown;
-      detail = extractApiErrorMessage(payload, response.status);
-    } catch {
-      // Keep fallback detail
+    if (withAuth && response.status === 401 && unauthorizedHandler) {
+      unauthorizedHandler();
     }
-    throw new Error(detail);
-  }
 
-  if (response.status === 204) {
-    return undefined as T;
-  }
+    if (!response.ok) {
+      let detail = `API request failed: ${response.status}`;
+      try {
+        const payload = (await response.json()) as unknown;
+        detail = extractApiErrorMessage(payload, response.status);
+      } catch {
+        // Keep fallback detail
+      }
+      throw new Error(detail);
+    }
 
-  const contentType = response.headers.get('content-type') ?? '';
-  if (!contentType.toLowerCase().includes('application/json')) {
-    return undefined as T;
-  }
+    if (response.status === 204) {
+      return undefined as T;
+    }
 
-  return (await response.json()) as T;
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.toLowerCase().includes('application/json')) {
+      return undefined as T;
+    }
+
+    return (await response.json()) as T;
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
 }

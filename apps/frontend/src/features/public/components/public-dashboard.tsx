@@ -112,6 +112,8 @@ interface IdwLegendData {
 }
 
 const POLLING_INTERVAL_MS = 60 * 60 * 1000;
+const SNAPSHOT_STORAGE_KEY = 'atmos_pub_snapshot_v1';
+const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const QUITO_CENTER: L.LatLngExpression = [-0.1807, -78.4678];
 const ALL_STATIONS = 'all';
 const DEFAULT_VARIABLE = 'PM25';
@@ -294,7 +296,7 @@ const normalizeLoadError = (loadError: unknown) => {
   if (!(loadError instanceof Error)) {
     return DATA_ERROR_MESSAGE;
   }
-  if (loadError.message === 'Failed to fetch') {
+  if (loadError.message === 'Failed to fetch' || loadError.name === 'AbortError') {
     return DATA_ERROR_MESSAGE;
   }
   return loadError.message;
@@ -986,6 +988,13 @@ export function PublicDashboard({
         [`${requestParams.period}|${hourKey}|${response.variable_code}`]: nextStations,
       }));
     }
+    if (!requestParams.station_code && requestParams.period === 'latest' && response.variable_code === DEFAULT_VARIABLE) {
+      try {
+        localStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify({ data: response, savedAt: Date.now() }));
+      } catch {
+        // Ignore localStorage quota or unavailability
+      }
+    }
   }, [requestParams.hour, requestParams.period, requestParams.station_code]);
 
   const preloadVariables = useCallback(async (baseResponse: PublicAirQualityResponse) => {
@@ -1038,6 +1047,21 @@ export function PublicDashboard({
       setLoading(false);
     }
   }, [cacheSnapshot, preloadVariables, requestParams, selectedVariable]);
+
+  // On first mount, restore the last successful default-view snapshot from localStorage
+  // so the dashboard shows real data immediately (no skeleton) while the fresh fetch runs.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SNAPSHOT_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as { data: PublicAirQualityResponse; savedAt: number };
+      if (typeof parsed.savedAt === 'number' && Date.now() - parsed.savedAt < SNAPSHOT_MAX_AGE_MS && parsed.data?.variable_code) {
+        setSnapshot(parsed.data);
+      }
+    } catch {
+      // Ignore storage or parse errors
+    }
+  }, []);
 
   useEffect(() => {
     const cached = snapshotCacheRef.current.get(requestCacheKey);
