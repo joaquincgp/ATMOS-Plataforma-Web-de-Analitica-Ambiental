@@ -80,6 +80,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="REMMAQ reverse proxy", lifespan=lifespan)
 
 
+@app.api_route("/", methods=["GET", "HEAD"])
+async def proxy_root(request: Request) -> Response:
+    return await proxy("", request)
+
+
 @app.api_route("/{path:path}", methods=["GET", "HEAD"])
 async def proxy(path: str, request: Request) -> Response:
     assert _http_client is not None
