@@ -5,6 +5,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   auth?: boolean;
+  timeout?: number;
 }
 
 type AccessTokenGetter = () => string | null;
@@ -81,9 +82,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     }
   }
 
+  const timeoutMs = options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const controller = !options.signal ? new AbortController() : null;
   const timeoutId = controller
-    ? window.setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS)
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
     : null;
 
   try {

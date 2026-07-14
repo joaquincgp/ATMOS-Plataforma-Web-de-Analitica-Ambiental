@@ -143,5 +143,6 @@ export function getPublicAirQuality(params: PublicAirQualityParams): Promise<Pub
   return apiRequest<PublicAirQualityResponse>('/api/v1/public/air-quality', {
     auth: false,
     params: queryParams,
+    timeout: 120_000,
   });
 }

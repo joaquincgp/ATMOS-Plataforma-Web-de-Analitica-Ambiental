@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import re
 import shutil
 import time
@@ -343,53 +344,63 @@ class EtlService:
             else max_archives or self.settings.etl_sync_default_max_archives
         )
 
-        archives = self._discover_archive_urls(
-            root_url=self.settings.remmaq_base_url,
-            selected_variables=normalized_variables,
-            max_archives=max_archives_effective,
-        )
-
         records: list[dict[str, object]] = []
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
 
-        for archive_index, archive in enumerate(archives, start=1):
-            archive_url = archive["url"]
-            content, filename = self._download_binary(
-                archive_url,
-                timeout_seconds=request_timeout_seconds,
-                cache_ttl_seconds=cache_ttl_seconds,
+        # One shared client for the entire sync so REMMAQ session cookies
+        # established during discovery are reused for every archive download,
+        # preventing redirect loops caused by missing session state.
+        with httpx.Client(
+            timeout=request_timeout_seconds or self.settings.etl_request_timeout_seconds,
+            follow_redirects=True,
+            headers=_REMMAQ_BROWSER_HEADERS,
+        ) as shared_client:
+            archives = self._discover_archive_urls(
+                root_url=self.settings.remmaq_base_url,
+                selected_variables=normalized_variables,
+                max_archives=max_archives_effective,
+                _client=shared_client,
             )
-            checksum = compute_sha256(content)
-            safe_name = filename.replace("/", "_").replace("\\", "_")
-            archive_name = f"{checksum[:12]}-{safe_name}"
-            archive_path = self.raw_dir / archive_name
-            archive_path.write_bytes(content)
-            extracted_path = self._extract_input_file(archive_path, checksum)
 
-            for row in self._extract_rows_from_directory(
-                extracted_path,
-                default_variable_code=archive["variable_code"],
-            ):
-                observed_at = row.observed_at.astimezone(UTC)
-                if observed_from_dt is not None and observed_at < observed_from_dt:
-                    continue
-                if observed_to_dt is not None and observed_at > observed_to_dt:
-                    continue
-                records.append(
-                    {
-                        "station_code": normalize_station_code(row.station_code),
-                        "observed_at": observed_at.replace(tzinfo=None).isoformat(),
-                        "variable_code": normalize_variable_code(row.variable_code),
-                        "value": float(row.value),
-                        "unit": row.unit,
-                        "source_file_name": filename,
-                        "source_url": archive_url,
-                    }
+            for archive_index, archive in enumerate(archives, start=1):
+                archive_url = archive["url"]
+                content, filename = self._download_binary(
+                    archive_url,
+                    timeout_seconds=request_timeout_seconds,
+                    cache_ttl_seconds=cache_ttl_seconds,
+                    _client=shared_client,
                 )
+                checksum = compute_sha256(content)
+                safe_name = filename.replace("/", "_").replace("\\", "_")
+                archive_name = f"{checksum[:12]}-{safe_name}"
+                archive_path = self.raw_dir / archive_name
+                archive_path.write_bytes(content)
+                extracted_path = self._extract_input_file(archive_path, checksum)
 
-            if progress_callback is not None:
-                progress_callback(archive_index, len(archives), len(records))
+                for row in self._extract_rows_from_directory(
+                    extracted_path,
+                    default_variable_code=archive["variable_code"],
+                ):
+                    observed_at = row.observed_at.astimezone(UTC)
+                    if observed_from_dt is not None and observed_at < observed_from_dt:
+                        continue
+                    if observed_to_dt is not None and observed_at > observed_to_dt:
+                        continue
+                    records.append(
+                        {
+                            "station_code": normalize_station_code(row.station_code),
+                            "observed_at": observed_at.replace(tzinfo=None).isoformat(),
+                            "variable_code": normalize_variable_code(row.variable_code),
+                            "value": float(row.value),
+                            "unit": row.unit,
+                            "source_file_name": filename,
+                            "source_url": archive_url,
+                        }
+                    )
+
+                if progress_callback is not None:
+                    progress_callback(archive_index, len(archives), len(records))
 
         if not records:
             raise RuntimeError("No se encontraron filas REMMAQ para el rango o variables seleccionadas.")
@@ -756,6 +767,7 @@ class EtlService:
         root_url: str,
         selected_variables: list[str],
         max_archives: int,
+        _client: httpx.Client | None = None,
     ) -> list[dict[str, str]]:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
@@ -767,12 +779,17 @@ class EtlService:
 
         effective_root = self._rewrite_to_proxy(root_url)
         print(f"[ETL-REMMAQ] proxy={self.settings.remmaq_proxy_base_url!r} root={effective_root!r}", flush=True)
-        with httpx.Client(
-            timeout=self.settings.etl_request_timeout_seconds,
-            follow_redirects=True,
-            headers=_REMMAQ_BROWSER_HEADERS,
-        ) as client:
-            response = client.get(effective_root)
+        ctx = (
+            contextlib.nullcontext(_client)
+            if _client is not None
+            else httpx.Client(
+                timeout=self.settings.etl_request_timeout_seconds,
+                follow_redirects=True,
+                headers=_REMMAQ_BROWSER_HEADERS,
+            )
+        )
+        with ctx as client:
+            response = client.get(effective_root, timeout=self.settings.etl_request_timeout_seconds)
             st, ln, body_preview = response.status_code, len(response.text), response.text[:300]
             print(f"[ETL-REMMAQ] status={st} len={ln} body={body_preview!r}", flush=True)
             response.raise_for_status()
@@ -864,18 +881,25 @@ class EtlService:
         *,
         timeout_seconds: int | None = None,
         cache_ttl_seconds: int | None = None,
+        _client: httpx.Client | None = None,
     ) -> tuple[bytes, str]:
         if cache_ttl_seconds is not None:
             cached = self._read_cached_download(url, max_age_seconds=cache_ttl_seconds)
             if cached is not None:
                 return cached
 
-        with httpx.Client(
-            timeout=timeout_seconds or self.settings.etl_request_timeout_seconds,
-            follow_redirects=True,
-            headers=_REMMAQ_BROWSER_HEADERS,
-        ) as client:
-            response = client.get(url)
+        effective_timeout = timeout_seconds or self.settings.etl_request_timeout_seconds
+        ctx = (
+            contextlib.nullcontext(_client)
+            if _client is not None
+            else httpx.Client(
+                timeout=effective_timeout,
+                follow_redirects=True,
+                headers=_REMMAQ_BROWSER_HEADERS,
+            )
+        )
+        with ctx as client:
+            response = client.get(url, timeout=effective_timeout)
             response.raise_for_status()
 
         filename = self._resolve_filename(url=url, response=response)
