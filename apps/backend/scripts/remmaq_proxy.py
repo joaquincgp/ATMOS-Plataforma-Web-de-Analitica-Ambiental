@@ -41,13 +41,25 @@ _BROWSER_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-EC,es;q=0.9,en-US;q=0.8",
     "Accept-Encoding": "gzip, deflate",
+    "Referer": REMMAQ_BASE_URL + "/",
 }
 
 _EXCLUDED_RESPONSE_HEADERS = {"content-encoding", "transfer-encoding", "connection"}
 
-# Persistent client so REMMAQ session cookies are retained across requests,
-# preventing redirect loops that occur when each request starts cookieless.
+# Persistent client so REMMAQ session cookies survive across requests.
+# A new client per request discards cookies between calls and causes redirect
+# loops when REMMAQ requires an established session.
 _http_client: httpx.AsyncClient | None = None
+
+
+async def _prime_session() -> None:
+    """GET the REMMAQ homepage to establish session cookies before data requests."""
+    assert _http_client is not None
+    try:
+        r = await _http_client.get(REMMAQ_BASE_URL + "/", headers=_BROWSER_HEADERS)
+        print(f"[REMMAQ-PROXY] Session primed -> {r.status_code}.", flush=True)
+    except Exception as exc:
+        print(f"[REMMAQ-PROXY] Session prime failed (non-fatal): {exc!r}", flush=True)
 
 
 @asynccontextmanager
@@ -58,6 +70,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         timeout=_TIMEOUT,
         max_redirects=30,
     )
+    await _prime_session()
     try:
         yield
     finally:
@@ -71,18 +84,36 @@ app = FastAPI(title="REMMAQ reverse proxy", lifespan=lifespan)
 async def proxy(path: str, request: Request) -> Response:
     assert _http_client is not None
     target_url = f"{REMMAQ_BASE_URL}/{path}"
-    try:
-        req = _http_client.build_request(
-            "GET", target_url, params=dict(request.query_params), headers=_BROWSER_HEADERS
-        )
-        upstream = await _http_client.send(req, stream=True)
-    except httpx.HTTPError as exc:
-        print(f"[REMMAQ-PROXY] {request.method} {path} -> error: {exc!r}", flush=True)
-        return Response(
-            content=f"No se pudo contactar a REMMAQ a traves de este proxy: {exc}",
-            status_code=502,
-            media_type="text/plain",
-        )
+    upstream: httpx.Response | None = None
+
+    for attempt in range(2):
+        try:
+            req = _http_client.build_request(
+                "GET", target_url, params=dict(request.query_params), headers=_BROWSER_HEADERS
+            )
+            upstream = await _http_client.send(req, stream=True)
+            break
+        except httpx.TooManyRedirects:
+            if attempt == 0:
+                print(f"[REMMAQ-PROXY] TooManyRedirects on {path} — refreshing session and retrying.", flush=True)
+                await _prime_session()
+                continue
+            print(f"[REMMAQ-PROXY] TooManyRedirects on {path} after session refresh — giving up.", flush=True)
+            return Response(
+                content="No se pudo contactar a REMMAQ: demasiadas redirecciones incluso tras renovar sesion",
+                status_code=502,
+                media_type="text/plain",
+            )
+        except httpx.HTTPError as exc:
+            print(f"[REMMAQ-PROXY] {request.method} {path} -> error: {exc!r}", flush=True)
+            return Response(
+                content=f"No se pudo contactar a REMMAQ a traves de este proxy: {exc}",
+                status_code=502,
+                media_type="text/plain",
+            )
+
+    if upstream is None:
+        return Response(content="Error inesperado en el proxy REMMAQ", status_code=502, media_type="text/plain")
 
     headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _EXCLUDED_RESPONSE_HEADERS}
     status = upstream.status_code
@@ -90,10 +121,10 @@ async def proxy(path: str, request: Request) -> Response:
 
     async def _stream() -> AsyncIterator[bytes]:
         try:
-            async for chunk in upstream.aiter_bytes(chunk_size=65536):
+            async for chunk in upstream.aiter_bytes(chunk_size=65536):  # type: ignore[union-attr]
                 yield chunk
         finally:
-            await upstream.aclose()
+            await upstream.aclose()  # type: ignore[union-attr]
 
     return StreamingResponse(
         _stream(),
