@@ -789,7 +789,7 @@ class EtlService:
             )
         )
         with ctx as client:
-            response = client.get(effective_root, timeout=self.settings.etl_request_timeout_seconds)
+            response = client.get(effective_root)
             st, ln, body_preview = response.status_code, len(response.text), response.text[:300]
             print(f"[ETL-REMMAQ] status={st} len={ln} body={body_preview!r}", flush=True)
             response.raise_for_status()
@@ -899,7 +899,7 @@ class EtlService:
             )
         )
         with ctx as client:
-            response = client.get(url, timeout=effective_timeout)
+            response = client.get(url)
             response.raise_for_status()
 
         filename = self._resolve_filename(url=url, response=response)
