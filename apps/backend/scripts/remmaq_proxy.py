@@ -17,6 +17,8 @@ can run on the same machine during testing without colliding.
 from __future__ import annotations
 
 import argparse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
@@ -43,20 +45,38 @@ _BROWSER_HEADERS = {
 
 _EXCLUDED_RESPONSE_HEADERS = {"content-encoding", "transfer-encoding", "connection"}
 
-app = FastAPI(title="REMMAQ reverse proxy")
+# Persistent client so REMMAQ session cookies are retained across requests,
+# preventing redirect loops that occur when each request starts cookieless.
+_http_client: httpx.AsyncClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    global _http_client
+    _http_client = httpx.AsyncClient(
+        follow_redirects=True,
+        timeout=_TIMEOUT,
+        max_redirects=30,
+    )
+    try:
+        yield
+    finally:
+        await _http_client.aclose()
+
+
+app = FastAPI(title="REMMAQ reverse proxy", lifespan=lifespan)
 
 
 @app.api_route("/{path:path}", methods=["GET", "HEAD"])
 async def proxy(path: str, request: Request) -> Response:
+    assert _http_client is not None
     target_url = f"{REMMAQ_BASE_URL}/{path}"
-    client = httpx.AsyncClient(follow_redirects=True, timeout=_TIMEOUT)
     try:
-        req = client.build_request(
+        req = _http_client.build_request(
             "GET", target_url, params=dict(request.query_params), headers=_BROWSER_HEADERS
         )
-        upstream = await client.send(req, stream=True)
+        upstream = await _http_client.send(req, stream=True)
     except httpx.HTTPError as exc:
-        await client.aclose()
         print(f"[REMMAQ-PROXY] {request.method} {path} -> error: {exc!r}", flush=True)
         return Response(
             content=f"No se pudo contactar a REMMAQ a traves de este proxy: {exc}",
@@ -68,13 +88,12 @@ async def proxy(path: str, request: Request) -> Response:
     status = upstream.status_code
     print(f"[REMMAQ-PROXY] {request.method} {path} -> {status} (streaming)", flush=True)
 
-    async def _stream():
+    async def _stream() -> AsyncIterator[bytes]:
         try:
             async for chunk in upstream.aiter_bytes(chunk_size=65536):
                 yield chunk
         finally:
             await upstream.aclose()
-            await client.aclose()
 
     return StreamingResponse(
         _stream(),
