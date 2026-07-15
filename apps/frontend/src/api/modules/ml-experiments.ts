@@ -158,19 +158,31 @@ export interface MLExperimentSourceSyncRequest {
   date_to?: string;
 }
 
+// While a REMMAQ sync is running the API container is busy parsing large RAR
+// archives, so these calls can queue behind it. They get a longer timeout than
+// the 30s default: aborting them would report a failure for a sync that is in
+// fact healthy and still progressing.
+const SOURCE_SYNC_TIMEOUT_MS = 120_000;
+const SOURCE_READ_TIMEOUT_MS = 60_000;
+
 export function syncMLExperimentSource(payload: MLExperimentSourceSyncRequest): Promise<MLExperimentSource> {
   return apiRequest<MLExperimentSource>('/api/v1/ml-experiments/sources/sync', {
     method: 'POST',
     body: JSON.stringify(payload),
+    timeout: SOURCE_SYNC_TIMEOUT_MS,
   });
 }
 
 export function listMLExperimentSources(workspaceId: string): Promise<MLExperimentSource[]> {
-  return apiRequest<MLExperimentSource[]>(`/api/v1/ml-experiments/sources?workspace_id=${workspaceId}`);
+  return apiRequest<MLExperimentSource[]>(`/api/v1/ml-experiments/sources?workspace_id=${workspaceId}`, {
+    timeout: SOURCE_READ_TIMEOUT_MS,
+  });
 }
 
 export function getMLExperimentSource(sourceId: string): Promise<MLExperimentSource> {
-  return apiRequest<MLExperimentSource>(`/api/v1/ml-experiments/sources/${sourceId}`);
+  return apiRequest<MLExperimentSource>(`/api/v1/ml-experiments/sources/${sourceId}`, {
+    timeout: SOURCE_READ_TIMEOUT_MS,
+  });
 }
 
 export function deleteMLExperimentSource(sourceId: string): Promise<void> {

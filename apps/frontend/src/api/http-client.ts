@@ -84,8 +84,15 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
   const timeoutMs = options.timeout ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const controller = !options.signal ? new AbortController() : null;
+  // Tracks whether *our* timeout fired (as opposed to a caller-supplied signal),
+  // so the rejection carries a readable message instead of the browser's raw
+  // "signal is aborted without reason", which leaked straight into the UI.
+  let timedOut = false;
   const timeoutId = controller
-    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    ? window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
     : null;
 
   try {
@@ -120,6 +127,19 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     }
 
     return (await response.json()) as T;
+  } catch (error) {
+    if (timedOut) {
+      // Keep the AbortError name so existing `name === 'AbortError'` checks
+      // (e.g. the public dashboard's error normalizer) keep behaving the same,
+      // but give callers that surface `error.message` something a user can read.
+      const timeoutError = new Error(
+        `La solicitud superó el tiempo de espera de ${Math.round(timeoutMs / 1000)} s. ` +
+          'El servidor puede estar ocupado procesando datos; vuelve a intentar en unos momentos.',
+      );
+      timeoutError.name = 'AbortError';
+      throw timeoutError;
+    }
+    throw error;
   } finally {
     if (timeoutId !== null) window.clearTimeout(timeoutId);
   }
