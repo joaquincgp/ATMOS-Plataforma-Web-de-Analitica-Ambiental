@@ -281,8 +281,8 @@ if (Test-AzCommand { az containerapp show --resource-group $ResourceGroup --name
     --ingress external `
     --min-replicas 1 `
     --max-replicas 1 `
-    --cpu 1.0 `
-    --memory 2Gi `
+    --cpu 2.0 `
+    --memory 4Gi `
     --registry-server $acrLoginServer `
     --registry-username $acrUsername `
     --registry-password $acrPassword `
