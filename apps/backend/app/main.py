@@ -18,15 +18,22 @@ logger = logging.getLogger(__name__)
 
 
 async def _public_snapshot_refresh_loop() -> None:
-    """Keeps the public dashboard snapshot cache always warm.
+    """Keeps the public dashboard fresh without ever blocking a user request.
 
-    Runs once at startup (after a short delay for DB init to settle) and then
-    every 4 minutes, just before the 5-minute cache TTL expires. This means
-    every user request hits a pre-built snapshot and never pays the cold-build
-    cost of 30-50 synchronous DB queries.
+    This background task owns *all* network I/O for the public dashboard:
 
-    Defers the rebuild whenever ML training or a REMMAQ source sync is active
-    so the two CPU/memory-intensive workloads never compete.
+    1. It performs the current-REMMAQ ingestion (``sync_current_remmaq_snapshot``),
+       gated to at most once per hour by ``should_sync_current_remmaq_snapshot``.
+       Doing this here — instead of inside the ``/public/air-quality`` request —
+       is what makes the public endpoint bulletproof: a slow, redirecting or
+       unreachable REMMAQ source can never stall or fail a user request, because
+       the request only ever reads the pre-built snapshot.
+    2. It rebuilds the snapshot cache so every request hits a warm snapshot and
+       never pays the cold-build cost of 30-50 synchronous DB queries.
+
+    Runs once shortly after startup and then every 4 minutes. Defers whenever ML
+    training or a REMMAQ source sync is active so the CPU/memory-intensive
+    workloads never compete.
     """
     await asyncio.sleep(3)
     loop = asyncio.get_running_loop()
@@ -37,7 +44,6 @@ async def _public_snapshot_refresh_loop() -> None:
             from app.db.session import SessionLocal
             from app.models.manual_dataset import ManualDataset
             from app.models.ml_experiment_run import MLExperimentRun
-            from app.services.public_air_quality_service import get_public_air_quality_snapshot
 
             def _is_ml_busy() -> bool:
                 db = SessionLocal()
@@ -59,9 +65,31 @@ async def _public_snapshot_refresh_loop() -> None:
                 finally:
                     db.close()
 
-            def _build() -> None:
+            def _sync_and_build() -> None:
+                from app.services.public_air_quality_service import (
+                    clear_public_snapshot_cache,
+                    get_public_air_quality_snapshot,
+                )
+                from app.services.remmaq_current import (
+                    should_sync_current_remmaq_snapshot,
+                    sync_current_remmaq_snapshot,
+                )
+
                 db = SessionLocal()
                 try:
+                    # Gated to once/hour internally; the network call lives here,
+                    # off the request path, so it can never break a user request.
+                    try:
+                        if should_sync_current_remmaq_snapshot(db):
+                            sync_current_remmaq_snapshot(db)
+                            clear_public_snapshot_cache()
+                            logger.info("Current REMMAQ public map data ingested.")
+                    except Exception:
+                        logger.warning("Background current-REMMAQ sync failed (non-fatal).", exc_info=True)
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass
                     get_public_air_quality_snapshot(db, use_cache=False)
                 finally:
                     db.close()
@@ -70,7 +98,7 @@ async def _public_snapshot_refresh_loop() -> None:
             if busy:
                 logger.debug("Snapshot refresh deferred: ML training or source sync in progress.")
             else:
-                await loop.run_in_executor(None, _build)
+                await loop.run_in_executor(None, _sync_and_build)
                 logger.info("Public dashboard snapshot refreshed.")
         except Exception:
             logger.warning("Public dashboard snapshot refresh failed (non-fatal).", exc_info=True)

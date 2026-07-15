@@ -344,63 +344,92 @@ class EtlService:
             else max_archives or self.settings.etl_sync_default_max_archives
         )
 
-        records: list[dict[str, object]] = []
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.extracted_dir.mkdir(parents=True, exist_ok=True)
 
-        # One shared client for the entire sync so REMMAQ session cookies
-        # established during discovery are reused for every archive download,
-        # preventing redirect loops caused by missing session state.
-        with httpx.Client(
-            timeout=request_timeout_seconds or self.settings.etl_request_timeout_seconds,
-            follow_redirects=True,
-            headers=_REMMAQ_BROWSER_HEADERS,
-        ) as shared_client:
-            archives = self._discover_archive_urls(
-                root_url=self.settings.remmaq_base_url,
-                selected_variables=normalized_variables,
-                max_archives=max_archives_effective,
-                _client=shared_client,
-            )
-
-            for archive_index, archive in enumerate(archives, start=1):
-                archive_url = archive["url"]
-                content, filename = self._download_binary(
-                    archive_url,
-                    timeout_seconds=request_timeout_seconds,
-                    cache_ttl_seconds=cache_ttl_seconds,
+        def _extract_once() -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+            local_records: list[dict[str, object]] = []
+            # One shared client for the entire sync so REMMAQ session cookies
+            # established during discovery are reused for every archive download,
+            # preventing redirect loops caused by missing session state. A fresh
+            # client per attempt (see retry loop below) re-establishes cookies
+            # from scratch, which clears the intermittent redirect loop REMMAQ
+            # triggers when a session goes stale mid-sync.
+            with httpx.Client(
+                timeout=request_timeout_seconds or self.settings.etl_request_timeout_seconds,
+                follow_redirects=True,
+                headers=_REMMAQ_BROWSER_HEADERS,
+            ) as shared_client:
+                local_archives = self._discover_archive_urls(
+                    root_url=self.settings.remmaq_base_url,
+                    selected_variables=normalized_variables,
+                    max_archives=max_archives_effective,
                     _client=shared_client,
                 )
-                checksum = compute_sha256(content)
-                safe_name = filename.replace("/", "_").replace("\\", "_")
-                archive_name = f"{checksum[:12]}-{safe_name}"
-                archive_path = self.raw_dir / archive_name
-                archive_path.write_bytes(content)
-                extracted_path = self._extract_input_file(archive_path, checksum)
 
-                for row in self._extract_rows_from_directory(
-                    extracted_path,
-                    default_variable_code=archive["variable_code"],
-                ):
-                    observed_at = row.observed_at.astimezone(UTC)
-                    if observed_from_dt is not None and observed_at < observed_from_dt:
-                        continue
-                    if observed_to_dt is not None and observed_at > observed_to_dt:
-                        continue
-                    records.append(
-                        {
-                            "station_code": normalize_station_code(row.station_code),
-                            "observed_at": observed_at.replace(tzinfo=None).isoformat(),
-                            "variable_code": normalize_variable_code(row.variable_code),
-                            "value": float(row.value),
-                            "unit": row.unit,
-                            "source_file_name": filename,
-                            "source_url": archive_url,
-                        }
+                for archive_index, archive in enumerate(local_archives, start=1):
+                    archive_url = archive["url"]
+                    content, filename = self._download_binary(
+                        archive_url,
+                        timeout_seconds=request_timeout_seconds,
+                        cache_ttl_seconds=cache_ttl_seconds,
+                        _client=shared_client,
                     )
+                    checksum = compute_sha256(content)
+                    safe_name = filename.replace("/", "_").replace("\\", "_")
+                    archive_name = f"{checksum[:12]}-{safe_name}"
+                    archive_path = self.raw_dir / archive_name
+                    archive_path.write_bytes(content)
+                    extracted_path = self._extract_input_file(archive_path, checksum)
 
-                if progress_callback is not None:
-                    progress_callback(archive_index, len(archives), len(records))
+                    for row in self._extract_rows_from_directory(
+                        extracted_path,
+                        default_variable_code=archive["variable_code"],
+                    ):
+                        observed_at = row.observed_at.astimezone(UTC)
+                        if observed_from_dt is not None and observed_at < observed_from_dt:
+                            continue
+                        if observed_to_dt is not None and observed_at > observed_to_dt:
+                            continue
+                        local_records.append(
+                            {
+                                "station_code": normalize_station_code(row.station_code),
+                                "observed_at": observed_at.replace(tzinfo=None).isoformat(),
+                                "variable_code": normalize_variable_code(row.variable_code),
+                                "value": float(row.value),
+                                "unit": row.unit,
+                                "source_file_name": filename,
+                                "source_url": archive_url,
+                            }
+                        )
+
+                    if progress_callback is not None:
+                        progress_callback(archive_index, len(local_archives), len(local_records))
+
+            return local_records, local_archives
+
+        # REMMAQ occasionally sends a stale session into a redirect loop. A single
+        # retry with a brand-new client (new cookies) reliably clears it, so a
+        # transient loop self-heals instead of failing the user's sync.
+        max_redirect_attempts = 2
+        records: list[dict[str, object]] = []
+        archives: list[dict[str, str]] = []
+        for attempt in range(max_redirect_attempts):
+            try:
+                records, archives = _extract_once()
+                break
+            except httpx.TooManyRedirects as exc:
+                if attempt + 1 >= max_redirect_attempts:
+                    raise RuntimeError(
+                        "No se pudo sincronizar REMMAQ: la fuente entro en un bucle de "
+                        "redirecciones incluso tras renovar la sesion. Verifica que el proxy "
+                        "REMMAQ este activo y accesible."
+                    ) from exc
+                print(
+                    f"[ETL-REMMAQ] TooManyRedirects (intento {attempt + 1}) — "
+                    "reintentando con una sesion nueva.",
+                    flush=True,
+                )
 
         if not records:
             raise RuntimeError("No se encontraron filas REMMAQ para el rango o variables seleccionadas.")
