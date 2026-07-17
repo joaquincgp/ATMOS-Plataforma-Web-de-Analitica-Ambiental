@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pandas as pd
 import pytest
 from sqlalchemy import create_engine
@@ -160,6 +161,47 @@ def test_extract_remmaq_dataframe_filters_rows_and_reports_empty_ranges(db_sessi
             observed_from=date(2024, 1, 1),
             observed_to=date(2024, 1, 2),
         )
+
+
+def test_extract_remmaq_dataframe_retries_once_on_too_many_redirects(db_session, tmp_path, monkeypatch) -> None:
+    # A stale REMMAQ session can trigger a redirect loop; the extractor must
+    # retry once with a fresh session and then succeed, instead of failing.
+    service = EtlService(db_session, settings=_settings(tmp_path))
+    extracted_dir = tmp_path / "extracted"
+    extracted_dir.mkdir()
+    rows = [_row("station a", datetime(2025, 1, 1, tzinfo=UTC), "pm-2.5", 10.0)]
+
+    discover_calls = {"count": 0}
+
+    def _flaky_discover(**_kwargs):
+        discover_calls["count"] += 1
+        if discover_calls["count"] == 1:
+            raise httpx.TooManyRedirects("Exceeded maximum allowed redirects.")
+        return [{"url": "https://datosambiente.quito.gob.ec/pm25.zip", "variable_code": "PM25"}]
+
+    monkeypatch.setattr(service, "_discover_archive_urls", _flaky_discover)
+    monkeypatch.setattr(service, "_download_binary", lambda _url, **_kwargs: (b"station,value\nA,1\n", "pm25.csv"))
+    monkeypatch.setattr(service, "_extract_input_file", lambda _path, _checksum: extracted_dir)
+    monkeypatch.setattr(service, "_extract_rows_from_directory", lambda _path, **_kwargs: rows)
+
+    frame, archives = service.extract_remmaq_dataframe(variable_codes=["PM25"], max_archives=None)
+
+    assert discover_calls["count"] == 2  # first attempt looped, retry with a fresh session succeeded
+    assert frame["station_code"].tolist() == ["STATIONA"]
+    assert archives[0]["variable_code"] == "PM25"
+
+
+def test_extract_remmaq_dataframe_raises_after_persistent_redirects(db_session, tmp_path, monkeypatch) -> None:
+    # If the redirect loop persists even after the retry, a clear error surfaces.
+    service = EtlService(db_session, settings=_settings(tmp_path))
+
+    def _always_redirect(**_kwargs):
+        raise httpx.TooManyRedirects("Exceeded maximum allowed redirects.")
+
+    monkeypatch.setattr(service, "_discover_archive_urls", _always_redirect)
+
+    with pytest.raises(RuntimeError, match="bucle de"):
+        service.extract_remmaq_dataframe(variable_codes=["PM25"], max_archives=None)
 
 
 def test_extract_remmaq_dataframe_invokes_progress_callback_per_archive(db_session, tmp_path, monkeypatch) -> None:
