@@ -1,5 +1,5 @@
 # SQLite-backed ETL tests cover row loading, metrics and REMMAQ extraction without network calls.
-# pylint: disable=protected-access,redefined-outer-name
+# pylint: disable=protected-access,redefined-outer-name,unexpected-keyword-arg
 
 from datetime import UTC, date, datetime
 from pathlib import Path

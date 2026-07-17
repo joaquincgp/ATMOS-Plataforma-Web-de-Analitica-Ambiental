@@ -3,6 +3,7 @@
 # general manual dataset listing, and vice versa.
 from __future__ import annotations
 
+# pylint: disable=redefined-outer-name,unsubscriptable-object,unsupported-membership-test
 from pathlib import Path
 
 import pandas as pd

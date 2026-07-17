@@ -25,7 +25,7 @@ from app.models.base import Base
 from app.schemas.auth import UserRole, UserStatus
 from app.schemas.ml_experiment import MLExperimentRunRequest, MLExperimentSourceSyncRequest
 
-# pylint: disable=protected-access
+# pylint: disable=protected-access,redefined-outer-name
 
 
 @pytest.fixture()

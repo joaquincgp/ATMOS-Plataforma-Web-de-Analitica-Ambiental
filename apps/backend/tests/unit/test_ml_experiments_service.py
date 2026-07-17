@@ -1,6 +1,7 @@
 # SQLite-backed tests for MLExperimentService validation and access control.
 from __future__ import annotations
 
+# pylint: disable=redefined-outer-name
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine

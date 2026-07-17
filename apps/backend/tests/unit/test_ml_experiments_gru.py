@@ -1,6 +1,7 @@
 # Fast synthetic-data smoke tests for the GRU ModelRunner (no DB involved).
 from __future__ import annotations
 
+# pylint: disable=no-member  # pandas DatetimeIndex.hour/.dayofweek not inferred by pylint
 import math
 
 import numpy as np

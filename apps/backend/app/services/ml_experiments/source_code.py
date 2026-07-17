@@ -25,7 +25,15 @@ class ModelSourceFile:
 
 
 def list_model_source_files() -> list[ModelSourceFile]:
-    return [
-        ModelSourceFile(key=key, filename=path.name, label=label, content=path.read_text(encoding="utf-8"))
-        for key, (path, label) in _SOURCE_FILES.items()
-    ]
+    files: list[ModelSourceFile] = []
+    for key, (path, label) in _SOURCE_FILES.items():
+        source_path = Path(path)
+        files.append(
+            ModelSourceFile(
+                key=key,
+                filename=source_path.name,
+                label=label,
+                content=source_path.read_text(encoding="utf-8"),
+            )
+        )
+    return files

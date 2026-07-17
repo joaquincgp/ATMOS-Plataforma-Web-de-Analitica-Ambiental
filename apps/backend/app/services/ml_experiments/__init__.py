@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from app.services.ml_experiments.registry import ModelNotImplementedError, get_runner, register_runner
 
-_runners_registered = False
+# Mutable flag kept in a dict so registration state can be updated without a
+# module-level `global` rebind (which pylint flags as global-statement).
+_REGISTRATION_STATE = {"done": False}
 
 
 def _register_all() -> None:
-    global _runners_registered
-    if _runners_registered:
+    if _REGISTRATION_STATE["done"]:
         return
     # Imports are deferred here so that PyTorch is never loaded at web server
     # startup — only when the first training job actually runs.
@@ -18,7 +19,7 @@ def _register_all() -> None:
     register_runner("lstm", LstmModelRunner())
     register_runner("gru", GruModelRunner())
     register_runner("transformer", TransformerModelRunner())
-    _runners_registered = True
+    _REGISTRATION_STATE["done"] = True
 
 
 def get_runner_lazy(name: str) -> object:

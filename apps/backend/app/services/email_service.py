@@ -66,6 +66,9 @@ def _email_shell(
     cta_url: str,
     footer_note: str,
 ) -> str:
+    # Embedded HTML/CSS email template: some inline-style lines exceed the limit
+    # by design and cannot be wrapped without altering the rendered markup.
+    # pylint: disable=line-too-long
     escaped_title = escape(title)
     escaped_greeting = escape(greeting)
     escaped_body = escape(body)
@@ -145,7 +148,10 @@ def send_verification_email(*, to_email: str, full_name: str, verification_url: 
         body="Para proteger el acceso a la plataforma, confirma tu correo institucional y activa tu cuenta.",
         cta_label="Verificar mi cuenta",
         cta_url=verification_url,
-        footer_note="Si no creaste esta cuenta, puedes ignorar este mensaje. El enlace de verificacion expira por seguridad.",
+        footer_note=(
+            "Si no creaste esta cuenta, puedes ignorar este mensaje. "
+            "El enlace de verificacion expira por seguridad."
+        ),
     )
     send_email(to_email=to_email, subject=subject, plain_text=plain_text, html=html)
 
@@ -161,9 +167,15 @@ def send_password_reset_email(*, to_email: str, full_name: str, reset_url: str) 
     html = _email_shell(
         title="Recuperacion de contraseña",
         greeting=f"Hola {full_name}, recibimos una solicitud para cambiar tu contraseña.",
-        body="Usa el siguiente boton para crear una nueva contraseña. Por seguridad, este enlace es de un solo uso y expira pronto.",
+        body=(
+            "Usa el siguiente boton para crear una nueva contraseña. "
+            "Por seguridad, este enlace es de un solo uso y expira pronto."
+        ),
         cta_label="Crear nueva contraseña",
         cta_url=reset_url,
-        footer_note="Si no solicitaste este cambio, puedes ignorar este mensaje. Tu contraseña actual seguira siendo valida.",
+        footer_note=(
+            "Si no solicitaste este cambio, puedes ignorar este mensaje. "
+            "Tu contraseña actual seguira siendo valida."
+        ),
     )
     send_email(to_email=to_email, subject=subject, plain_text=plain_text, html=html)

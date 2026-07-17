@@ -50,4 +50,3 @@ class Measurement(Base):
     data_origin: Mapped[str] = mapped_column(String(16), nullable=False, default=DATA_ORIGIN_USER)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=ecuador_now_naive, onupdate=ecuador_now_naive)
-

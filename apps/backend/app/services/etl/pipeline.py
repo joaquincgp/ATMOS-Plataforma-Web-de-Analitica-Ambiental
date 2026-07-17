@@ -369,7 +369,8 @@ class EtlService:
 
                 for archive_index, archive in enumerate(local_archives, start=1):
                     archive_url = archive["url"]
-                    content, filename = self._download_binary(
+                    # pylint false positive: astroid mis-resolves this bound method as a lambda.
+                    content, filename = self._download_binary(  # pylint: disable=unexpected-keyword-arg
                         archive_url,
                         timeout_seconds=request_timeout_seconds,
                         cache_ttl_seconds=cache_ttl_seconds,

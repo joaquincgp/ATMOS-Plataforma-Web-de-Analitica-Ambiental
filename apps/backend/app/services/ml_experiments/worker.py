@@ -213,8 +213,8 @@ async def ml_job_worker_loop(poll_interval_seconds: float = 2.0) -> None:
                 await asyncio.sleep(poll_interval_seconds)
                 continue
             await loop.run_in_executor(_executor, _execute_job, run_id)
-        except asyncio.CancelledError:
-            raise
         except Exception:
+            # asyncio.CancelledError inherits from BaseException, not Exception,
+            # so loop cancellation propagates without being swallowed here.
             logger.exception("ML job worker loop iteration failed unexpectedly.")
             await asyncio.sleep(poll_interval_seconds)

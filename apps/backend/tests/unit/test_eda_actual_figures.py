@@ -1,5 +1,6 @@
 # Integration-style unit tests over real EDA figure builders with synthetic data.
-# pylint: disable=protected-access
+# pylint: disable=protected-access,unexpected-keyword-arg,no-value-for-parameter
+# pylint: disable=use-implicit-booleaness-not-comparison
 
 from types import SimpleNamespace
 

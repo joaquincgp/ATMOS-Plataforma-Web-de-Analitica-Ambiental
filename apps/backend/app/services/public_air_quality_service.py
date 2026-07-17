@@ -1091,7 +1091,7 @@ def _load_station_observations(
 
 def _load_latest_station_observations(
     db: Session,
-    variable_code: str,
+    _variable_code: str,
     selector: PublicVariableSelector,
     variable_unit: str | None,
     selectors: dict[str, PublicVariableSelector],

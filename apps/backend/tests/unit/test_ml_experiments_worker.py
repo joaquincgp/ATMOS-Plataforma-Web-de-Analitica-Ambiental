@@ -6,6 +6,7 @@
 # PostgreSQL (Docker Compose) per the project's verification checklist.
 from __future__ import annotations
 
+# pylint: disable=redefined-outer-name,protected-access
 from datetime import datetime, timedelta
 
 import pytest

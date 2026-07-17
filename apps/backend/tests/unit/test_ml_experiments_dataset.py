@@ -1,6 +1,7 @@
 # SQLite-backed tests for the shared ML Experiments dataset/feature-engineering module.
 from __future__ import annotations
 
+# pylint: disable=redefined-outer-name
 from datetime import datetime, timedelta
 
 import pandas as pd
