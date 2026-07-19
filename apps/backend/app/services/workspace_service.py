@@ -31,8 +31,24 @@ class WorkspaceError(Exception):
     pass
 
 
-def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
-    return WorkspaceResponse.model_validate(workspace)
+def _workspace_to_response(workspace: Workspace, owner: User | None = None) -> WorkspaceResponse:
+    response = WorkspaceResponse.model_validate(workspace)
+    if owner is None:
+        return response
+    return response.model_copy(
+        update={
+            "owner_full_name": owner.full_name,
+            "owner_email": owner.email,
+        }
+    )
+
+
+def _workspace_owners_by_id(db: Session, workspaces: list[Workspace]) -> dict[str, User]:
+    owner_ids = {workspace.owner_user_id for workspace in workspaces}
+    if not owner_ids:
+        return {}
+    owners = db.scalars(select(User).where(User.id.in_(owner_ids))).all()
+    return {owner.id: owner for owner in owners}
 
 
 def _slugify(value: str) -> str:
@@ -194,7 +210,7 @@ def create_workspace(db: Session, user: User, payload: WorkspaceCreateRequest) -
 
     db.commit()
     db.refresh(workspace)
-    return _workspace_to_response(workspace)
+    return _workspace_to_response(workspace, user)
 
 
 def list_workspaces(db: Session, user: User) -> list[WorkspaceResponse]:
@@ -202,14 +218,25 @@ def list_workspaces(db: Session, user: User) -> list[WorkspaceResponse]:
     if user.role != UserRole.admin.value:
         statement = statement.where(Workspace.owner_user_id == user.id)
 
-    workspaces = db.scalars(statement.order_by(desc(Workspace.updated_at), asc(Workspace.name))).all()
-    return [_workspace_to_response(item) for item in workspaces]
+    workspaces = db.scalars(
+        statement.order_by(desc(Workspace.updated_at), asc(Workspace.name))
+    ).all()
+    owners_by_id = (
+        _workspace_owners_by_id(db, workspaces)
+        if user.role == UserRole.admin.value
+        else {user.id: user}
+    )
+    return [
+        _workspace_to_response(item, owners_by_id.get(item.owner_user_id))
+        for item in workspaces
+    ]
 
 
 def get_workspace(db: Session, user: User, workspace_id: str) -> WorkspaceResponse:
     workspace = _get_workspace_entity(db, workspace_id)
     _assert_workspace_access(user, workspace)
-    return _workspace_to_response(workspace)
+    owner = user if workspace.owner_user_id == user.id else db.get(User, workspace.owner_user_id)
+    return _workspace_to_response(workspace, owner)
 
 
 def update_workspace(
@@ -244,7 +271,8 @@ def update_workspace(
         db.commit()
         db.refresh(workspace)
 
-    return _workspace_to_response(workspace)
+    owner = user if workspace.owner_user_id == user.id else db.get(User, workspace.owner_user_id)
+    return _workspace_to_response(workspace, owner)
 
 
 def delete_workspace(db: Session, user: User, workspace_id: str) -> None:

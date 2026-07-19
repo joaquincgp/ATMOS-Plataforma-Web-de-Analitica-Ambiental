@@ -13,6 +13,8 @@ export interface WorkspaceUpdateRequest {
 export interface WorkspaceResponse {
   id: string;
   owner_user_id: string;
+  owner_full_name: string | null;
+  owner_email: string | null;
   name: string;
   slug: string;
   schema_name: string;

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Check, FolderOpen, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, FolderOpen, Pencil, Plus, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/contexts/auth-context';
 import { useWorkspace } from '@/contexts/workspace-context';
 
 interface ProjectsProps {
@@ -12,6 +13,8 @@ interface ProjectsProps {
 }
 
 export function Projects({ onSelectProject }: ProjectsProps) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const {
     workspaces,
     isLoading,
@@ -167,6 +170,12 @@ export function Projects({ onSelectProject }: ProjectsProps) {
           {orderedWorkspaces.map((workspace) => {
             const isEditing = editingWorkspaceId === workspace.id;
             const isBusy = busyWorkspaceId === workspace.id;
+            const ownerLabel =
+              workspace.owner_full_name ?? workspace.owner_email ?? `Usuario ${workspace.owner_user_id.slice(0, 8)}`;
+            const ownerTitle =
+              workspace.owner_email && workspace.owner_email !== ownerLabel
+                ? `${ownerLabel} · ${workspace.owner_email}`
+                : ownerLabel;
 
             return (
               <Card key={workspace.id} className="bg-white border-border hover:shadow-lg transition-shadow">
@@ -236,6 +245,25 @@ export function Projects({ onSelectProject }: ProjectsProps) {
                       <p className="text-sm text-muted-foreground line-clamp-2">
                         {workspace.description ?? 'No description provided.'}
                       </p>
+                      {isAdmin && (
+                        <div
+                          className="flex min-w-0 items-center gap-2 rounded-lg border border-sky-100 bg-sky-50/80 px-3 py-2"
+                          title={`Propietario: ${ownerTitle}`}
+                        >
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#509EE3]/15">
+                            <UserRound className="h-4 w-4 text-[#397FBD]" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-[#397FBD]">
+                              Propietario
+                            </p>
+                            <p className="truncate text-sm font-medium text-foreground">{ownerLabel}</p>
+                            {workspace.owner_email && workspace.owner_email !== ownerLabel && (
+                              <p className="truncate text-[11px] text-muted-foreground">{workspace.owner_email}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
                       <p className="text-xs text-muted-foreground">
                         Updated: {new Date(workspace.updated_at).toLocaleString()}
                       </p>

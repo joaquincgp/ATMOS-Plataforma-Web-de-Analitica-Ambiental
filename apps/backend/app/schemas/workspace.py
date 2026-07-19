@@ -25,6 +25,8 @@ class WorkspaceResponse(BaseModel):
 
     id: str
     owner_user_id: str
+    owner_full_name: str | None = None
+    owner_email: str | None = None
     name: str
     slug: str
     schema_name: str

@@ -64,11 +64,54 @@ def test_workspace_crud_with_sqlite_and_schema_stub(db_session, tmp_path, monkey
     unchanged = workspace_service.update_workspace(db_session, user, created.id, WorkspaceUpdateRequest())
 
     assert created.slug == "quito-lab"
+    assert created.owner_full_name == "owner@example.com"
+    assert created.owner_email == "owner@example.com"
     assert len(listed) == 1
+    assert listed[0].owner_full_name == "owner@example.com"
     assert fetched.id == created.id
+    assert fetched.owner_email == "owner@example.com"
     assert updated.name == "Quito Lab Updated"
     assert unchanged.description == "Updated"
     assert (tmp_path / user.id / "quito-lab" / "dashboards").is_dir()
+
+
+def test_admin_workspace_listing_includes_each_owner_identity(db_session) -> None:
+    admin = _user(db_session, email="admin@example.com", role=UserRole.admin)
+    first_owner = _user(db_session, email="first@example.com")
+    second_owner = _user(db_session, email="second@example.com")
+    first_owner.full_name = "First Owner"
+    second_owner.full_name = "Second Owner"
+    db_session.add_all(
+        [
+            Workspace(
+                owner_user_id=first_owner.id,
+                name="First workspace",
+                slug="first-workspace",
+                schema_name="ws_first_workspace",
+                storage_path="first",
+                is_active=True,
+            ),
+            Workspace(
+                owner_user_id=second_owner.id,
+                name="Second workspace",
+                slug="second-workspace",
+                schema_name="ws_second_workspace",
+                storage_path="second",
+                is_active=True,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    listed = workspace_service.list_workspaces(db_session, admin)
+
+    owners_by_workspace = {
+        workspace.name: (workspace.owner_full_name, workspace.owner_email) for workspace in listed
+    }
+    assert owners_by_workspace == {
+        "First workspace": ("First Owner", "first@example.com"),
+        "Second workspace": ("Second Owner", "second@example.com"),
+    }
 
 
 def test_workspace_rejects_roles_duplicates_and_missing_access(db_session, tmp_path, monkeypatch) -> None:
