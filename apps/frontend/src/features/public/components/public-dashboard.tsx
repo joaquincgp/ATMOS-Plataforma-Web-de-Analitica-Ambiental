@@ -829,7 +829,7 @@ function TulsmaLegendPanel({
     <div className="public-legend-panel public-glass-panel pointer-events-auto absolute bottom-6 left-1/2 z-[520] w-[min(800px,calc(100%-2rem))] -translate-x-1/2 overflow-visible rounded-2xl px-5 pb-3 pt-3">
       {/* Tabla expandida — se despliega hacia arriba */}
       {tableOpen && (
-        <div className="mb-3 overflow-hidden rounded-xl border border-slate-200/80 bg-white/97 shadow-xl">
+        <div className="mb-3 overflow-visible rounded-xl border border-slate-200/80 bg-white/97 shadow-xl">
           <div className="px-3 py-2 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">
             Umbrales TULSMA — Acuerdo Ministerial 097-A, Libro VI Anexo 4
           </div>
@@ -867,7 +867,11 @@ function TulsmaLegendPanel({
                         <span className="font-semibold">{cell.range}</span>
                         {/* Tooltip hover */}
                         {cell.desc && (
-                          <span className="pointer-events-none absolute bottom-full left-1/2 z-[600] mb-1.5 hidden w-52 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/97 px-3 py-2 text-[10px] leading-relaxed text-slate-600 shadow-xl group-hover:block">
+                          <span
+                            className={`pointer-events-none absolute bottom-full z-[600] mb-1.5 hidden w-52 rounded-lg border border-slate-200 bg-white/97 px-3 py-2 text-[10px] leading-relaxed text-slate-600 shadow-xl group-hover:block ${
+                              ci === 0 ? 'left-0' : ci === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                            }`}
+                          >
                             {cell.desc}
                           </span>
                         )}
@@ -886,11 +890,11 @@ function TulsmaLegendPanel({
         <span className="shrink-0 text-[10px] font-extrabold uppercase tracking-[0.08em] text-slate-400">
           {idwLegend.scaleLabel}
         </span>
-        <div className="flex flex-1 overflow-hidden rounded-full border border-slate-200/60">
+        <div className="flex flex-1 overflow-visible rounded-full border border-slate-200/60">
           {segments.map((seg, i) => (
             <div
               key={i}
-              className="relative flex-1 cursor-default py-1.5 text-center transition-opacity"
+              className="relative flex-1 cursor-default py-1.5 text-center transition-opacity first:rounded-l-full last:rounded-r-full"
               style={{ background: seg.bg, borderRight: i < 3 ? '1px solid rgba(255,255,255,0.6)' : undefined }}
               onMouseEnter={() => setHoveredBand(i)}
               onMouseLeave={() => setHoveredBand(null)}
@@ -900,7 +904,11 @@ function TulsmaLegendPanel({
               </span>
               {/* Tooltip por segmento */}
               {hoveredBand === i && descriptions?.[i] && (
-                <div className="absolute bottom-full left-1/2 z-[600] mb-2 w-56 -translate-x-1/2 rounded-xl border border-slate-200 bg-white/97 px-3 py-2 text-left text-[10px] leading-relaxed text-slate-600 shadow-xl">
+                <div
+                  className={`absolute bottom-full z-[600] mb-2 w-56 rounded-xl border border-slate-200 bg-white/97 px-3 py-2 text-left text-[10px] leading-relaxed text-slate-600 shadow-xl ${
+                    i === 0 ? 'left-0' : i === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                  }`}
+                >
                   {descriptions[i]}
                 </div>
               )}
@@ -2718,7 +2726,7 @@ function StationDetailPanel({
       </div>
 
       <div className="border-b border-slate-200/80 px-5 py-4">
-        <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Pollutant profile</div>
+        <div className="mb-2 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Perfil de contaminantes</div>
         <div className="h-56">
           {radarData.length > 2 ? (
             <ResponsiveContainer width="100%" height="100%">
@@ -2750,7 +2758,7 @@ function StationDetailPanel({
       </div>
 
       <div className="px-5 py-4">
-        <div className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Meteorology</div>
+        <div className="mb-3 text-[11px] font-extrabold uppercase tracking-[0.08em] text-slate-400">Meteorología</div>
         <div className="grid grid-cols-2 gap-2">
           {meteorologyValues.map((item) => (
             <div key={item.variable_code} className="rounded-xl bg-[#F9FBFC] p-4">
