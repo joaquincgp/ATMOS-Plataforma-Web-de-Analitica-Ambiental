@@ -7,7 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_db_session, require_roles
+from app.api.deps import get_current_user, get_db_session, require_roles
 from app.db.session import SessionLocal
 from app.models.etl_run import EtlRun
 from app.models.user import User
@@ -31,6 +31,11 @@ from app.services.etl import EtlService
 from app.services.manual_dataset import ManualDatasetError, ManualDatasetService
 
 router = APIRouter(dependencies=[Depends(require_roles(UserRole.admin, UserRole.researcher))])
+
+
+def _requester_name(user: object) -> str | None:
+    full_name = getattr(user, "full_name", None)
+    return full_name.strip() if isinstance(full_name, str) and full_name.strip() else None
 
 
 def _to_run_response(run: EtlRun) -> EtlRunResponse:
@@ -107,6 +112,7 @@ def sync_remmaq(
     observed_from: date | None = Query(default=None),
     observed_to: date | None = Query(default=None),
     db: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
 ) -> EtlRunResponse:
     service = EtlService(db)
     try:
@@ -116,6 +122,7 @@ def sync_remmaq(
             max_archives=max_archives,
             observed_from=observed_from,
             observed_to=observed_to,
+            requested_by_name=_requester_name(user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -131,6 +138,7 @@ def start_sync_remmaq(
     observed_from: date | None = Query(default=None),
     observed_to: date | None = Query(default=None),
     db: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
 ) -> EtlRunResponse:
     service = EtlService(db)
     try:
@@ -147,6 +155,7 @@ def start_sync_remmaq(
             force_reprocess=force_reprocess,
             observed_from=observed_from,
             observed_to=observed_to,
+            requested_by_name=_requester_name(user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -168,6 +177,7 @@ async def upload_manual_file(
     file: UploadFile = File(...),
     force_reprocess: bool = Query(default=False),
     db: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
 ) -> EtlRunResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".csv", ".xlsx", ".txt"}:
@@ -180,6 +190,7 @@ async def upload_manual_file(
             filename=file.filename or "manual-upload",
             content=content,
             force_reprocess=force_reprocess,
+            requested_by_name=_requester_name(user),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -192,6 +203,7 @@ async def start_upload_manual_file(
     file: UploadFile = File(...),
     force_reprocess: bool = Query(default=False),
     db: Session = Depends(get_db_session),
+    user: User = Depends(get_current_user),
 ) -> EtlRunResponse:
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".csv", ".xlsx", ".txt"}:
@@ -199,7 +211,10 @@ async def start_upload_manual_file(
 
     content = await file.read()
     service = EtlService(db)
-    run = service.create_manual_run(filename=file.filename or "manual-upload")
+    run = service.create_manual_run(
+        filename=file.filename or "manual-upload",
+        requested_by_name=_requester_name(user),
+    )
     background_tasks.add_task(
         _run_manual_ingestion_background,
         run.id,

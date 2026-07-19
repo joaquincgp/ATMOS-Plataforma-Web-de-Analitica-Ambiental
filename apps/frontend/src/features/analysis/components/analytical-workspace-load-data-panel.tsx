@@ -7,6 +7,7 @@ import {
   Search,
   ShieldCheck,
   Upload,
+  UserRound,
 } from 'lucide-react';
 
 import type { AnalyticsSourceOption } from '@/api/modules/analytics';
@@ -180,7 +181,16 @@ export function AnalyticalWorkspaceLoadDataPanel({
                             {formatSourcePeriod(source.period_start, source.period_end) && (
                               <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
                                 <Calendar className="h-3 w-3 shrink-0" />
-                                Periodo disponible: {formatSourcePeriod(source.period_start, source.period_end)}
+                                Período disponible: {formatSourcePeriod(source.period_start, source.period_end)}
+                              </p>
+                            )}
+                            {source.downloaded_by && (
+                              <p
+                                className="mt-1 flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground"
+                                title={`Descargada por ${source.downloaded_by}`}
+                              >
+                                <UserRound className="h-3 w-3 shrink-0" />
+                                <span className="truncate">Descargada por: {source.downloaded_by}</span>
                               </p>
                             )}
                           </div>

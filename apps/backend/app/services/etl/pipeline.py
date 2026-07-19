@@ -152,10 +152,7 @@ class EtlService:
 
     def list_user_remmaq_runs(self, limit: int = 20) -> list[EtlRun]:
         statement = (
-            select(EtlRun)
-            .where(EtlRun.trigger_type == "automatic")
-            .order_by(desc(EtlRun.started_at))
-            .limit(500)
+            select(EtlRun).where(EtlRun.trigger_type == "automatic").order_by(desc(EtlRun.started_at)).limit(500)
         )
         runs: list[EtlRun] = []
         for run in self.db.scalars(statement).all():
@@ -207,7 +204,17 @@ class EtlService:
         observed_from: date | None = None,
         observed_to: date | None = None,
         data_origin: str = DATA_ORIGIN_USER,
+        requested_by_name: str | None = None,
     ) -> EtlRun:
+        create_kwargs: dict[str, Any] = {
+            "variable_codes": variable_codes,
+            "max_archives": max_archives,
+            "force_reprocess": force_reprocess,
+            "observed_from": observed_from,
+            "observed_to": observed_to,
+        }
+        if requested_by_name:
+            create_kwargs["requested_by_name"] = requested_by_name
         (
             run,
             normalized_variables,
@@ -215,13 +222,7 @@ class EtlService:
             run_force_reprocess,
             run_observed_from,
             run_observed_to,
-        ) = self.create_remmaq_run(
-            variable_codes=variable_codes,
-            max_archives=max_archives,
-            force_reprocess=force_reprocess,
-            observed_from=observed_from,
-            observed_to=observed_to,
-        )
+        ) = self.create_remmaq_run(**create_kwargs)
         return self.run_remmaq_sync(
             run_id=run.id,
             selected_variables=normalized_variables,
@@ -232,12 +233,22 @@ class EtlService:
             data_origin=data_origin,
         )
 
-    def ingest_manual_file(self, *, filename: str, content: bytes, force_reprocess: bool = False) -> EtlRun:
+    def ingest_manual_file(
+        self,
+        *,
+        filename: str,
+        content: bytes,
+        force_reprocess: bool = False,
+        requested_by_name: str | None = None,
+    ) -> EtlRun:
         suffix = Path(filename).suffix.lower()
         if suffix not in MANUAL_FILE_SUFFIXES:
             allowed = ", ".join(MANUAL_FILE_SUFFIXES)
             raise ValueError(f"Formato de carga manual no soportado. Usa: {allowed}")
-        run = self.create_manual_run(filename=filename)
+        create_kwargs = {"filename": filename}
+        if requested_by_name:
+            create_kwargs["requested_by_name"] = requested_by_name
+        run = self.create_manual_run(**create_kwargs)
         return self.run_manual_ingestion(
             run_id=run.id,
             filename=filename,
@@ -339,9 +350,7 @@ class EtlService:
         normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
         observed_from_dt, observed_to_dt = self._date_to_datetime_range(normalized_from, normalized_to)
         max_archives_effective = (
-            len(normalized_variables)
-            if variable_codes
-            else max_archives or self.settings.etl_sync_default_max_archives
+            len(normalized_variables) if variable_codes else max_archives or self.settings.etl_sync_default_max_archives
         )
 
         self.raw_dir.mkdir(parents=True, exist_ok=True)
@@ -427,8 +436,7 @@ class EtlService:
                         "REMMAQ este activo y accesible."
                     ) from exc
                 print(
-                    f"[ETL-REMMAQ] TooManyRedirects (intento {attempt + 1}) — "
-                    "reintentando con una sesion nueva.",
+                    f"[ETL-REMMAQ] TooManyRedirects (intento {attempt + 1}) — reintentando con una sesion nueva.",
                     flush=True,
                 )
 
@@ -455,6 +463,7 @@ class EtlService:
         force_reprocess: bool = False,
         observed_from: date | None = None,
         observed_to: date | None = None,
+        requested_by_name: str | None = None,
     ) -> tuple[EtlRun, list[str], int, bool, date | None, date | None]:
         normalized_variables = self._normalize_variable_selection(variable_codes)
         normalized_from, normalized_to = self._normalize_observed_range(observed_from, observed_to)
@@ -474,10 +483,15 @@ class EtlService:
             force_reprocess=force_reprocess,
             observed_from=normalized_from.isoformat() if normalized_from else None,
             observed_to=normalized_to.isoformat() if normalized_to else None,
+            **(
+                {"requested_by_name": requested_by_name.strip()}
+                if requested_by_name and requested_by_name.strip()
+                else {}
+            ),
         )
         return run, normalized_variables, max_archives_effective, force_reprocess, normalized_from, normalized_to
 
-    def create_manual_run(self, *, filename: str) -> EtlRun:
+    def create_manual_run(self, *, filename: str, requested_by_name: str | None = None) -> EtlRun:
         run = self._create_run(trigger_type="manual", source="manual-upload")
         self._set_run_progress(
             run,
@@ -485,6 +499,11 @@ class EtlService:
             stage_label="En cola",
             progress_percent=0,
             filename=filename,
+            **(
+                {"requested_by_name": requested_by_name.strip()}
+                if requested_by_name and requested_by_name.strip()
+                else {}
+            ),
         )
         return run
 
@@ -1710,9 +1729,7 @@ class EtlService:
 
     def _count_measurements_for_source_file(self, source_file_id: int) -> int:
         statement = select(func.count()).select_from(Measurement).where(Measurement.source_file_id == source_file_id)
-        return int(
-            self.db.scalar(statement) or 0
-        )
+        return int(self.db.scalar(statement) or 0)
 
     def _get_or_create_station(self, station_code: str) -> Station:
         station_code = normalize_station_code(station_code)

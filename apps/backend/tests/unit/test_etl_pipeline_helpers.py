@@ -290,7 +290,9 @@ def test_create_runs_and_sync_orchestration_cover_success_and_failure(tmp_path: 
         force_reprocess=True,
         observed_from=date(2025, 1, 1),
         observed_to=date(2025, 1, 2),
+        requested_by_name="  Ana Investigadora  ",
     )
+    assert remmaq_run.details["requested_by_name"] == "Ana Investigadora"
     manual_run = service.create_manual_run(filename="manual.csv")
 
     assert remmaq_run is created_run

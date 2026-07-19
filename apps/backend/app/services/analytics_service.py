@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
+from app.models.etl_run import EtlRun
 from app.models.measurement import DATA_ORIGIN_USER, Measurement
 from app.models.source_file import SourceFile
 from app.models.station import Station
@@ -123,8 +124,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
     ).all()
 
     min_observed_at, max_observed_at = db.execute(
-        select(func.min(Measurement.observed_at), func.max(Measurement.observed_at))
-        .where(_user_measurement_filter())
+        select(func.min(Measurement.observed_at), func.max(Measurement.observed_at)).where(_user_measurement_filter())
     ).one()
 
     source_variable_codes: dict[int, set[str]] = {}
@@ -132,6 +132,16 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
         canonical_code = _canonicalize_variable_code(row.code)
         if canonical_code:
             source_variable_codes.setdefault(row.source_file_id, set()).add(canonical_code)
+
+    run_ids = {row.etl_run_id for row in source_rows}
+    downloaded_by_by_run: dict[str, str] = {}
+    if run_ids:
+        run_rows = db.execute(select(EtlRun.id, EtlRun.details).where(EtlRun.id.in_(run_ids))).all()
+        for run_row in run_rows:
+            details = run_row.details if isinstance(run_row.details, dict) else {}
+            requested_by_name = details.get("requested_by_name")
+            if isinstance(requested_by_name, str) and requested_by_name.strip():
+                downloaded_by_by_run[run_row.id] = requested_by_name.strip()
 
     canonical_variables: dict[str, str] = {}
     for row in variable_rows:
@@ -161,6 +171,7 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 variable_codes=sorted(source_variable_codes.get(row.id, set())),
                 period_start=row.period_start,
                 period_end=row.period_end,
+                downloaded_by=downloaded_by_by_run.get(row.etl_run_id),
             )
         )
 

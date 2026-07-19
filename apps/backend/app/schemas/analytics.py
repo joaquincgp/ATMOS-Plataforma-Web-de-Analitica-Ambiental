@@ -16,6 +16,7 @@ class AnalyticsSourceOption(BaseModel):
     variable_codes: list[str] = Field(default_factory=list)
     period_start: datetime | None = None
     period_end: datetime | None = None
+    downloaded_by: str | None = None
 
 
 class AnalyticsStationOption(BaseModel):

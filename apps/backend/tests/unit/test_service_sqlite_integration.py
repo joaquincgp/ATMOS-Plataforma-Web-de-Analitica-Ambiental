@@ -63,7 +63,12 @@ def db_session():
 
 
 def _seed_measurements(db_session) -> tuple[SourceFile, SourceFile]:
-    run = EtlRun(trigger_type="manual", source="test", status="completed")
+    run = EtlRun(
+        trigger_type="manual",
+        source="test",
+        status="completed",
+        details={"requested_by_name": "Ana Investigadora"},
+    )
     station_a = Station(code="A", name="Station A", latitude=1.0, longitude=2.0)
     station_b = Station(code="B", name="Station B", latitude=None, longitude=None)
     variable_pm25 = Variable(code="PM25", display_name="Fine particles", category="pollutant", default_unit="ug/m3")
@@ -131,6 +136,9 @@ def test_analytics_service_queries_filters_live_snapshot_and_sql_preview(db_sess
     sql = preview_sql(db_session, SqlPreviewRequest(sql="SELECT 1 AS value", limit=1))
 
     assert {source.name for source in filters.sources} == {"manual-a.csv", "auto-b.zip"}
+    assert {source.downloaded_by for source in filters.sources} == {"Ana Investigadora"}
+    assert {source.period_start for source in filters.sources} == {datetime(2025, 1, 1), datetime(2025, 1, 3)}
+    assert {source.period_end for source in filters.sources} == {datetime(2025, 1, 2), datetime(2025, 1, 3)}
     assert [row.value for row in query.rows] == [10.0]
     assert query.truncated is False
     assert live.total == 1
