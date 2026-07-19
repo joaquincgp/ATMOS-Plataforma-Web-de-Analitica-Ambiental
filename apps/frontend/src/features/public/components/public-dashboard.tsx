@@ -257,7 +257,8 @@ const getVariableLabel = (code: string) => {
 
 const getUnitLabel = (unit: string | null | undefined) => {
   if (!unit) return '';
-  if (unit.toLowerCase() === 'u') return 'index';
+  if (unit.toLowerCase() === 'u') return 'índice';
+  if (unit.toLowerCase() === 'degrees') return 'grados';
   return unit.replace('ug/m3', 'µg/m³').replace('mg/m3', 'mg/m³');
 };
 
@@ -1309,6 +1310,9 @@ export function PublicDashboard({
           border: 1px solid rgba(220,229,241,0.9) !important;
           color: #334155 !important;
         }
+        .public-map-canvas .leaflet-top.leaflet-left {
+          left: 340px;
+        }
         @media (max-width: 1023px) {
           .public-dashboard-shell {
             overflow: auto;
@@ -1316,6 +1320,9 @@ export function PublicDashboard({
           .public-map-canvas {
             position: relative !important;
             height: 62vh !important;
+          }
+          .public-map-canvas .leaflet-top.leaflet-left {
+            left: 0;
           }
           .public-left-panel,
           .public-right-panel,
@@ -2733,8 +2740,8 @@ function StationDetailPanel({
               <RadarChart data={radarData} outerRadius={78}>
                 <PolarGrid stroke="#E5E7EB" />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12, fill: '#64748b' }} />
-                <Radar name="Current" dataKey="current" stroke="#509EE3" fill="#509EE3" fillOpacity={0.22} strokeWidth={2} />
-                <Radar name="Limit" dataKey="limit" stroke="#EF4444" fill="transparent" strokeWidth={1.5} strokeDasharray="4 3" />
+                <Radar name="Actual" dataKey="current" stroke="#509EE3" fill="#509EE3" fillOpacity={0.22} strokeWidth={2} />
+                <Radar name="Límite" dataKey="limit" stroke="#EF4444" fill="transparent" strokeWidth={1.5} strokeDasharray="4 3" />
                 <Legend iconSize={8} wrapperStyle={{ fontSize: 12 }} />
               </RadarChart>
             </ResponsiveContainer>
