@@ -14,6 +14,7 @@ import {
   Workflow,
 } from 'lucide-react';
 import type { AppView } from '@/store/app-store';
+import atmosLogo from '@/assets/brand/atmos-logo.png';
 
 interface AdvancedSidebarProps {
   activeView: AppView;
@@ -70,15 +71,21 @@ export function AdvancedSidebar({
       {/* Logo & Title */}
       <div
         className={`
-          border-b border-sidebar-border flex items-center
+          border-b border-sidebar-border flex items-center gap-3
           ${collapsed ? 'justify-center p-3' : 'p-6'}
           transition-[padding] duration-300 ease-in-out
         `}
       >
+        <img
+          src={atmosLogo}
+          alt="ATMOS"
+          decoding="async"
+          className="h-9 w-9 shrink-0 object-contain"
+        />
         <div
           className={`
-            overflow-hidden transition-[opacity] duration-200 ease-in-out
-            ${collapsed ? 'opacity-0 pointer-events-none' : 'opacity-100'}
+            overflow-hidden transition-[max-width,opacity] duration-200 ease-in-out
+            ${collapsed ? 'max-w-0 opacity-0 pointer-events-none' : 'max-w-[180px] opacity-100'}
           `}
         >
           <h1 className="text-2xl font-black text-sidebar-foreground tracking-tight">ATMOS</h1>

@@ -30,6 +30,8 @@ export interface AnalyticsSourceOption {
   downloaded_at: string | null;
   row_count: number;
   variable_codes: string[];
+  period_start: string | null;
+  period_end: string | null;
 }
 
 interface AnalyticsStationOption {

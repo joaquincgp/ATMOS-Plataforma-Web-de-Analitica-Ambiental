@@ -78,6 +78,8 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
     source_list_limit = get_config_int(db, "analytics.source_list_limit")
 
     measurement_count = func.count(Measurement.id).label("measurement_count")
+    period_start = func.min(Measurement.observed_at).label("period_start")
+    period_end = func.max(Measurement.observed_at).label("period_end")
     source_rows = db.execute(
         select(
             SourceFile.id,
@@ -86,6 +88,8 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
             SourceFile.etl_run_id,
             SourceFile.downloaded_at,
             measurement_count,
+            period_start,
+            period_end,
         )
         .join(Measurement, Measurement.source_file_id == SourceFile.id)
         .where(SourceFile.status == "completed")
@@ -155,6 +159,8 @@ def get_filter_options(db: Session) -> AnalyticsFilterOptionsResponse:
                 downloaded_at=row.downloaded_at,
                 row_count=int(row.measurement_count),
                 variable_codes=sorted(source_variable_codes.get(row.id, set())),
+                period_start=row.period_start,
+                period_end=row.period_end,
             )
         )
 

@@ -5,6 +5,7 @@ import {
   Loader2,
   MapPin,
   Search,
+  ShieldCheck,
   Upload,
 } from 'lucide-react';
 
@@ -22,6 +23,40 @@ import { RANGE_PRESETS } from '@/features/analysis/lib/analytical-workspace-conf
 interface StationOption {
   code: string;
   name: string;
+}
+
+// Atribución de la fuente ("a quién le pertenece"): las fuentes automáticas
+// provienen de la red oficial REMMAQ; las demás son cargas del usuario.
+function getSourceAttribution(kind: string): { label: string; full: string } {
+  const normalized = kind.toLowerCase();
+  if (normalized === 'automatic' || normalized === 'remmaq') {
+    return { label: 'REMMAQ', full: 'Red de Monitoreo Atmosférico de Quito · Secretaría de Ambiente' };
+  }
+  if (normalized === 'github_raw') {
+    return { label: 'GitHub', full: 'Fuente enlazada desde un repositorio GitHub' };
+  }
+  return { label: 'Carga manual', full: 'Archivo cargado manualmente por el usuario' };
+}
+
+// Rango de fechas cubierto por la fuente, como referencia para el filtro de fechas.
+function formatSourcePeriod(start: string | null, end: string | null): string | null {
+  if (!start || !end) {
+    return null;
+  }
+  return `${start.slice(0, 10)} → ${end.slice(0, 10)}`;
+}
+
+function AttributionBadge({ kind }: { kind: string }) {
+  const attribution = getSourceAttribution(kind);
+  return (
+    <span
+      title={attribution.full}
+      className="mt-1.5 inline-flex max-w-full items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+    >
+      <ShieldCheck className="h-3 w-3 shrink-0" />
+      <span className="truncate">{attribution.label}</span>
+    </span>
+  );
 }
 
 interface AnalyticalWorkspaceLoadDataPanelProps {
@@ -131,15 +166,24 @@ export function AnalyticalWorkspaceLoadDataPanel({
                           : 'border-gray-200 bg-white hover:border-[#509EE3]/35'
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#509EE3]/10">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#509EE3]/10">
                           <FileSpreadsheet className="w-4 h-4 text-[#509EE3]" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium truncate">{source.name}</p>
                           <p className="text-[11px] text-muted-foreground">
                             {source.source_type} - {source.row_count.toLocaleString()} rows
                           </p>
+                          <div className="flex flex-col">
+                            <AttributionBadge kind={source.source_type} />
+                            {formatSourcePeriod(source.period_start, source.period_end) && (
+                              <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground">
+                                <Calendar className="h-3 w-3 shrink-0" />
+                                Periodo disponible: {formatSourcePeriod(source.period_start, source.period_end)}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </button>
@@ -158,11 +202,11 @@ export function AnalyticalWorkspaceLoadDataPanel({
                           : 'border-gray-200 bg-white hover:border-[#509EE3]/35'
                       }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#509EE3]/10">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#509EE3]/10">
                           <Database className="w-4 h-4 text-[#509EE3]" />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium truncate">{dataset.name}</p>
                             {active && (
@@ -170,6 +214,9 @@ export function AnalyticalWorkspaceLoadDataPanel({
                             )}
                           </div>
                           <p className="text-[11px] text-muted-foreground">{getManualDatasetSubtitle(dataset)}</p>
+                          <div className="flex flex-col">
+                            <AttributionBadge kind={dataset.source_kind} />
+                          </div>
                         </div>
                       </div>
                     </button>
