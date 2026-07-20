@@ -180,11 +180,30 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         date_to: date | None,
     ) -> ManualDatasetResponse:
         workspace = self._get_workspace(workspace_id=workspace_id, user=user)
+        # Serialize draft creation inside the workspace so concurrent syncs cannot receive the same number.
+        self.db.execute(select(Workspace.id).where(Workspace.id == workspace.id).with_for_update()).scalar_one()
+        existing_sources = list(
+            self.db.scalars(
+                select(ManualDataset)
+                .where(ManualDataset.workspace_id == workspace.id)
+                .where(ManualDataset.created_for == "ml_experiments")
+                .order_by(ManualDataset.created_at.asc(), ManualDataset.id.asc())
+            ).all()
+        )
+        self._ensure_ml_source_sample_numbers(existing_sources)
+        existing_numbers = [
+            metadata["sample_number"]
+            for source in existing_sources
+            if (metadata := dict(source.source_metadata or {})).get("target_variable_code") == target_variable_code
+            and isinstance(metadata.get("sample_number"), int)
+            and not isinstance(metadata.get("sample_number"), bool)
+        ]
+        sample_number = max(existing_numbers, default=0) + 1
         dataset = ManualDataset(
             id=str(uuid.uuid4()),
             workspace_id=workspace.id,
             owner_user_id=user.id,
-            name=f"REMMAQ {target_variable_code} (sincronizando...)",
+            name=f"REMMAQ {target_variable_code} #{sample_number} (sincronizando...)",
             source_kind="remmaq",
             source_url="https://datosambiente.quito.gob.ec/",
             original_file_name=f"remmaq-{target_variable_code.lower()}.csv",
@@ -197,6 +216,7 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             profile_summary={"row_count": 0, "column_count": 0},
             source_metadata={
                 "target_variable_code": target_variable_code,
+                "sample_number": sample_number,
                 "date_from": date_from.isoformat() if date_from else None,
                 "date_to": date_to.isoformat() if date_to else None,
             },
@@ -224,6 +244,16 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             self.db.add(dataset)
             self.db.commit()
             return
+        workspace_sources = list(
+            self.db.scalars(
+                select(ManualDataset)
+                .where(ManualDataset.workspace_id == workspace.id)
+                .where(ManualDataset.created_for == "ml_experiments")
+                .order_by(ManualDataset.created_at.asc(), ManualDataset.id.asc())
+            ).all()
+        )
+        if self._ensure_ml_source_sample_numbers(workspace_sources):
+            self.db.commit()
 
         def _report_progress(archives_done: int, archives_total: int, rows_collected: int) -> None:
             dataset.source_metadata = {
@@ -277,17 +307,17 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         has_dates = bool(observed_at_parsed.notna().any())
         actual_date_from = observed_at_parsed.min().date().isoformat() if has_dates else None
         actual_date_to = observed_at_parsed.max().date().isoformat() if has_dates else None
+        sample_number = (dataset.source_metadata or {}).get("sample_number")
         dataset.source_metadata = {
             "target_variable_code": target_variable_code,
+            "sample_number": sample_number,
             "variable_codes": sorted(dataframe["variable_code"].dropna().unique().tolist()),
             "station_codes": sorted(dataframe["station_code"].dropna().unique().tolist()),
             "date_from": actual_date_from,
             "date_to": actual_date_to,
             "extracted_at": ecuador_now_naive().isoformat(),
-            "is_custom_name": False,
         }
-        date_range_label = f" ({actual_date_from} a {actual_date_to})" if has_dates else ""
-        dataset.name = f"REMMAQ {target_variable_code}{date_range_label}"
+        dataset.name = f"REMMAQ {target_variable_code} #{sample_number}"
         dataset.status = "draft"
         dataset.error_message = None
         self.db.add(dataset)
@@ -304,41 +334,15 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
                 select(ManualDataset)
                 .where(ManualDataset.workspace_id == workspace.id)
                 .where(ManualDataset.created_for == "ml_experiments")
-                .order_by(ManualDataset.created_at.desc())
+                .order_by(ManualDataset.created_at.asc(), ManualDataset.id.asc())
             ).all()
         )
-        return [self._to_response(dataset) for dataset in datasets]
+        if self._ensure_ml_source_sample_numbers(datasets):
+            self.db.commit()
+        return [self._to_response(dataset) for dataset in reversed(datasets)]
 
     def get_ml_experiment_source(self, *, dataset_id: str, user: User) -> ManualDatasetResponse:
         dataset = self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
-        return self._to_response(dataset)
-
-    def rename_ml_experiment_source(
-        self,
-        *,
-        dataset_id: str,
-        user: User,
-        name: str,
-    ) -> ManualDatasetResponse:
-        dataset = self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
-        if dataset.status == "syncing":
-            raise ManualDatasetError("Espera a que termine la sincronización antes de renombrar la fuente.")
-
-        cleaned_name = " ".join(name.split()).strip()
-        if not cleaned_name:
-            raise ManualDatasetError("El nombre de la fuente no puede estar vacío.")
-        if len(cleaned_name) > 255:
-            raise ManualDatasetError("El nombre de la fuente no puede superar 255 caracteres.")
-
-        metadata = dict(dataset.source_metadata or {})
-        if dataset.status == "draft" and not metadata.get("extracted_at"):
-            metadata["extracted_at"] = dataset.updated_at.isoformat()
-        metadata["is_custom_name"] = True
-        dataset.name = cleaned_name
-        dataset.source_metadata = metadata
-        self.db.add(dataset)
-        self.db.commit()
-        self.db.refresh(dataset)
         return self._to_response(dataset)
 
     def delete_ml_experiment_source(self, *, dataset_id: str, user: User) -> None:
@@ -350,6 +354,56 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
         if dataset.created_for != "ml_experiments":
             raise ManualDatasetError("Esta fuente no pertenece a ML Experiments.")
         return dataset
+
+    def _ensure_ml_source_sample_numbers(self, datasets: list[ManualDataset]) -> bool:
+        used_numbers: dict[str, set[int]] = {}
+        missing_numbers: list[tuple[ManualDataset, str]] = []
+        changed = False
+
+        for dataset in datasets:
+            metadata = dict(dataset.source_metadata or {})
+            variable_code = str(metadata.get("target_variable_code") or "").upper()
+            if not variable_code:
+                continue
+            sample_number = metadata.get("sample_number")
+            variable_numbers = used_numbers.setdefault(variable_code, set())
+            if (
+                isinstance(sample_number, int)
+                and not isinstance(sample_number, bool)
+                and sample_number > 0
+                and sample_number not in variable_numbers
+            ):
+                variable_numbers.add(sample_number)
+            else:
+                missing_numbers.append((dataset, variable_code))
+
+        for dataset, variable_code in missing_numbers:
+            variable_numbers = used_numbers.setdefault(variable_code, set())
+            sample_number = max(variable_numbers, default=0) + 1
+            metadata = dict(dataset.source_metadata or {})
+            metadata["sample_number"] = sample_number
+            dataset.source_metadata = metadata
+            variable_numbers.add(sample_number)
+            changed = True
+
+        for dataset in datasets:
+            original_metadata = dict(dataset.source_metadata or {})
+            metadata = dict(original_metadata)
+            variable_code = str(metadata.get("target_variable_code") or "").upper()
+            sample_number = metadata.get("sample_number")
+            if not variable_code or not isinstance(sample_number, int):
+                continue
+            if dataset.status == "draft" and not metadata.get("extracted_at"):
+                metadata["extracted_at"] = dataset.updated_at.isoformat()
+            metadata.pop("is_custom_name", None)
+            suffix = " (sincronizando...)" if dataset.status == "syncing" else ""
+            expected_name = f"REMMAQ {variable_code} #{sample_number}{suffix}"
+            if metadata != original_metadata or dataset.name != expected_name:
+                dataset.source_metadata = metadata
+                dataset.name = expected_name
+                self.db.add(dataset)
+                changed = True
+        return changed
 
     def get_source_dataframe(self, *, dataset_id: str, user: User) -> pd.DataFrame:
         dataset = self._get_dataset(dataset_id=dataset_id, user=user)

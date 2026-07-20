@@ -16,7 +16,6 @@ from app.schemas.ml_experiment import (
     MLExperimentRunDetail,
     MLExperimentRunRequest,
     MLExperimentRunSummary,
-    MLExperimentSourceRenameRequest,
     MLExperimentSourceSyncRequest,
     MLModelSourceFile,
     MLModelSourcesResponse,
@@ -120,28 +119,6 @@ def get_ml_experiment_source(
         return service.get_ml_experiment_source(dataset_id=source_id, user=user)
     except ManualDatasetError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.patch("/sources/{source_id}", response_model=ManualDatasetResponse)
-def rename_ml_experiment_source(
-    source_id: str,
-    payload: MLExperimentSourceRenameRequest,
-    db: Session = Depends(get_db_session),
-    user: User = Depends(require_roles(UserRole.admin, UserRole.researcher)),
-) -> ManualDatasetResponse:
-    service = ManualDatasetService(db)
-    try:
-        return service.rename_ml_experiment_source(dataset_id=source_id, user=user, name=payload.name)
-    except ManualDatasetError as exc:
-        detail = str(exc)
-        normalized_detail = detail.lower()
-        if "sincronización" in normalized_detail:
-            status_code = 409
-        elif any(message in normalized_detail for message in ("no encontrado", "no tienes acceso", "no pertenece")):
-            status_code = 404
-        else:
-            status_code = 400
-        raise HTTPException(status_code=status_code, detail=detail) from exc
 
 
 @router.delete("/sources/{source_id}", status_code=204)

@@ -8,7 +8,6 @@ import {
   getMLExperimentSource,
   listMLExperimentRuns,
   listMLExperimentSources,
-  renameMLExperimentSource,
   submitMLExperimentRun,
   syncMLExperimentSource,
   type MLExperimentRunDetail,
@@ -46,7 +45,6 @@ interface UseMLExperimentsActions {
   refreshSources: () => Promise<void>;
   refreshSource: (sourceId: string) => Promise<void>;
   syncSource: (payload: MLExperimentSourceSyncRequest) => Promise<void>;
-  renameSource: (sourceId: string, name: string) => Promise<boolean>;
   deleteSource: (sourceId: string) => Promise<void>;
 }
 
@@ -284,20 +282,6 @@ export function useMLExperiments(workspaceId: string | null): UseMLExperimentsSt
     [pollSource],
   );
 
-  const renameSource = useCallback(async (sourceId: string, name: string): Promise<boolean> => {
-    setSourceError(null);
-    try {
-      const updatedSource = await renameMLExperimentSource(sourceId, name);
-      setSources((previous) =>
-        previous.map((source) => (source.id === updatedSource.id ? updatedSource : source)),
-      );
-      return true;
-    } catch (err) {
-      setSourceError(err instanceof Error ? err.message : 'No se pudo renombrar la fuente.');
-      return false;
-    }
-  }, []);
-
   const deleteSource = useCallback(async (sourceId: string) => {
     setSourceError(null);
     try {
@@ -325,7 +309,6 @@ export function useMLExperiments(workspaceId: string | null): UseMLExperimentsSt
     refreshSources,
     refreshSource,
     syncSource,
-    renameSource,
     deleteSource,
   };
 }

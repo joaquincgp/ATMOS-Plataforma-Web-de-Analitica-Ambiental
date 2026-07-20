@@ -1,4 +1,4 @@
-import { Bell, LogOut, Search, User } from 'lucide-react';
+import { LogOut, User } from 'lucide-react';
 
 interface TopBarProps {
   userName: string;
@@ -7,23 +7,14 @@ interface TopBarProps {
 
 export function TopBar({ userName, onLogout }: TopBarProps) {
   return (
-    <header className="h-16 bg-card border-b border-border flex items-center justify-between px-6">
-      <div className="flex-1 max-w-xl">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder="Search dashboards, queries, or data..."
-            className="w-full pl-10 pr-4 py-2 bg-secondary rounded-lg border border-transparent focus:border-primary focus:outline-none transition-colors text-sm"
-          />
-        </div>
-      </div>
-      
+    <header className="h-16 bg-card border-b border-border flex items-center justify-end px-6">
       <div className="flex items-center gap-4">
-        <button className="p-2 hover:bg-secondary rounded-lg transition-colors">
-          <Bell className="w-5 h-5 text-foreground/70" />
-        </button>
-        <button onClick={onLogout} className="p-2 hover:bg-secondary rounded-lg transition-colors" title="Sign out">
+        <button
+          type="button"
+          onClick={onLogout}
+          className="p-2 hover:bg-secondary rounded-lg transition-colors"
+          title="Cerrar sesión"
+        >
           <LogOut className="w-5 h-5 text-foreground/70" />
         </button>
         <div className="flex items-center gap-2 pl-4 border-l border-border">

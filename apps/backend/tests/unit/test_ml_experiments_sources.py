@@ -124,6 +124,8 @@ def test_create_and_sync_ml_experiment_source_is_isolated_from_general_datasets(
 
     synced = service.get_ml_experiment_source(dataset_id=draft.id, user=user)
     assert synced.status == "draft"
+    assert synced.name == "REMMAQ PM25 #1"
+    assert synced.source_metadata["sample_number"] == 1
     assert synced.row_count == 200  # 4 variables * 50 hours
     assert synced.source_metadata["variable_codes"] == ["HUM", "PM25", "TMP", "VEL"]
     assert synced.source_metadata["station_codes"] == ["BELISARIO"]
@@ -227,97 +229,101 @@ def test_run_ml_experiment_source_sync_reports_progress_in_source_metadata(
     assert "variable_codes" in synced.source_metadata
 
 
-def test_rename_ml_experiment_source_normalizes_name_and_preserves_metadata(
-    db_session, tmp_path: Path, monkeypatch
+def test_ml_source_numbers_increment_per_variable_and_workspace_and_do_not_reuse_deleted_values(
+    db_session, tmp_path: Path
 ) -> None:
     user, workspace = _make_user_and_workspace(
-        db_session, tmp_path, email="ml-rename@example.com", workspace_id="ws-rename"
+        db_session, tmp_path, email="ml-number@example.com", workspace_id="ws-number"
     )
     service = ManualDatasetService(db_session)
-    draft = service.create_ml_experiment_source_draft(
+
+    pm25_first = service.create_ml_experiment_source_draft(
         workspace_id=workspace.id, user=user, target_variable_code="PM25", date_from=None, date_to=None
     )
-    monkeypatch.setattr(manual_dataset_service_module, "EtlService", _FakeEtlService)
-    service.run_ml_experiment_source_sync(
-        dataset_id=draft.id, target_variable_code="PM25", date_from=None, date_to=None
+    o3_first = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="O3", date_from=None, date_to=None
+    )
+    pm25_second = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="PM25", date_from=None, date_to=None
     )
 
-    before = service.get_ml_experiment_source(dataset_id=draft.id, user=user)
-    with pytest.raises(ManualDatasetError, match="no puede estar vacío"):
-        service.rename_ml_experiment_source(dataset_id=draft.id, user=user, name="   ")
+    assert pm25_first.name == "REMMAQ PM25 #1 (sincronizando...)"
+    assert pm25_first.source_metadata["sample_number"] == 1
+    assert o3_first.name == "REMMAQ O3 #1 (sincronizando...)"
+    assert o3_first.source_metadata["sample_number"] == 1
+    assert pm25_second.name == "REMMAQ PM25 #2 (sincronizando...)"
+    assert pm25_second.source_metadata["sample_number"] == 2
 
-    renamed = service.rename_ml_experiment_source(
-        dataset_id=draft.id,
-        user=user,
-        name="  Calidad   del aire   norte  ",
+    service.delete_ml_experiment_source(dataset_id=pm25_first.id, user=user)
+    pm25_third = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="PM25", date_from=None, date_to=None
     )
+    assert pm25_third.source_metadata["sample_number"] == 3
 
-    assert renamed.name == "Calidad del aire norte"
-    assert renamed.id == before.id
-    assert renamed.row_count == before.row_count
-    assert renamed.source_metadata["date_from"] == before.source_metadata["date_from"]
-    assert renamed.source_metadata["date_to"] == before.source_metadata["date_to"]
-    assert renamed.source_metadata["extracted_at"] == before.source_metadata["extracted_at"]
-    assert renamed.source_metadata["is_custom_name"] is True
-    assert [source.name for source in service.list_ml_experiment_sources(workspace_id=workspace.id, user=user)] == [
-        "Calidad del aire norte"
-    ]
-
-
-def test_rename_ml_experiment_source_rejects_syncing_general_and_other_owner(db_session, tmp_path: Path) -> None:
-    owner, workspace = _make_user_and_workspace(
-        db_session, tmp_path, email="ml-rename-owner@example.com", workspace_id="ws-rename-owner"
+    other_user, other_workspace = _make_user_and_workspace(
+        db_session, tmp_path, email="ml-number-other@example.com", workspace_id="ws-number-other"
     )
-    service = ManualDatasetService(db_session)
-    draft = service.create_ml_experiment_source_draft(
-        workspace_id=workspace.id, user=owner, target_variable_code="O3", date_from=None, date_to=None
+    other_pm25 = service.create_ml_experiment_source_draft(
+        workspace_id=other_workspace.id,
+        user=other_user,
+        target_variable_code="PM25",
+        date_from=None,
+        date_to=None,
     )
-
-    with pytest.raises(ManualDatasetError, match="termine la sincronización"):
-        service.rename_ml_experiment_source(dataset_id=draft.id, user=owner, name="Ozono")
-
-    general = service.create_from_upload(
-        workspace_id=workspace.id,
-        user=owner,
-        filename="general.csv",
-        content=b"observed_at,station,variable,value\n2025-01-01,A,O3,10\n",
-    )
-    with pytest.raises(ManualDatasetError, match="no pertenece a ML Experiments"):
-        service.rename_ml_experiment_source(dataset_id=general.id, user=owner, name="General renombrada")
-
-    intruder, _ = _make_user_and_workspace(
-        db_session, tmp_path, email="ml-rename-intruder@example.com", workspace_id="ws-rename-intruder"
-    )
-    with pytest.raises(ManualDatasetError, match="No tienes acceso"):
-        service.rename_ml_experiment_source(dataset_id=draft.id, user=intruder, name="Sin permiso")
+    assert other_pm25.name == "REMMAQ PM25 #1 (sincronizando...)"
+    assert other_pm25.source_metadata["sample_number"] == 1
 
 
-def test_rename_historical_ml_source_freezes_previous_update_as_extraction_date(db_session, tmp_path: Path) -> None:
+def test_list_ml_sources_backfills_stable_numbers_and_extraction_dates_for_historical_rows(
+    db_session, tmp_path: Path
+) -> None:
     user, workspace = _make_user_and_workspace(
         db_session, tmp_path, email="ml-legacy@example.com", workspace_id="ws-legacy"
     )
     service = ManualDatasetService(db_session)
-    draft = service.create_ml_experiment_source_draft(
+    first = service.create_ml_experiment_source_draft(
         workspace_id=workspace.id, user=user, target_variable_code="PM10", date_from=None, date_to=None
     )
-    entity = db_session.get(ManualDataset, draft.id)
-    assert entity is not None
-    entity.status = "draft"
-    entity.source_metadata = {
-        "target_variable_code": "PM10",
-        "date_from": "2022-01-01",
-        "date_to": "2026-01-19",
-    }
-    db_session.add(entity)
+    second = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="PM10", date_from=None, date_to=None
+    )
+
+    expected_extraction_dates: dict[str, str] = {}
+    for draft in (first, second):
+        entity = db_session.get(ManualDataset, draft.id)
+        assert entity is not None
+        metadata = dict(entity.source_metadata or {})
+        metadata.pop("sample_number", None)
+        metadata.pop("extracted_at", None)
+        metadata["is_custom_name"] = True
+        entity.source_metadata = metadata
+        entity.name = "Nombre histórico editable"
+        entity.status = "draft"
+        db_session.add(entity)
     db_session.commit()
-    db_session.refresh(entity)
-    expected_extraction_date = entity.updated_at.isoformat()
+    for draft in (first, second):
+        entity = db_session.get(ManualDataset, draft.id)
+        assert entity is not None
+        expected_extraction_dates[draft.id] = entity.updated_at.isoformat()
 
-    renamed = service.rename_ml_experiment_source(dataset_id=draft.id, user=user, name="PM10 histórico")
+    listed_by_id = {
+        source.id: source for source in service.list_ml_experiment_sources(workspace_id=workspace.id, user=user)
+    }
 
-    assert renamed.source_metadata["extracted_at"] == expected_extraction_date
-    assert renamed.source_metadata["date_from"] == "2022-01-01"
-    assert renamed.source_metadata["date_to"] == "2026-01-19"
+    assert listed_by_id[first.id].name == "REMMAQ PM10 #1"
+    assert listed_by_id[first.id].source_metadata["sample_number"] == 1
+    assert listed_by_id[first.id].source_metadata["extracted_at"] == expected_extraction_dates[first.id]
+    assert "is_custom_name" not in listed_by_id[first.id].source_metadata
+    assert listed_by_id[second.id].name == "REMMAQ PM10 #2"
+    assert listed_by_id[second.id].source_metadata["sample_number"] == 2
+    assert listed_by_id[second.id].source_metadata["extracted_at"] == expected_extraction_dates[second.id]
+
+    first_entity = db_session.get(ManualDataset, first.id)
+    assert first_entity is not None
+    updated_after_backfill = first_entity.updated_at
+    service.list_ml_experiment_sources(workspace_id=workspace.id, user=user)
+    db_session.refresh(first_entity)
+    assert first_entity.updated_at == updated_after_backfill
 
 
 def test_run_ml_experiment_source_sync_tolerates_deletion_mid_progress_report(

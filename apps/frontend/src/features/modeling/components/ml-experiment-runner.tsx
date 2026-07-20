@@ -1,5 +1,4 @@
 import {
-  Check,
   Play,
   Loader2,
   CheckCircle2,
@@ -10,10 +9,8 @@ import {
   Database,
   DownloadCloud,
   Info,
-  Pencil,
   RefreshCw,
   Trash2,
-  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -109,12 +106,10 @@ function getSyncProgressVariables(targetVariableCode: string | undefined): strin
 }
 
 function getSourceLabel(source: MLExperimentSource): string {
-  if (source.source_metadata.is_custom_name) {
-    return source.name;
-  }
-  return source.source_metadata.target_variable_code
-    ? `REMMAQ ${source.source_metadata.target_variable_code}`
-    : source.name;
+  const variableCode = source.source_metadata.target_variable_code;
+  const sampleNumber = source.source_metadata.sample_number;
+  if (!variableCode) return source.name;
+  return `REMMAQ ${variableCode}${sampleNumber ? ` #${sampleNumber}` : ''}`;
 }
 
 function getSourcePeriodLabel(source: MLExperimentSource): string {
@@ -200,7 +195,6 @@ export function MLExperimentRunner() {
     syncingSourceId,
     syncSource,
     refreshSource,
-    renameSource,
     deleteSource,
   } = useMLExperiments(activeWorkspaceId);
 
@@ -218,9 +212,6 @@ export function MLExperimentRunner() {
   const [dateTo, setDateTo] = useState('');
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [refreshingSourceId, setRefreshingSourceId] = useState<string | null>(null);
-  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
-  const [sourceNameDraft, setSourceNameDraft] = useState('');
-  const [renamingSourceId, setRenamingSourceId] = useState<string | null>(null);
 
   useEffect(() => {
     void listMLAlgorithms().then((response) => {
@@ -376,32 +367,6 @@ export function MLExperimentRunner() {
 
   const handleDeleteSource = (sourceId: string) => {
     void deleteSource(sourceId);
-  };
-
-  const beginSourceRename = (source: MLExperimentSource) => {
-    setEditingSourceId(source.id);
-    setSourceNameDraft(getSourceLabel(source));
-  };
-
-  const cancelSourceRename = () => {
-    setEditingSourceId(null);
-    setSourceNameDraft('');
-  };
-
-  const handleRenameSource = async (sourceId: string) => {
-    const cleanedName = sourceNameDraft.trim();
-    if (!cleanedName || renamingSourceId) {
-      return;
-    }
-    setRenamingSourceId(sourceId);
-    try {
-      const renamed = await renameSource(sourceId, cleanedName);
-      if (renamed) {
-        cancelSourceRename();
-      }
-    } finally {
-      setRenamingSourceId(null);
-    }
   };
 
   const handleRefreshSource = async (sourceId: string) => {
@@ -569,7 +534,6 @@ export function MLExperimentRunner() {
                   const isSelected = selectedSourceId === source.id;
                   const isReady = source.status === 'draft';
                   const isSyncing = source.status === 'syncing';
-                  const isEditing = editingSourceId === source.id;
                   const archivesTotal = source.source_metadata.archives_total ?? 4;
                   const archivesDone = source.source_metadata.archives_done ?? 0;
                   const rowsCollected = source.source_metadata.rows_collected ?? 0;
@@ -602,124 +566,62 @@ export function MLExperimentRunner() {
                     >
                       <div className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 w-full">
                         <Database className="w-3.5 h-3.5 shrink-0 text-[#509EE3]" />
-                        {isEditing ? (
-                          <>
-                            <Input
-                              autoFocus
-                              value={sourceNameDraft}
-                              maxLength={255}
-                              onChange={(event) => setSourceNameDraft(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') {
-                                  event.preventDefault();
-                                  void handleRenameSource(source.id);
-                                }
-                                if (event.key === 'Escape') {
-                                  cancelSourceRename();
-                                }
-                              }}
-                              className="h-7 min-w-0 flex-1 bg-white px-2 text-xs md:text-xs"
-                              aria-label={`Nuevo nombre para ${sourceLabel}`}
+                        <button
+                          type="button"
+                          onClick={() => isReady && handleSelectSource(source.id)}
+                          disabled={!isReady}
+                          className="flex-1 min-w-0 text-left disabled:cursor-not-allowed"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="min-w-0 flex-1 truncate text-xs font-semibold" title={sourceLabel}>
+                              {sourceLabel}
+                            </span>
+                            {!isSyncing && (
+                              <span
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                                  source.status === 'failed'
+                                    ? 'bg-red-50 text-red-600'
+                                    : 'bg-green-50 text-green-600'
+                                }`}
+                              >
+                                {source.status === 'failed' ? 'Falló' : 'Lista'}
+                              </span>
+                            )}
+                          </div>
+                          {!isSyncing && (
+                            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {source.status === 'failed'
+                                ? 'Sincronización fallida'
+                                : `${source.row_count.toLocaleString()} filas`}
+                            </div>
+                          )}
+                        </button>
+                        <InfoHint label={sourceLabel} text={fullDetail} />
+                        {isSyncing && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => void handleRefreshSource(source.id)}
+                            disabled={refreshingSourceId === source.id}
+                            className="h-7 w-7 text-muted-foreground hover:text-[#509EE3] shrink-0"
+                            title="Actualizar"
+                          >
+                            <RefreshCw
+                              className={`w-3.5 h-3.5 ${refreshingSourceId === source.id ? 'animate-spin' : ''}`}
                             />
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => void handleRenameSource(source.id)}
-                              disabled={!sourceNameDraft.trim() || renamingSourceId === source.id}
-                              className="h-7 w-7 shrink-0 text-green-600 hover:text-green-700"
-                              title="Guardar nombre"
-                            >
-                              {renamingSourceId === source.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Check className="h-3.5 w-3.5" />
-                              )}
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={cancelSourceRename}
-                              disabled={renamingSourceId === source.id}
-                              className="h-7 w-7 shrink-0 text-muted-foreground"
-                              title="Cancelar edición"
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              type="button"
-                              onClick={() => isReady && handleSelectSource(source.id)}
-                              disabled={!isReady}
-                              className="flex-1 min-w-0 text-left disabled:cursor-not-allowed"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="min-w-0 flex-1 truncate text-xs font-semibold" title={sourceLabel}>
-                                  {sourceLabel}
-                                </span>
-                                {!isSyncing && (
-                                  <span
-                                    className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                                      source.status === 'failed'
-                                        ? 'bg-red-50 text-red-600'
-                                        : 'bg-green-50 text-green-600'
-                                    }`}
-                                  >
-                                    {source.status === 'failed' ? 'Falló' : 'Lista'}
-                                  </span>
-                                )}
-                              </div>
-                              {!isSyncing && (
-                                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                                  {source.status === 'failed'
-                                    ? 'Sincronización fallida'
-                                    : `${source.row_count.toLocaleString()} filas`}
-                                </div>
-                              )}
-                            </button>
-                            <InfoHint label={sourceLabel} text={fullDetail} />
-                            {isReady && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => beginSourceRename(source)}
-                                className="h-7 w-7 shrink-0 text-muted-foreground hover:text-[#509EE3]"
-                                title="Editar nombre"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            )}
-                            {isSyncing && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => void handleRefreshSource(source.id)}
-                                disabled={refreshingSourceId === source.id}
-                                className="h-7 w-7 text-muted-foreground hover:text-[#509EE3] shrink-0"
-                                title="Actualizar"
-                              >
-                                <RefreshCw
-                                  className={`w-3.5 h-3.5 ${refreshingSourceId === source.id ? 'animate-spin' : ''}`}
-                                />
-                              </Button>
-                            )}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDeleteSource(source.id)}
-                              className="h-7 w-7 text-muted-foreground hover:text-red-500 shrink-0"
-                              title="Eliminar fuente"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </>
+                          </Button>
                         )}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteSource(source.id)}
+                          className="h-7 w-7 text-muted-foreground hover:text-red-500 shrink-0"
+                          title="Eliminar fuente"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
                       </div>
                       {!isSyncing && (
                         <div className="space-y-1 border-t border-[#edf2f7] px-2 py-1.5 text-[10px] text-muted-foreground">
