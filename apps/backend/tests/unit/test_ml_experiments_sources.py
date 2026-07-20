@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.models import User, Workspace
+from app.models import ManualDataset, User, Workspace
 from app.models.base import Base
 from app.schemas.auth import UserRole, UserStatus
 from app.services.manual_dataset import ManualDatasetError, ManualDatasetService
@@ -127,6 +127,9 @@ def test_create_and_sync_ml_experiment_source_is_isolated_from_general_datasets(
     assert synced.row_count == 200  # 4 variables * 50 hours
     assert synced.source_metadata["variable_codes"] == ["HUM", "PM25", "TMP", "VEL"]
     assert synced.source_metadata["station_codes"] == ["BELISARIO"]
+    assert synced.source_metadata["date_from"] == "2026-06-01"
+    assert synced.source_metadata["date_to"] == "2026-06-03"
+    assert synced.source_metadata["extracted_at"]
 
     # Isolation: the ML-Experiments source must not show up in the general
     # Data Manager listing, and the general dataset must not show up in the
@@ -222,6 +225,99 @@ def test_run_ml_experiment_source_sync_reports_progress_in_source_metadata(
     synced = service.get_ml_experiment_source(dataset_id=draft.id, user=user)
     assert synced.status == "draft"
     assert "variable_codes" in synced.source_metadata
+
+
+def test_rename_ml_experiment_source_normalizes_name_and_preserves_metadata(
+    db_session, tmp_path: Path, monkeypatch
+) -> None:
+    user, workspace = _make_user_and_workspace(
+        db_session, tmp_path, email="ml-rename@example.com", workspace_id="ws-rename"
+    )
+    service = ManualDatasetService(db_session)
+    draft = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="PM25", date_from=None, date_to=None
+    )
+    monkeypatch.setattr(manual_dataset_service_module, "EtlService", _FakeEtlService)
+    service.run_ml_experiment_source_sync(
+        dataset_id=draft.id, target_variable_code="PM25", date_from=None, date_to=None
+    )
+
+    before = service.get_ml_experiment_source(dataset_id=draft.id, user=user)
+    with pytest.raises(ManualDatasetError, match="no puede estar vacío"):
+        service.rename_ml_experiment_source(dataset_id=draft.id, user=user, name="   ")
+
+    renamed = service.rename_ml_experiment_source(
+        dataset_id=draft.id,
+        user=user,
+        name="  Calidad   del aire   norte  ",
+    )
+
+    assert renamed.name == "Calidad del aire norte"
+    assert renamed.id == before.id
+    assert renamed.row_count == before.row_count
+    assert renamed.source_metadata["date_from"] == before.source_metadata["date_from"]
+    assert renamed.source_metadata["date_to"] == before.source_metadata["date_to"]
+    assert renamed.source_metadata["extracted_at"] == before.source_metadata["extracted_at"]
+    assert renamed.source_metadata["is_custom_name"] is True
+    assert [source.name for source in service.list_ml_experiment_sources(workspace_id=workspace.id, user=user)] == [
+        "Calidad del aire norte"
+    ]
+
+
+def test_rename_ml_experiment_source_rejects_syncing_general_and_other_owner(db_session, tmp_path: Path) -> None:
+    owner, workspace = _make_user_and_workspace(
+        db_session, tmp_path, email="ml-rename-owner@example.com", workspace_id="ws-rename-owner"
+    )
+    service = ManualDatasetService(db_session)
+    draft = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=owner, target_variable_code="O3", date_from=None, date_to=None
+    )
+
+    with pytest.raises(ManualDatasetError, match="termine la sincronización"):
+        service.rename_ml_experiment_source(dataset_id=draft.id, user=owner, name="Ozono")
+
+    general = service.create_from_upload(
+        workspace_id=workspace.id,
+        user=owner,
+        filename="general.csv",
+        content=b"observed_at,station,variable,value\n2025-01-01,A,O3,10\n",
+    )
+    with pytest.raises(ManualDatasetError, match="no pertenece a ML Experiments"):
+        service.rename_ml_experiment_source(dataset_id=general.id, user=owner, name="General renombrada")
+
+    intruder, _ = _make_user_and_workspace(
+        db_session, tmp_path, email="ml-rename-intruder@example.com", workspace_id="ws-rename-intruder"
+    )
+    with pytest.raises(ManualDatasetError, match="No tienes acceso"):
+        service.rename_ml_experiment_source(dataset_id=draft.id, user=intruder, name="Sin permiso")
+
+
+def test_rename_historical_ml_source_freezes_previous_update_as_extraction_date(db_session, tmp_path: Path) -> None:
+    user, workspace = _make_user_and_workspace(
+        db_session, tmp_path, email="ml-legacy@example.com", workspace_id="ws-legacy"
+    )
+    service = ManualDatasetService(db_session)
+    draft = service.create_ml_experiment_source_draft(
+        workspace_id=workspace.id, user=user, target_variable_code="PM10", date_from=None, date_to=None
+    )
+    entity = db_session.get(ManualDataset, draft.id)
+    assert entity is not None
+    entity.status = "draft"
+    entity.source_metadata = {
+        "target_variable_code": "PM10",
+        "date_from": "2022-01-01",
+        "date_to": "2026-01-19",
+    }
+    db_session.add(entity)
+    db_session.commit()
+    db_session.refresh(entity)
+    expected_extraction_date = entity.updated_at.isoformat()
+
+    renamed = service.rename_ml_experiment_source(dataset_id=draft.id, user=user, name="PM10 histórico")
+
+    assert renamed.source_metadata["extracted_at"] == expected_extraction_date
+    assert renamed.source_metadata["date_from"] == "2022-01-01"
+    assert renamed.source_metadata["date_to"] == "2026-01-19"
 
 
 def test_run_ml_experiment_source_sync_tolerates_deletion_mid_progress_report(

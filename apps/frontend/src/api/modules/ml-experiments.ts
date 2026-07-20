@@ -133,6 +133,8 @@ interface MLExperimentSourceMetadata {
   station_codes?: string[];
   date_from?: string | null;
   date_to?: string | null;
+  extracted_at?: string | null;
+  is_custom_name?: boolean;
   // Present only while status === 'syncing': how many of the REMMAQ archives
   // (target variable + covariates) have finished downloading/parsing so far.
   archives_done?: number;
@@ -182,6 +184,13 @@ export function listMLExperimentSources(workspaceId: string): Promise<MLExperime
 export function getMLExperimentSource(sourceId: string): Promise<MLExperimentSource> {
   return apiRequest<MLExperimentSource>(`/api/v1/ml-experiments/sources/${sourceId}`, {
     timeout: SOURCE_READ_TIMEOUT_MS,
+  });
+}
+
+export function renameMLExperimentSource(sourceId: string, name: string): Promise<MLExperimentSource> {
+  return apiRequest<MLExperimentSource>(`/api/v1/ml-experiments/sources/${sourceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
   });
 }
 

@@ -17,13 +17,18 @@ from app.api.v1.endpoints.ml_experiments import (
     get_ml_model_sources,
     list_ml_experiment_runs,
     list_ml_experiment_sources,
+    rename_ml_experiment_source,
     submit_ml_experiment_run,
     sync_ml_experiment_source,
 )
-from app.models import User, Variable, Workspace
+from app.models import ManualDataset, User, Variable, Workspace
 from app.models.base import Base
 from app.schemas.auth import UserRole, UserStatus
-from app.schemas.ml_experiment import MLExperimentRunRequest, MLExperimentSourceSyncRequest
+from app.schemas.ml_experiment import (
+    MLExperimentRunRequest,
+    MLExperimentSourceRenameRequest,
+    MLExperimentSourceSyncRequest,
+)
 
 # pylint: disable=protected-access,redefined-outer-name
 
@@ -217,3 +222,55 @@ def test_get_ml_experiment_source_endpoint_raises_404_for_missing_source(db_sess
         get_ml_experiment_source("missing-source", db=db_session, user=owner)
 
     assert exc_info.value.status_code == 404
+
+
+def test_rename_ml_experiment_source_endpoint_blocks_sync_and_updates_ready_source(db_session, tmp_path) -> None:
+    owner = _make_user(db_session, role=UserRole.researcher, email="endpoint-rename@example.com")
+    workspace = Workspace(
+        id="ws-endpoint-rename",
+        owner_user_id=owner.id,
+        name="Workspace",
+        slug="ws-endpoint-rename",
+        schema_name="ws_endpoint_rename",
+        storage_path=str(tmp_path),
+        is_active=True,
+    )
+    db_session.add(workspace)
+    db_session.commit()
+    draft = sync_ml_experiment_source(
+        MLExperimentSourceSyncRequest(workspace_id=workspace.id, target_variable_code="PM10"),
+        BackgroundTasks(),
+        db=db_session,
+        user=owner,
+    )
+
+    with pytest.raises(HTTPException) as syncing_error:
+        rename_ml_experiment_source(
+            draft.id,
+            MLExperimentSourceRenameRequest(name="PM10 norte"),
+            db=db_session,
+            user=owner,
+        )
+    assert syncing_error.value.status_code == 409
+
+    entity = db_session.get(ManualDataset, draft.id)
+    assert entity is not None
+    entity.status = "draft"
+    entity.source_metadata = {
+        "target_variable_code": "PM10",
+        "date_from": "2022-01-01",
+        "date_to": "2026-01-19",
+    }
+    db_session.add(entity)
+    db_session.commit()
+
+    renamed = rename_ml_experiment_source(
+        draft.id,
+        MLExperimentSourceRenameRequest(name="  PM10   norte  "),
+        db=db_session,
+        user=owner,
+    )
+
+    assert renamed.name == "PM10 norte"
+    metadata = dict(renamed.source_metadata or {})
+    assert metadata["is_custom_name"] is True

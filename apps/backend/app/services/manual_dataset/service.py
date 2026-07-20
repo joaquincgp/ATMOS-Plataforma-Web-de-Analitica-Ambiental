@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import StaleDataError
 
+from app.core.time import ecuador_now_naive
 from app.models.etl_run import EtlRun
 from app.models.manual_dataset import ManualDataset
 from app.models.measurement import DATA_ORIGIN_USER, Measurement
@@ -282,6 +283,8 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
             "station_codes": sorted(dataframe["station_code"].dropna().unique().tolist()),
             "date_from": actual_date_from,
             "date_to": actual_date_to,
+            "extracted_at": ecuador_now_naive().isoformat(),
+            "is_custom_name": False,
         }
         date_range_label = f" ({actual_date_from} a {actual_date_to})" if has_dates else ""
         dataset.name = f"REMMAQ {target_variable_code}{date_range_label}"
@@ -308,6 +311,34 @@ class ManualDatasetService(ManualDatasetIOMixin, ManualDatasetPipelineMixin):
 
     def get_ml_experiment_source(self, *, dataset_id: str, user: User) -> ManualDatasetResponse:
         dataset = self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
+        return self._to_response(dataset)
+
+    def rename_ml_experiment_source(
+        self,
+        *,
+        dataset_id: str,
+        user: User,
+        name: str,
+    ) -> ManualDatasetResponse:
+        dataset = self._get_ml_experiment_source_entity(dataset_id=dataset_id, user=user)
+        if dataset.status == "syncing":
+            raise ManualDatasetError("Espera a que termine la sincronización antes de renombrar la fuente.")
+
+        cleaned_name = " ".join(name.split()).strip()
+        if not cleaned_name:
+            raise ManualDatasetError("El nombre de la fuente no puede estar vacío.")
+        if len(cleaned_name) > 255:
+            raise ManualDatasetError("El nombre de la fuente no puede superar 255 caracteres.")
+
+        metadata = dict(dataset.source_metadata or {})
+        if dataset.status == "draft" and not metadata.get("extracted_at"):
+            metadata["extracted_at"] = dataset.updated_at.isoformat()
+        metadata["is_custom_name"] = True
+        dataset.name = cleaned_name
+        dataset.source_metadata = metadata
+        self.db.add(dataset)
+        self.db.commit()
+        self.db.refresh(dataset)
         return self._to_response(dataset)
 
     def delete_ml_experiment_source(self, *, dataset_id: str, user: User) -> None:

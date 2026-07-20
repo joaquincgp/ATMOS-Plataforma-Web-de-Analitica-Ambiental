@@ -59,6 +59,18 @@ class MLExperimentSourceSyncRequest(BaseModel):
     date_to: date | None = None
 
 
+class MLExperimentSourceRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        cleaned_name = " ".join(value.split()).strip()
+        if not cleaned_name:
+            raise ValueError("El nombre de la fuente no puede estar vacío.")
+        return cleaned_name
+
+
 class MLExperimentSourceResponse(BaseModel):
     id: str
     name: str

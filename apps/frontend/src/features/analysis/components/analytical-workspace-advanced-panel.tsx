@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AnalysisHelpCard } from '@/features/analysis/components/analysis-help-card';
 import { useAnalyticalWorkspaceState } from '@/features/analysis/contexts/analytical-workspace-context';
 import { AnalyticalWorkspaceKpiCard as KpiCard } from '@/features/analysis/components/analytical-workspace-kpi-card';
 
@@ -34,6 +35,35 @@ interface AnalyticalWorkspaceAdvancedPanelProps {
   onGenericXAxisChange: (value: string) => void;
   onGenericYAxisChange: (value: string) => void;
 }
+
+const ADVANCED_MODEL_OPTIONS: {
+  value: AdvancedModel;
+  label: string;
+  detail: string;
+  description: string;
+}[] = [
+  {
+    value: 'arima',
+    label: 'ARIMA',
+    detail: 'No estacional',
+    description:
+      'Modelo estadístico no estacional que combina autorregresión (p), diferenciación (d) y promedio móvil (q) para proyectar la serie desde su propio historial.',
+  },
+  {
+    value: 'sarima',
+    label: 'SARIMA',
+    detail: 'Estacional',
+    description:
+      'Extiende ARIMA con términos estacionales (P, D, Q, s), representando ciclos repetitivos además de la dinámica reciente.',
+  },
+  {
+    value: 'prophet',
+    label: 'Prophet',
+    detail: 'Descomposición',
+    description:
+      'Modelo aditivo que descompone la serie en tendencia y estacionalidades, y genera pronósticos con intervalos de incertidumbre sin requerir órdenes p, d, q.',
+  },
+];
 
 function parseOrder(value: string, expectedSize: number): number[] | null {
   const parsed = value
@@ -90,11 +120,8 @@ export function AnalyticalWorkspaceAdvancedPanel({
   const statTrainingPoints = typeof stats.training_points === 'number' ? stats.training_points : null;
 
   const columnOptions = manualDatasetColumnOptions;
-  const modelOptions: { value: AdvancedModel; label: string; detail: string }[] = [
-    { value: 'arima', label: 'ARIMA', detail: 'Non-seasonal' },
-    { value: 'sarima', label: 'SARIMA', detail: 'Seasonal' },
-    { value: 'prophet', label: 'Prophet', detail: 'Decomposition' },
-  ];
+  const selectedModelOption =
+    ADVANCED_MODEL_OPTIONS.find((option) => option.value === model) ?? ADVANCED_MODEL_OPTIONS[0];
 
   useEffect(() => {
     setHorizon(defaultForecastHorizon);
@@ -209,9 +236,15 @@ export function AnalyticalWorkspaceAdvancedPanel({
 
             <div className="rounded-xl border bg-[#fbfdff] p-4 space-y-3">
               <div className="space-y-2">
-                <Label className="text-xs">Model</Label>
+                <div className="flex items-center gap-1.5">
+                  <Label className="text-xs">Modelo</Label>
+                  <AnalysisHelpCard
+                    title={selectedModelOption.label}
+                    description={selectedModelOption.description}
+                  />
+                </div>
                 <div className="grid grid-cols-3 gap-2">
-                  {modelOptions.map((option) => (
+                  {ADVANCED_MODEL_OPTIONS.map((option) => (
                     <button
                       key={option.value}
                       type="button"
