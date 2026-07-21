@@ -1236,7 +1236,7 @@ export function MLExperimentRunner() {
           <Card className="bg-white border-[#dce5f1]">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
-                Prediction vs Actual
+                Predicción vs Actual
                 <InfoHint label="Ejes del gráfico" text={predictionAxisInfo} />
               </CardTitle>
               <CardDescription>Cada punto compara el valor real contra el predicho</CardDescription>
