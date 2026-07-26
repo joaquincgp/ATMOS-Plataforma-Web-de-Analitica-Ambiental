@@ -306,18 +306,18 @@ const normalizeLoadError = (loadError: unknown) => {
 // ── Umbrales TULSMA Anexo 4 / Acuerdo Ministerial 097-A ──────────────────────
 // [moderado, alto, muyAlto] — por debajo del primero = Bueno
 const TULSMA_THRESHOLDS: Record<string, [number, number, number]> = {
-  PM25: [15,  50,  75],  // µg/m³  anual:15 | 24h:50
+  PM25: [15, 50, 75],  // µg/m³  anual:15 | 24h:50
   PM10: [50, 100, 200],  // µg/m³  anual:50 | 24h:100
-  NO2:  [40, 200, 400],  // µg/m³  anual:40 | 1h:200
-  O3:   [60, 100, 200],  // µg/m³  8h:100
-  CO:   [ 5,  10,  30],  // mg/m³  8h≈10 | 1h≈30
-  SO2:  [40, 125, 350],  // µg/m³  24h:125
-  TMP:  [10,  28,  35],  // °C    confort térmico Quito
-  HUM:  [30,  70,  90],  // %     humedad relativa
-  VEL:  [ 2,   8,  15],  // m/s   Beaufort simplificado
-  IUV:  [ 3,   6,   8],  // índice UV (OMS)
-  RS:   [200, 600, 900], // W/m²  radiación solar
-  LLU:  [ 1,  10,  30],  // mm    precipitación
+  NO2: [40, 200, 400],  // µg/m³  anual:40 | 1h:200
+  O3: [60, 100, 200],  // µg/m³  8h:100
+  CO: [5, 10, 30],  // mg/m³  8h≈10 | 1h≈30
+  SO2: [40, 125, 350],  // µg/m³  24h:125
+  TMP: [10, 28, 35],  // °C    confort térmico Quito
+  HUM: [30, 70, 90],  // %     humedad relativa
+  VEL: [2, 8, 15],  // m/s   Beaufort simplificado
+  IUV: [3, 6, 8],  // índice UV (OMS)
+  RS: [200, 600, 900], // W/m²  radiación solar
+  LLU: [1, 10, 30],  // mm    precipitación
 };
 
 const TULSMA_BAND_LABELS = ['Bueno', 'Moderado', 'Alto', 'Muy alto'] as const;
@@ -325,7 +325,7 @@ const TULSMA_BAND_COLORS = [
   { color: '#15803d', background: '#dcfce7' }, // Bueno — verde
   { color: '#a16207', background: '#fef9c3' }, // Moderado — ámbar
   { color: '#c2410c', background: '#ffedd5' }, // Alto — naranja
-  { color: '#b91c1c', background: '#fee2e2' }, // Muy alto — rojo
+  { color: '#331cb9ff', background: '#fee2e2' }, // Muy alto — rojo
 ] as const;
 
 const getQualityBand = (variableCode: string, value: number): QualityBand => {
@@ -869,9 +869,8 @@ function TulsmaLegendPanel({
                         {/* Tooltip hover */}
                         {cell.desc && (
                           <span
-                            className={`pointer-events-none absolute bottom-full z-[600] mb-1.5 hidden w-52 rounded-lg border border-slate-200 bg-white/97 px-3 py-2 text-[10px] leading-relaxed text-slate-600 shadow-xl group-hover:block ${
-                              ci === 0 ? 'left-0' : ci === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
-                            }`}
+                            className={`pointer-events-none absolute bottom-full z-[600] mb-1.5 hidden w-52 rounded-lg border border-slate-200 bg-white/97 px-3 py-2 text-[10px] leading-relaxed text-slate-600 shadow-xl group-hover:block ${ci === 0 ? 'left-0' : ci === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                              }`}
                           >
                             {cell.desc}
                           </span>
@@ -906,9 +905,8 @@ function TulsmaLegendPanel({
               {/* Tooltip por segmento */}
               {hoveredBand === i && descriptions?.[i] && (
                 <div
-                  className={`absolute bottom-full z-[600] mb-2 w-56 rounded-xl border border-slate-200 bg-white/97 px-3 py-2 text-left text-[10px] leading-relaxed text-slate-600 shadow-xl ${
-                    i === 0 ? 'left-0' : i === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
-                  }`}
+                  className={`absolute bottom-full z-[600] mb-2 w-56 rounded-xl border border-slate-200 bg-white/97 px-3 py-2 text-left text-[10px] leading-relaxed text-slate-600 shadow-xl ${i === 0 ? 'left-0' : i === 3 ? 'right-0' : 'left-1/2 -translate-x-1/2'
+                    }`}
                 >
                   {descriptions[i]}
                 </div>
@@ -920,11 +918,10 @@ function TulsmaLegendPanel({
         <button
           type="button"
           onClick={() => setTableOpen((prev) => !prev)}
-          className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold transition ${
-            tableOpen
+          className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold transition ${tableOpen
               ? 'border-[#509EE3] bg-[#509EE3] text-white'
               : 'border-slate-300 bg-white/80 text-slate-500 hover:border-[#509EE3] hover:text-[#509EE3]'
-          }`}
+            }`}
           title="Ver tabla completa de umbrales TULSMA"
           aria-label="Ver tabla TULSMA"
         >
@@ -1358,7 +1355,7 @@ export function PublicDashboard({
             <div className="sk h-8 w-full rounded-lg" />
             <div className="sk h-8 w-full rounded-lg" />
             <div className="mt-2 flex flex-col gap-2">
-              {[1,2,3,4,5,6].map((i) => (
+              {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div key={i} className="sk h-10 w-full rounded-lg" />
               ))}
             </div>
@@ -1370,7 +1367,7 @@ export function PublicDashboard({
             <div className="sk h-5 w-32" />
             <div className="sk h-[140px] w-full rounded-xl" />
             <div className="mt-auto flex flex-col gap-2">
-              {[1,2,3].map((i) => (
+              {[1, 2, 3].map((i) => (
                 <div key={i} className="sk h-9 w-full rounded-lg" />
               ))}
             </div>
@@ -2586,15 +2583,15 @@ function gaugeMaxForVariable(variableCode: string) {
   // Topes alineados con umbral "Muy alto" TULSMA Anexo 4
   if (variableCode === 'PM25') return 75;   // µg/m³
   if (variableCode === 'PM10') return 200;  // µg/m³
-  if (variableCode === 'NO2')  return 400;  // µg/m³
-  if (variableCode === 'O3')   return 200;  // µg/m³
-  if (variableCode === 'SO2')  return 350;  // µg/m³
-  if (variableCode === 'CO')   return 30;   // mg/m³
-  if (variableCode === 'TMP')  return 40;   // °C
-  if (variableCode === 'HUM')  return 100;  // %
-  if (variableCode === 'VEL')  return 20;   // m/s
-  if (variableCode === 'IUV')  return 11;   // índice UV extremo
-  if (variableCode === 'RS')   return 1000; // W/m²
+  if (variableCode === 'NO2') return 400;  // µg/m³
+  if (variableCode === 'O3') return 200;  // µg/m³
+  if (variableCode === 'SO2') return 350;  // µg/m³
+  if (variableCode === 'CO') return 30;   // mg/m³
+  if (variableCode === 'TMP') return 40;   // °C
+  if (variableCode === 'HUM') return 100;  // %
+  if (variableCode === 'VEL') return 20;   // m/s
+  if (variableCode === 'IUV') return 11;   // índice UV extremo
+  if (variableCode === 'RS') return 1000; // W/m²
   return 100;
 }
 
