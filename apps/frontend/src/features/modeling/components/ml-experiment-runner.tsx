@@ -1169,7 +1169,7 @@ export function MLExperimentRunner() {
           <Card className="bg-white border-[#dce5f1]">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
-                Caracteristicas de Importancia
+                Feature Importance
                 <InfoHint label="Ejes del gráfico" text={featureImportanceAxisInfo} />
               </CardTitle>
               <CardDescription>Contribución relativa de cada variable a la predicción</CardDescription>
