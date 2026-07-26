@@ -325,7 +325,7 @@ const TULSMA_BAND_COLORS = [
   { color: '#15803d', background: '#dcfce7' }, // Bueno — verde
   { color: '#a16207', background: '#fef9c3' }, // Moderado — ámbar
   { color: '#c2410c', background: '#ffedd5' }, // Alto — naranja
-  { color: '#331cb9ff', background: '#fee2e2' }, // Muy alto — rojo
+  { color: '#b91c1c', background: '#fee2e2' }, // Muy alto — rojo
 ] as const;
 
 const getQualityBand = (variableCode: string, value: number): QualityBand => {
@@ -919,8 +919,8 @@ function TulsmaLegendPanel({
           type="button"
           onClick={() => setTableOpen((prev) => !prev)}
           className={`shrink-0 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold transition ${tableOpen
-              ? 'border-[#509EE3] bg-[#509EE3] text-white'
-              : 'border-slate-300 bg-white/80 text-slate-500 hover:border-[#509EE3] hover:text-[#509EE3]'
+            ? 'border-[#509EE3] bg-[#509EE3] text-white'
+            : 'border-slate-300 bg-white/80 text-slate-500 hover:border-[#509EE3] hover:text-[#509EE3]'
             }`}
           title="Ver tabla completa de umbrales TULSMA"
           aria-label="Ver tabla TULSMA"
