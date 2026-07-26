@@ -558,8 +558,8 @@ export function MLExperimentRunner() {
                     <div
                       key={source.id}
                       className={`w-full rounded-lg border bg-white text-[11px] transition-colors ${isSelected
-                          ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
-                          : 'border-[#dce5f1] hover:border-[#509EE3]/35'
+                        ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
+                        : 'border-[#dce5f1] hover:border-[#509EE3]/35'
                         }`}
                     >
                       <div className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 w-full">
@@ -577,8 +577,8 @@ export function MLExperimentRunner() {
                             {!isSyncing && (
                               <span
                                 className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${source.status === 'failed'
-                                    ? 'bg-red-50 text-red-600'
-                                    : 'bg-green-50 text-green-600'
+                                  ? 'bg-red-50 text-red-600'
+                                  : 'bg-green-50 text-green-600'
                                   }`}
                               >
                                 {source.status === 'failed' ? 'Falló' : 'Lista'}
@@ -647,18 +647,18 @@ export function MLExperimentRunner() {
                                   <div key={`${code}-${index}`} className="flex-1 flex flex-col items-center gap-0.5">
                                     <div
                                       className={`h-1.5 w-full rounded-full transition-colors ${isDone
-                                          ? 'bg-green-500'
-                                          : isActive
-                                            ? 'bg-[#509EE3] animate-pulse'
-                                            : 'bg-gray-200'
+                                        ? 'bg-green-500'
+                                        : isActive
+                                          ? 'bg-[#509EE3] animate-pulse'
+                                          : 'bg-gray-200'
                                         }`}
                                     />
                                     <span
                                       className={`text-[9px] leading-none ${isDone
-                                          ? 'text-green-600'
-                                          : isActive
-                                            ? 'font-medium text-[#509EE3]'
-                                            : 'text-muted-foreground'
+                                        ? 'text-green-600'
+                                        : isActive
+                                          ? 'font-medium text-[#509EE3]'
+                                          : 'text-muted-foreground'
                                         }`}
                                     >
                                       {SYNC_VARIABLE_LABELS[code] ?? code}
@@ -934,8 +934,8 @@ export function MLExperimentRunner() {
                   <div
                     key={run.id}
                     className={`flex min-w-0 items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-[11px] transition-colors ${currentRun?.id === run.id
-                        ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
-                        : 'border-[#dce5f1] hover:border-[#509EE3]/35'
+                      ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
+                      : 'border-[#dce5f1] hover:border-[#509EE3]/35'
                       }`}
                   >
                     <button onClick={() => void loadRun(run.id)} className="flex-1 min-w-0 text-left">
@@ -945,10 +945,10 @@ export function MLExperimentRunner() {
                         </span>
                         <span
                           className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${run.status === 'failed'
-                              ? 'bg-red-50 text-red-600'
-                              : run.status === 'completed'
-                                ? 'bg-green-50 text-green-600'
-                                : 'bg-[#509EE3]/10 text-[#1F5A8A]'
+                            ? 'bg-red-50 text-red-600'
+                            : run.status === 'completed'
+                              ? 'bg-green-50 text-green-600'
+                              : 'bg-[#509EE3]/10 text-[#1F5A8A]'
                             }`}
                         >
                           {run.status}
@@ -1169,7 +1169,7 @@ export function MLExperimentRunner() {
           <Card className="bg-white border-[#dce5f1]">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
-                Caracteristica Importance
+                Caracteristicas de Importancia
                 <InfoHint label="Ejes del gráfico" text={featureImportanceAxisInfo} />
               </CardTitle>
               <CardDescription>Contribución relativa de cada variable a la predicción</CardDescription>
