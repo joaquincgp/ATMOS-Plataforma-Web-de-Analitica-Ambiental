@@ -161,18 +161,17 @@ function InfoHint({ label, text }: { label: string; text: string }) {
       <Info className="h-3.5 w-3.5 text-muted-foreground" aria-label={`Información de ${label}`} />
       {tooltip
         ? createPortal(
-            <span
-              className={`pointer-events-none fixed z-[3000] w-[280px] -translate-x-1/2 rounded-md border border-[#dce5f1] bg-white p-3 text-xs font-normal leading-relaxed text-muted-foreground shadow-xl ${
-                tooltip.placement === 'top' ? '-translate-y-full' : ''
+          <span
+            className={`pointer-events-none fixed z-[3000] w-[280px] -translate-x-1/2 rounded-md border border-[#dce5f1] bg-white p-3 text-xs font-normal leading-relaxed text-muted-foreground shadow-xl ${tooltip.placement === 'top' ? '-translate-y-full' : ''
               }`}
-              style={{ left: tooltip.left, top: tooltip.top }}
-              role="tooltip"
-            >
-              <span className="mb-1 block text-sm font-semibold text-foreground">{label}</span>
-              {text}
-            </span>,
-            document.body,
-          )
+            style={{ left: tooltip.left, top: tooltip.top }}
+            role="tooltip"
+          >
+            <span className="mb-1 block text-sm font-semibold text-foreground">{label}</span>
+            {text}
+          </span>,
+          document.body,
+        )
         : null}
     </span>
   );
@@ -558,11 +557,10 @@ export function MLExperimentRunner() {
                   return (
                     <div
                       key={source.id}
-                    className={`w-full rounded-lg border bg-white text-[11px] transition-colors ${
-                        isSelected
+                      className={`w-full rounded-lg border bg-white text-[11px] transition-colors ${isSelected
                           ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
                           : 'border-[#dce5f1] hover:border-[#509EE3]/35'
-                      }`}
+                        }`}
                     >
                       <div className="flex min-w-0 items-center gap-1.5 px-2 py-1.5 w-full">
                         <Database className="w-3.5 h-3.5 shrink-0 text-[#509EE3]" />
@@ -578,11 +576,10 @@ export function MLExperimentRunner() {
                             </span>
                             {!isSyncing && (
                               <span
-                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                                  source.status === 'failed'
+                                className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${source.status === 'failed'
                                     ? 'bg-red-50 text-red-600'
                                     : 'bg-green-50 text-green-600'
-                                }`}
+                                  }`}
                               >
                                 {source.status === 'failed' ? 'Falló' : 'Lista'}
                               </span>
@@ -649,22 +646,20 @@ export function MLExperimentRunner() {
                                 return (
                                   <div key={`${code}-${index}`} className="flex-1 flex flex-col items-center gap-0.5">
                                     <div
-                                      className={`h-1.5 w-full rounded-full transition-colors ${
-                                        isDone
+                                      className={`h-1.5 w-full rounded-full transition-colors ${isDone
                                           ? 'bg-green-500'
                                           : isActive
                                             ? 'bg-[#509EE3] animate-pulse'
                                             : 'bg-gray-200'
-                                      }`}
+                                        }`}
                                     />
                                     <span
-                                      className={`text-[9px] leading-none ${
-                                        isDone
+                                      className={`text-[9px] leading-none ${isDone
                                           ? 'text-green-600'
                                           : isActive
                                             ? 'font-medium text-[#509EE3]'
                                             : 'text-muted-foreground'
-                                      }`}
+                                        }`}
                                     >
                                       {SYNC_VARIABLE_LABELS[code] ?? code}
                                     </span>
@@ -829,9 +824,8 @@ export function MLExperimentRunner() {
                   </div>
                   <p className="text-[11px] leading-snug text-muted-foreground">
                     {isCustomSplitValid
-                      ? `${Math.round(parsedCustomTrainPercent)}% entrenamiento, ${
-                          100 - Math.round(parsedCustomTrainPercent)
-                        }% prueba.`
+                      ? `${Math.round(parsedCustomTrainPercent)}% entrenamiento, ${100 - Math.round(parsedCustomTrainPercent)
+                      }% prueba.`
                       : 'El valor manual debe estar entre 50% y 95%.'}
                   </p>
                 </div>
@@ -939,11 +933,10 @@ export function MLExperimentRunner() {
                 {runs.map((run) => (
                   <div
                     key={run.id}
-                    className={`flex min-w-0 items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-[11px] transition-colors ${
-                      currentRun?.id === run.id
+                    className={`flex min-w-0 items-center gap-1.5 rounded-lg border bg-white px-2 py-1.5 text-[11px] transition-colors ${currentRun?.id === run.id
                         ? 'border-[#509EE3] shadow-sm ring-1 ring-[#509EE3]/20'
                         : 'border-[#dce5f1] hover:border-[#509EE3]/35'
-                    }`}
+                      }`}
                   >
                     <button onClick={() => void loadRun(run.id)} className="flex-1 min-w-0 text-left">
                       <div className="flex items-center justify-between gap-2">
@@ -951,13 +944,12 @@ export function MLExperimentRunner() {
                           {(ALGORITHM_LABELS[run.algorithm] ?? run.algorithm.toUpperCase())} · {run.target_variable}
                         </span>
                         <span
-                          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${
-                            run.status === 'failed'
+                          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium capitalize ${run.status === 'failed'
                               ? 'bg-red-50 text-red-600'
                               : run.status === 'completed'
                                 ? 'bg-green-50 text-green-600'
                                 : 'bg-[#509EE3]/10 text-[#1F5A8A]'
-                          }`}
+                            }`}
                         >
                           {run.status}
                         </span>
@@ -1177,7 +1169,7 @@ export function MLExperimentRunner() {
           <Card className="bg-white border-[#dce5f1]">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-1.5">
-                Feature Importance
+                Caracteristica Importance
                 <InfoHint label="Ejes del gráfico" text={featureImportanceAxisInfo} />
               </CardTitle>
               <CardDescription>Contribución relativa de cada variable a la predicción</CardDescription>
